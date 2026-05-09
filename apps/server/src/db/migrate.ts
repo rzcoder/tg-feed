@@ -3,10 +3,8 @@
  *
  * Invoked via `pnpm db:migrate`. Idempotent — drizzle tracks applied
  * migrations in `__drizzle_migrations__`, so re-running is a no-op.
- *
- * console.log here matches the Chapter 1 placeholder precedent; pino
- * lands in Chapter 3.
  */
+import 'dotenv/config';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';

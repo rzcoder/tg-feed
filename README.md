@@ -26,11 +26,17 @@ pnpm install
 cp .env.example .env
 # edit .env — at minimum: TG_API_ID, TG_API_HASH, WEB_PASSWORD, SESSION_SECRET
 
+pnpm db:migrate               # apply DB migrations (idempotent)
+
 # one-time: mint a session string for the forwarding account
-pnpm tg:login                 # available from Chapter 3 onward
+pnpm tg:login                 # interactive: phone → code → 2FA → prints session string
+                              # paste the printed string into .env as TG_SESSION_STRING
 
 pnpm dev                      # boots server + web in parallel
 ```
+
+> `pnpm tg:login` reads `TG_API_ID` / `TG_API_HASH` from `.env` if present and prompts
+> for them otherwise. Run it on the **forwarding account** — not your main one.
 
 ## Quickstart — Docker
 

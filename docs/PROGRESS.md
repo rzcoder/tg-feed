@@ -16,10 +16,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
       `PLAN.md`, `PROGRESS.md`), `README.md`, `.env.example`.
 - [x] **Chapter 2 — DB layer** — `better-sqlite3` + drizzle schema + migrations +
       `apps/server/src/config.ts` (zod env). CRUD smoke tests.
-- → [ ] **Chapter 3 — Telegram client core** — gramjs client from env, `tg:login`
-  script, `NewMessage` listener, channel-join on startup.
-- [ ] **Chapter 4 — Forwarding pipeline (no filters yet)** — per-destination FIFO,
-      throttle, FloodWait handling, `forward_log`.
+- [x] **Chapter 3 — Telegram client core** — gramjs client from env, `tg:login`
+      script, `NewMessage` listener with subscription matcher, startup entity
+      resolution. `pino` + `dotenv` landed.
+- → [ ] **Chapter 4 — Forwarding pipeline (no filters yet)** — per-destination FIFO,
+  throttle, FloodWait handling, `forward_log`.
 - [ ] **Chapter 5 — Album / grouped media** — `groupedId` debouncer, batched
       `forwardMessages`.
 - [ ] **Chapter 6 — Filter framework** — rule registry + first rules
@@ -99,7 +100,43 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ### Chapter 3 — Telegram client core
 
-_(notes to be filled in when work starts)_
+- Done. `telegram@2.26` (gramjs), `input@1.0.1`, `pino@9` + `pino-pretty@11`,
+  `dotenv@16`. `client.setLogLevel(LogLevel.WARN)` pins gramjs's own logger so it
+  doesn't drown the pino output.
+- **`dotenv/config` only at entry points** — `index.ts`, `db/migrate.ts`,
+  `scripts/tg-login.ts`. Never in `config.ts` itself: `config.ts` is imported by
+  Vitest tests, which must not silently pick up the dev `.env`.
+- **TG env vars stayed `.optional()` in zod** so `pnpm db:migrate` and
+  `pnpm tg:login` (which mints the session string) can run without a session
+  string set. Runtime gate is `requireTelegramEnv(config)` in `tg/client.ts`,
+  called only from the server boot path.
+- **Shutdown order matters.** `client.disconnect() → client.destroy() → closeDb()`.
+  `destroy` alone leaves the auto-reconnect loop running and the process won't
+  exit cleanly on SIGINT. Encapsulated in `tg/client.ts#disconnectClient`.
+- **`StringSession("")`** is the documented "fresh session" sentinel; passing
+  `undefined` throws. `tg-login.ts` and `createTelegramClient` both pass
+  `sessionString ?? ''` defensively.
+- **`MessageMatcher` is split** into a pure `matchSubscription(MatchableEvent, subs)`
+  (testable with plain fixtures, no gramjs at the type level) and an adapter
+  `extractMatchableEvent(NewMessageEvent)` that handles the `MessageService`
+  guard and `BigInteger | undefined` chatId. Tests cover only the pure half;
+  the adapter is exercised end-to-end by the listener (live network, untested).
+- **Subscription join-by-username deferred to Chapter 10.** PLAN says "join
+  channels by username/invite if needed" but the schema has no username/invite
+  column yet — that lands with the UI add-flow in Ch 10. Ch 3's
+  `resolveSubscriptionsOnStartup` only calls `client.getEntity(sourceChatId)`
+  to warm the entity cache and surface stale rows; failures log a warning,
+  never throw.
+- **Listener re-queries DB per event.** Cheap (in-memory SQLite, indexed) and
+  keeps the picture fresh while subs are toggled live from the future UI.
+  Revisit if profiling says otherwise.
+- **`input@1.0.1` is a CommonJS package** consumed via `import input from 'input'`
+  — works under NodeNext + `"type": "module"` because Node's CJS interop maps
+  the default export to the module's `module.exports` object.
+- **gramjs ships optional native deps** (`bufferutil`, `utf-8-validate`,
+  `core-js`, `es5-ext`) whose build scripts pnpm ignores by default. They're
+  pure speedups for `ws` and not needed at runtime — the install warning is
+  expected; do not allow-list them.
 
 ### Chapter 4 — Forwarding pipeline
 

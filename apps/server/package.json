@@ -12,17 +12,23 @@
     "clean": "rm -rf dist *.tsbuildinfo",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "tg:login": "tsx scripts/tg-login.ts"
   },
   "dependencies": {
     "@tg-feed/shared": "workspace:*",
     "better-sqlite3": "^11.5.0",
+    "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
+    "input": "^1.0.1",
+    "pino": "^9.5.0",
+    "telegram": "^2.26.16",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.7.5",
-    "drizzle-kit": "^0.28.1"
+    "drizzle-kit": "^0.28.1",
+    "pino-pretty": "^11.3.0"
   }
 }

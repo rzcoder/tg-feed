@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "db:generate": "pnpm --filter @tg-feed/server db:generate",
     "db:migrate": "pnpm --filter @tg-feed/server db:migrate",
+    "tg:login": "pnpm --filter @tg-feed/server tg:login",
     "prepare": "simple-git-hooks || true"
   },
   "devDependencies": {
