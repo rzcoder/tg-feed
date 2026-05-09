@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+coverage
+.idea
+data
+pnpm-lock.yaml
+
+# drizzle-kit generated migrations + snapshots
+apps/server/drizzle

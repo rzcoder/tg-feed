@@ -1,0 +1,14 @@
+{
+  "name": "@tg-feed/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@tg-feed/shared": "workspace:*"
+  }
+}
