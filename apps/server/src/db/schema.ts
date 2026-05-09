@@ -8,11 +8,10 @@
  * applied JS-side via `$defaultFn` — all writes go through drizzle.
  *
  * JSON columns use drizzle's `mode: 'json'` for automatic parse/stringify.
- * `subscription_filters.params` is typed loosely here; Chapter 6 narrows it
- * to the FilterRuleParams discriminated union from @tg-feed/shared.
  */
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, index, check } from 'drizzle-orm/sqlite-core';
+import type { AnyFilterRuleParams, FilterRuleType } from '@tg-feed/shared';
 
 export const subscriptions = sqliteTable('subscriptions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -32,8 +31,8 @@ export const subscriptionFilters = sqliteTable(
     subscriptionId: integer('subscription_id')
       .notNull()
       .references(() => subscriptions.id, { onDelete: 'cascade' }),
-    ruleType: text('rule_type').notNull(),
-    params: text('params', { mode: 'json' }).$type<Record<string, unknown>>().notNull(),
+    ruleType: text('rule_type').notNull().$type<FilterRuleType>(),
+    params: text('params', { mode: 'json' }).$type<AnyFilterRuleParams>().notNull(),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   },
   (t) => ({

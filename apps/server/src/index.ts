@@ -10,6 +10,7 @@ import 'dotenv/config';
 import process from 'node:process';
 import { config } from './config.js';
 import { closeDb, getDb } from './db/client.js';
+import { createDefaultRegistry, createFilterEvaluator } from './filters/index.js';
 import { createAlbumDebouncer, createForwardingPipeline } from './forwarding/index.js';
 import { logger } from './lib/logger.js';
 import { createTelegramClient, disconnectClient, requireTelegramEnv } from './tg/client.js';
@@ -24,8 +25,10 @@ async function main(): Promise<void> {
   logger.info('connected to Telegram');
 
   const db = getDb();
+  const filterRegistry = createDefaultRegistry();
+  const filterEvaluator = createFilterEvaluator({ db, registry: filterRegistry, logger });
   const pipeline = createForwardingPipeline({ client, db, logger });
-  const debouncer = createAlbumDebouncer({ downstream: pipeline, logger });
+  const debouncer = createAlbumDebouncer({ downstream: pipeline, filterEvaluator, logger });
   attachNewMessageListener(client, db, logger, debouncer);
   await resolveSubscriptionsOnStartup(client, db, logger);
 

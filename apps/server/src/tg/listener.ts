@@ -43,7 +43,12 @@ export function attachNewMessageListener(
       sourceChatId: matched.sourceChatId,
       destinationChatId: matched.destinationChatId,
       sourceMessageId: matchable.messageId,
+      text: matchable.text,
+      hasMedia: matchable.hasMedia,
       ...(matchable.groupedId !== undefined ? { groupedId: matchable.groupedId } : {}),
+      ...(matchable.senderUsername !== undefined
+        ? { senderUsername: matchable.senderUsername }
+        : {}),
     });
   };
 

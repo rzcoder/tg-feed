@@ -101,11 +101,13 @@ docs/                         # this file + PLAN.md + PROGRESS.md
 3. **All DB access goes through drizzle**, never raw `better-sqlite3` `.prepare()` outside
    `src/db/`.
 4. **Adding a filter rule:**
-   - drop a file at `apps/server/src/filters/rules/<name>.ts`
-   - export `{ type, label, paramsSchema (zod), evaluate(message, params) }`
-   - register it in `apps/server/src/filters/registry.ts` (re-exports auto-register on
-     import)
-   - the web UI picks it up automatically via `GET /api/filters/catalog`
+   - add the params zod schema + inferred type to `packages/shared/src/filters.ts`
+     (and append the rule type to `FILTER_RULE_TYPES`)
+   - drop a file at `apps/server/src/filters/rules/<name>.ts` exporting a
+     `FilterRule<'<name>'>` (`{ type, label, paramsSchema, evaluate(context, params) }`)
+   - register it in `createDefaultRegistry()` at
+     `apps/server/src/filters/rules/index.ts` — one `register(...)` line
+   - the web UI picks it up automatically via `GET /api/filters/catalog` (Ch 7+)
 5. **No business logic in `index.ts` files.** They wire modules together; logic lives in
    focused modules.
 6. **Keep code DRY but not over-abstracted.** If you've copy-pasted twice, extract on the

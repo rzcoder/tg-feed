@@ -19,6 +19,15 @@ export interface RawForwardJob {
   destinationChatId: string;
   sourceMessageId: string;
   groupedId?: string;
+  /**
+   * Filter-relevant content carried with the job so the album debouncer can
+   * evaluate filters once per album (using the caption-bearing member) rather
+   * than per source message — albums put the caption only on the first
+   * message, so per-message text filtering would silently fragment them.
+   */
+  text: string;
+  hasMedia: boolean;
+  senderUsername?: string;
 }
 
 export interface ForwardJob {

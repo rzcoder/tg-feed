@@ -67,7 +67,7 @@ describe('db schema', () => {
         .values({ sourceChatId: 's', sourceTitle: 't', destinationChatId: 'd' })
         .returning()
         .all();
-      const params = { keyword: 'foo', caseInsensitive: true, count: 3 };
+      const params = { value: 'foo', caseInsensitive: true } as const;
       const [filter] = db
         .insert(subscriptionFilters)
         .values({
@@ -88,8 +88,8 @@ describe('db schema', () => {
         .all();
       db.insert(subscriptionFilters)
         .values([
-          { subscriptionId: sub!.id, ruleType: 'has-media', params: { value: true } },
-          { subscriptionId: sub!.id, ruleType: 'min-length', params: { value: 10 } },
+          { subscriptionId: sub!.id, ruleType: 'has-media', params: { required: true } },
+          { subscriptionId: sub!.id, ruleType: 'min-length', params: { min: 10 } },
         ])
         .run();
       expect(db.select().from(subscriptionFilters).all()).toHaveLength(2);
@@ -102,7 +102,11 @@ describe('db schema', () => {
       expect(() =>
         db
           .insert(subscriptionFilters)
-          .values({ subscriptionId: 9999, ruleType: 'noop', params: {} })
+          .values({
+            subscriptionId: 9999,
+            ruleType: 'has-media',
+            params: { required: true },
+          })
           .run(),
       ).toThrow(/FOREIGN KEY/i);
     });

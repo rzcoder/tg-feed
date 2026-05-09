@@ -27,11 +27,18 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
       `forwardMessages` call. `ForwardJob.sourceMessageId` lifted to
       `sourceMessageIds: string[]`; new `RawForwardJob` carries the optional
       `groupedId` from listener to debouncer.
-- → [ ] **Chapter 6 — Filter framework** — rule registry + first rules
-  (`text-contains`, `text-excludes`, `text-regex`, `has-media`, `min-length`,
-  `sender-allowlist`).
-- [ ] **Chapter 7 — API server** — Fastify with cookie auth, CRUD for subscriptions /
-      filters / settings / log; uses shared zod schemas.
+- [x] **Chapter 6 — Filter framework** — `@tg-feed/shared` rule type defs +
+      zod schemas for the six v1 rules (`text-contains`, `text-excludes`,
+      `text-regex`, `has-media`, `min-length`, `sender-allowlist`); factory
+      registry + per-rule files + evaluator in `apps/server/src/filters/`.
+      Filter eval lives at the album-debouncer flush/pass-through boundary
+      so albums pass or fail as a unit (against the caption-bearing
+      member's content). Skipped messages get one `forward_log` row per
+      source id (`status='filtered'`, joined reasons in `error`). Schema
+      types narrowed to `FilterRuleType` / `AnyFilterRuleParams` (TS-only,
+      no migration).
+- → [ ] **Chapter 7 — API server** — Fastify with cookie auth, CRUD for subscriptions /
+  filters / settings / log; uses shared zod schemas.
 - [ ] **Chapter 8 — Event bus + SSE** — typed event bus, `GET /api/stream` SSE.
 - [ ] **Chapter 9 — Web skeleton** — Vite + React + Tailwind + shadcn/ui + Router +
       TanStack Query + auth/login.
@@ -254,7 +261,96 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ### Chapter 6 — Filter framework
 
-_(notes to be filled in when work starts)_
+- Done. New module `apps/server/src/filters/` with `types.ts`, `registry.ts`,
+  `evaluate.ts`, `index.ts` (barrel), and `rules/{textContains,textExcludes,
+textRegex,hasMedia,minLength,senderAllowlist}.ts` plus
+  `rules/index.ts#createDefaultRegistry()`. Shared package gains
+  `packages/shared/src/filters.ts` with the rule type tuple, per-rule zod
+  schemas, the `filterRuleParamsSchemas` map, and the `AnyFilterRuleParams`
+  union; re-exported through `packages/shared/src/index.ts`. zod added as a
+  direct dep on `packages/shared/package.json` (was a transitive on the
+  server side; pinned to the same `^3.23.8`).
+- **Filter eval lives at the album debouncer, not the listener.** Telegram
+  albums put the caption on a single member only — the rest arrive with empty
+  text. Per-message text filtering would silently fragment albums (one
+  member passes, the rest fail) and worse: `text-excludes` would let the
+  un-captioned members of a spam-captioned album through. Filter eval at the
+  debouncer's pass-through (ungrouped) and flush (grouped) paths runs once
+  per album against the caption-bearing member, so the group passes or fails
+  atomically. `pickCaptionBearingMember` picks the longest-text job, ties
+  broken by lowest `sourceMessageId` — robust against arrival-order bursts.
+- **`RawForwardJob` grew `text`, `hasMedia`, `senderUsername?`.**
+  `MatchableEvent` got the same fields. `ForwardJob` (post-debounce) is
+  unchanged — the pipeline forwards by id and doesn't read content. The
+  listener pulls these straight from `extractMatchableEvent` and threads
+  them into `forwarding.enqueue`. `MessageContext` (in `filters/types.ts`)
+  is the structural subset the evaluator consumes — `MatchableEvent` and
+  `RawForwardJob` both satisfy it without explicit adapter code.
+- **Two rule shapes: `FilterRule<T>` (typed) and `RegisteredFilterRule`
+  (type-erased).** zod's `.default(...)` makes the schema's Input type wider
+  than its Output, so `paramsSchema: z.ZodType<FilterRuleParamsFor<T>>` won't
+  accept a real `z.object({...}).default(...)` schema. Workaround:
+  `paramsSchema: z.ZodTypeAny` on the rule shape (each rule still references
+  its concrete schema at the declaration site). The registry stores
+  `RegisteredFilterRule` whose `evaluate(ctx, params: unknown)` matches the
+  evaluator's call site (params come from a JSON column and are validated
+  by the rule's own schema before evaluate is invoked). The cast happens
+  once, at `register`.
+- **Fail-OPEN on broken filter rows** — unknown `ruleType`, zod parse
+  failure on `params`, or a runtime throw inside `rule.evaluate` causes the
+  evaluator to log a warning and skip that single row. Other rules still
+  gate the message. Per the user's choice on the planning question: a
+  misconfigured single rule shouldn't gate the whole subscription. If ALL
+  rules fail open the empty-set result is `pass: true` (vacuous AND). The
+  one `try/catch` lives in `evaluateFilters` — rules don't self-handle.
+  `text-regex` is the rule most likely to throw (`SyntaxError` on a bad
+  pattern); its rule test confirms the throw propagates instead of being
+  swallowed inside the rule.
+- **Evaluator queries with `ORDER BY id ASC`** so reasons accumulate in
+  insertion order. Without this, SQLite's row order is implementation-
+  defined and the joined `error` text would be non-deterministic for tests
+  and the future Activity UI.
+- **`forward_log` write convention preserved.** One row per source id, same
+  as Ch 4/5. For an album-wide rejection that's N rows with identical
+  `subscriptionId`, `status='filtered'`, `error=reasons.join('; ')`,
+  `destMessageId=null`. The evaluator owns this side effect; the debouncer
+  doesn't touch the DB. Reason format is `"<ruleType>: <short reason>"` —
+  no excerpts of the offending message text (deterministic, no PII leakage,
+  predictable widths for any future UI).
+- **Schema narrowing was TS-only.** Changed `subscriptionFilters.ruleType`
+  to `.$type<FilterRuleType>()` and `params` to `.$type<AnyFilterRuleParams>()`.
+  `pnpm db:generate` reports "no schema changes" — drizzle's `.$type<>()` is
+  a compile-time assertion only. `schema.test.ts` had to swap its fictional
+  filter shapes (`{keyword,count}`, `{value: true}`, etc.) for real ones
+  from the new union; the FK-violation test changed `ruleType: 'noop'` to
+  `'has-media'` since FilterRuleType is now a literal union.
+- **Factory registry, not module-import side effects.** `createRegistry()`
+  returns a fresh empty registry; `createDefaultRegistry()` builds one and
+  registers all 6 v1 rules. Server boot calls the latter once. AGENTS.md
+  convention #4 was updated to reflect the new "drop file + add a
+  `register(...)` line in `rules/index.ts`" workflow (PLAN.md's earlier
+  "self-register on import" wording is the historical record). PLAN.md
+  isn't edited.
+- **Sender extraction is best-effort.** `extractMatchableEvent` reads
+  `message.sender?.username` (lowercased). For most public broadcast
+  channels the sender is the channel itself with no `username` exposed
+  per-message, so `senderUsername` is undefined and `sender-allowlist`
+  fails-with-a-specific-reason (`"no sender info on message"`) — the
+  reason text deliberately differentiates "broadcast channel, can't
+  apply" from "user not in allowlist." The Ch 3 precedent ("adapter half
+  is exercised live, untested") is broken here: sender extraction is
+  non-trivial enough to warrant unit tests — `messageMatcher.test.ts`
+  gained an `extractMatchableEvent` block covering text, media, groupedId,
+  and sender extraction.
+- **Tests:** 62 new tests in this chapter — 20 in
+  `packages/shared/src/filters.test.ts` (per-rule zod accept/reject), 6 in
+  `registry.test.ts`, 4 each in the six rule files, 12 in
+  `evaluate.test.ts` (pure helper + DB-integration cases), plus 4 new
+  filter-integration tests in `albumDebouncer.test.ts` and 8 new
+  `extractMatchableEvent` tests in `messageMatcher.test.ts`. Total repo
+  test count: 136. Patterns reused: `createTestDb()` for in-memory DB,
+  `createLogger({silent:true})` for noiseless tests, fake timers + capturing
+  downstream for the debouncer.
 
 ### Chapter 7 — API server
 
