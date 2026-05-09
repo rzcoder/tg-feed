@@ -11,7 +11,14 @@
  */
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, index, check } from 'drizzle-orm/sqlite-core';
-import type { AnyFilterRuleParams, FilterRuleType } from '@tg-feed/shared';
+import {
+  FORWARD_LOG_STATUSES,
+  type AnyFilterRuleParams,
+  type FilterRuleType,
+  type ForwardLogStatus,
+} from '@tg-feed/shared';
+
+export { FORWARD_LOG_STATUSES, type ForwardLogStatus };
 
 export const subscriptions = sqliteTable('subscriptions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -44,9 +51,6 @@ export const appSettings = sqliteTable('app_settings', {
   key: text('key').primaryKey(),
   value: text('value', { mode: 'json' }).$type<unknown>().notNull(),
 });
-
-export const FORWARD_LOG_STATUSES = ['sent', 'filtered', 'flood_wait', 'failed'] as const;
-export type ForwardLogStatus = (typeof FORWARD_LOG_STATUSES)[number];
 
 export const forwardLog = sqliteTable(
   'forward_log',

@@ -37,9 +37,17 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
       source id (`status='filtered'`, joined reasons in `error`). Schema
       types narrowed to `FilterRuleType` / `AnyFilterRuleParams` (TS-only,
       no migration).
-- → [ ] **Chapter 7 — API server** — Fastify with cookie auth, CRUD for subscriptions /
-  filters / settings / log; uses shared zod schemas.
-- [ ] **Chapter 8 — Event bus + SSE** — typed event bus, `GET /api/stream` SSE.
+- [x] **Chapter 7 — API server** — Fastify with single-user signed-cookie auth.
+      `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/me`; CRUD for
+      `/api/subscriptions`, per-sub filters at `/api/subscriptions/:id/filters`
+      with a discriminated-union request schema, `GET /api/filters/catalog` from
+      the live registry, `GET/PUT /api/settings`, paginated `GET /api/forward-log`.
+      `requireWebAuthEnv` parallels `requireTelegramEnv`. `FORWARD_LOG_STATUSES`
+      moved to `@tg-feed/shared`. Error handler maps `ZodError` and `AppError`
+      subclasses (`UnauthorizedError`/`NotFoundError`/`ValidationError`/`ConflictError`
+      from new `lib/errors.ts`) to `{ error: { code, message, issues? } }`. 102 new
+      tests; 238 total.
+- → [ ] **Chapter 8 — Event bus + SSE** — typed event bus, `GET /api/stream` SSE.
 - [ ] **Chapter 9 — Web skeleton** — Vite + React + Tailwind + shadcn/ui + Router +
       TanStack Query + auth/login.
 - [ ] **Chapter 10 — Web: Subscriptions UI**.
@@ -354,7 +362,104 @@ textRegex,hasMedia,minLength,senderAllowlist}.ts` plus
 
 ### Chapter 7 — API server
 
-_(notes to be filled in when work starts)_
+- Done. New module `apps/server/src/api/` with `server.ts` (Fastify factory),
+  `auth.ts` (env helper + cookie helpers + `requireAuth` preHandler),
+  `errorHandler.ts`, `testing.ts` (`buildTestApp` + `loginAndGetCookie`
+  helper), and `routes/{auth,subscriptions,filters,settings,forwardLog}.ts`.
+  `apps/server/src/lib/errors.ts` lands the typed `AppError` hierarchy that
+  AGENTS.md #9 has been promising since Ch 1. 102 new tests; total 238.
+- **`requireWebAuthEnv` mirrors `requireTelegramEnv` from `tg/client.ts`.**
+  `WEB_PASSWORD` and `SESSION_SECRET` stay `.optional()` in `config.ts` so
+  `pnpm db:migrate` and `pnpm tg:login` keep working without them — only
+  the boot path in `index.ts` calls the require helper. Same precedent
+  Ch 3 set for Telegram env.
+- **`FORWARD_LOG_STATUSES` moved to `@tg-feed/shared`** (`packages/shared/src/forwardLog.ts`).
+  The wire DTO and the drizzle schema now refer to the same literal tuple
+  through `@tg-feed/shared`; `db/schema.ts` re-exports it for internal
+  callers that imported from the schema module pre-move. The CHECK-constraint
+  literal in the schema is still inline SQL (drizzle's `text({ enum: ... })`
+  is TS-only) — keep updates in lockstep with the tuple.
+- **Auth: signed cookie, value `'1'`.** `verifyPassword` runs both inputs
+  through SHA-256 then `timingSafeEqual` — fixed-size digests dodge the
+  length-mismatch throw (which is itself a side channel) AND mask password
+  length from timing observation in one go. Cookie name `tg_feed_session`,
+  attrs `httpOnly + sameSite=lax + secure(if prod) + 30 day maxAge`.
+  Cleared cookie sent on logout omits `signed: true` because clearing
+  doesn't need a signature.
+- **Fastify encapsulation gives auth scoping for free.** Public scope =
+  `POST /api/auth/login` only. Authed scope =
+  `addHook('preHandler', requireAuth)` then everything else. No per-route
+  opt-in to forget. Both scopes use `prefix: '/api'`.
+- **`@fastify/static` registered unconditionally** pointing at
+  `apps/web/dist`. The plugin requires the directory to exist, so the
+  factory does `mkdirSync(WEB_DIST_ROOT, { recursive: true })` before
+  registration — until Ch 9/14 builds a real SPA the directory just
+  stays empty and every non-API path 404s. Decision made deliberately
+  (PLAN.md Ch 7 lists the plugin) rather than deferring; cleaner than
+  guarding the registration.
+- **CORS only in non-production.** `@fastify/cors` registered with
+  `origin: ['http://localhost:5173']` and `credentials: true` (Vite needs
+  the credentials for the cookie to round-trip). Production is same-origin
+  via the static plugin — registering CORS would only widen the attack
+  surface.
+- **Shared API DTOs** live in `packages/shared/src/api.ts` and re-export
+  through the package barrel. `subscriptionDtoSchema.createdAt` is
+  `z.string()` (ISO at the wire); the server `.toISOString()`s before
+  returning. `forwardLogQuerySchema` uses `z.coerce` so query strings
+  parse, with `limit` clamped 1–200 and a `FORWARD_LOG_LIMIT_DEFAULT`
+  constant for the web client to default to.
+- **Discriminated union for filter create.** `createSubscriptionFilterRequestSchema`
+  is `z.discriminatedUnion('ruleType', [...])` with one variant per rule
+  pulling its `paramsSchema` from `@tg-feed/shared`'s `filterRuleParamsSchemas`.
+  Variants are hand-listed (not mapped from `FILTER_RULE_TYPES`) because
+  zod's discriminated-union signature wants a literal-typed tuple. PATCH
+  body keeps `params` loose (`z.record`) and the route handler validates
+  it against the existing row's `ruleType` — rule type itself is
+  immutable post-creation (delete + re-add to switch).
+- **PATCH bodies hand-written, never `.partial()` of create.** Mitigation
+  for the Ch 6 zod default-value landmine (Input ≠ Output divergence
+  silently lost by `.partial()`). Both subscription and filter PATCH
+  schemas `.refine` away the empty body so callers can't no-op.
+- **Cross-sub filter access returns 404.** `findFilter(db, subId, filterId)`
+  ANDs both ids in the WHERE clause; the route never reveals whether the
+  filter id exists under a different sub. Prevents id-guessing across
+  subscriptions.
+- **Settings hide multi-key abstraction.** Wire shape is flat
+  `{ delayMs }`; internally writes to row keyed `'global'` with value
+  `{ delayMs }`, mirroring `getGlobalDelayMs`'s defensive read. GET
+  never 404s — falls back to `DEFAULT_DELAY_MS` (8 s). The settings
+  route imports `DEFAULT_DELAY_MS`/`GLOBAL_SETTINGS_KEY`/`getGlobalDelayMs`
+  from `forwarding/throttle.ts` so there's exactly one defaulting code
+  path; the integration test asserts that PUT visibly affects the
+  pipeline's view of the delay.
+- **Forward log: `LEFT JOIN subscriptions` + `desc(createdAt), desc(id)`.**
+  FK is `ON DELETE SET NULL` (Ch 2), so historical rows for deleted subs
+  must surface with `subscriptionTitle: null` rather than disappear from
+  an INNER JOIN. Tiebreaker `desc(id)` keeps pagination deterministic
+  for albums (N rows in one transaction share `createdAt` ms). Pagination
+  uses `limit + 1` trick to compute `nextOffset` without a `COUNT(*)`.
+- **Error handler maps `ZodError` and `AppError` subclasses** to
+  `{ error: { code, message, issues? } }` from
+  `errorResponseSchema` in shared. Anything else → 500 with generic
+  `internal` message; original error logged via `request.log.error({ err })`
+  but never echoed (no leaking of internals like DB connection strings).
+- **Test scaffolding pattern: `buildTestApp()`** in `api/testing.ts`.
+  Builds an isolated app with in-memory DB and fixed test webAuth, plus
+  `loginAndGetCookie()` that does a real login and returns the
+  `Set-Cookie` value (clients echo only `name=value`, not the attrs). All
+  route tests use this, so cookie signing roundtrips through the same
+  secret; tests can't fabricate signed cookies otherwise.
+- **Shutdown order changed:** `app.close() → debouncer.stop() → pipeline.stop()
+→ disconnectClient(client) → closeDb()`. HTTP closes first so no new
+  requests land while downstream layers are torn down.
+- **Tests:** 102 new — 27 in `packages/shared/src/api.test.ts` (DTO
+  accept/reject, discriminated union, default propagation, query
+  coercion), 14 in `auth.test.ts` (env helper + verifyPassword), 9 in
+  `errorHandler.test.ts` (each branch + Fastify-injected through real
+  app), 4 in `server.test.ts` (smoke + cookie roundtrip + tampered
+  cookie), 8 in `routes/auth.test.ts`, 14 in `routes/subscriptions.test.ts`,
+  14 in `routes/filters.test.ts`, 9 in `routes/settings.test.ts`, 8 in
+  `routes/forwardLog.test.ts`.
 
 ### Chapter 8 — Event bus + SSE
 
