@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
+import type { StreamEventInput } from '@tg-feed/shared';
 import type { Db } from '../db/client.js';
 import { forwardLog, subscriptionFilters, subscriptions } from '../db/schema.js';
 import { createTestDb } from '../db/testing.js';
+import type { EventBus } from '../events/bus.js';
 import { createLogger } from '../lib/logger.js';
 import { createFilterEvaluator, evaluateFilters } from './evaluate.js';
 import { createRegistry } from './registry.js';
@@ -13,6 +15,26 @@ import { minLengthRule } from './rules/minLength.js';
 import type { MessageContext } from './types.js';
 
 const logger = createLogger({ silent: true });
+
+interface StubBus extends EventBus {
+  emitted: StreamEventInput[];
+}
+
+function makeStubBus(): StubBus {
+  const emitted: StreamEventInput[] = [];
+  return {
+    emitted,
+    emit(input) {
+      emitted.push(input);
+    },
+    on() {
+      return () => {};
+    },
+    listenerCount() {
+      return 0;
+    },
+  };
+}
 
 function seedSubscription(db: Db): number {
   const [row] = db
@@ -197,7 +219,12 @@ describe('createFilterEvaluator (with DB)', () => {
   });
 
   it('subscription with no filters → pass, no log row', () => {
-    const evaluator = createFilterEvaluator({ db, registry: createDefaultRegistry(), logger });
+    const evaluator = createFilterEvaluator({
+      db,
+      registry: createDefaultRegistry(),
+      logger,
+      bus: makeStubBus(),
+    });
     expect(evaluator.evaluate(ctx({ text: 'whatever' }), subId, ['10'])).toEqual({
       pass: true,
     });
@@ -212,7 +239,12 @@ describe('createFilterEvaluator (with DB)', () => {
         params: { value: 'rust', caseInsensitive: true },
       })
       .run();
-    const evaluator = createFilterEvaluator({ db, registry: createDefaultRegistry(), logger });
+    const evaluator = createFilterEvaluator({
+      db,
+      registry: createDefaultRegistry(),
+      logger,
+      bus: makeStubBus(),
+    });
     expect(evaluator.evaluate(ctx({ text: 'rust news' }), subId, ['10'])).toEqual({
       pass: true,
     });
@@ -234,7 +266,12 @@ describe('createFilterEvaluator (with DB)', () => {
         },
       ])
       .run();
-    const evaluator = createFilterEvaluator({ db, registry: createDefaultRegistry(), logger });
+    const evaluator = createFilterEvaluator({
+      db,
+      registry: createDefaultRegistry(),
+      logger,
+      bus: makeStubBus(),
+    });
     expect(evaluator.evaluate(ctx({ text: 'short' }), subId, ['10', '11', '12'])).toEqual({
       pass: false,
     });
@@ -260,7 +297,12 @@ describe('createFilterEvaluator (with DB)', () => {
         enabled: false,
       })
       .run();
-    const evaluator = createFilterEvaluator({ db, registry: createDefaultRegistry(), logger });
+    const evaluator = createFilterEvaluator({
+      db,
+      registry: createDefaultRegistry(),
+      logger,
+      bus: makeStubBus(),
+    });
     expect(evaluator.evaluate(ctx({ text: 'no match here' }), subId, ['10'])).toEqual({
       pass: true,
     });
@@ -282,11 +324,81 @@ describe('createFilterEvaluator (with DB)', () => {
         },
       ])
       .run();
-    const evaluator = createFilterEvaluator({ db, registry: createDefaultRegistry(), logger });
+    const evaluator = createFilterEvaluator({
+      db,
+      registry: createDefaultRegistry(),
+      logger,
+      bus: makeStubBus(),
+    });
     evaluator.evaluate(ctx({ text: 'no' }), subId, ['10']);
     const [row] = db.select().from(forwardLog).where(eq(forwardLog.subscriptionId, subId)).all();
     const reasons = row!.error!.split('; ');
     expect(reasons[0]).toMatch(/^min-length:/);
     expect(reasons[1]).toMatch(/^text-contains:/);
+  });
+
+  describe('bus emission', () => {
+    it('emits forward.filtered with reasons on rejection', () => {
+      db.insert(subscriptionFilters)
+        .values({
+          subscriptionId: subId,
+          ruleType: 'min-length',
+          params: { min: 100 },
+        })
+        .run();
+      const bus = makeStubBus();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus,
+      });
+
+      const result = evaluator.evaluate(ctx({ text: 'no' }), subId, ['10', '11']);
+
+      expect(result).toEqual({ pass: false });
+      expect(bus.emitted).toHaveLength(1);
+      expect(bus.emitted[0]).toMatchObject({
+        type: 'forward.filtered',
+        subscriptionId: subId,
+        sourceMessageIds: ['10', '11'],
+      });
+      const filtered = bus.emitted[0] as Extract<StreamEventInput, { type: 'forward.filtered' }>;
+      expect(filtered.reasons).toHaveLength(1);
+      expect(filtered.reasons[0]).toMatch(/^min-length:/);
+    });
+
+    it('does not emit on pass', () => {
+      db.insert(subscriptionFilters)
+        .values({
+          subscriptionId: subId,
+          ruleType: 'text-contains',
+          params: { value: 'rust', caseInsensitive: true },
+        })
+        .run();
+      const bus = makeStubBus();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus,
+      });
+
+      evaluator.evaluate(ctx({ text: 'rust news' }), subId, ['10']);
+      expect(bus.emitted).toHaveLength(0);
+    });
+
+    it('does not emit on empty filter set (vacuous pass)', () => {
+      const bus = makeStubBus();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus,
+      });
+
+      evaluator.evaluate(ctx({ text: 'anything' }), subId, ['10']);
+      expect(bus.emitted).toHaveLength(0);
+    });
   });
 });

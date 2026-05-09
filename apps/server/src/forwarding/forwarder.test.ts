@@ -1,11 +1,33 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type { StreamEventInput } from '@tg-feed/shared';
 import { createTestDb, type TestDbHandle } from '../db/testing.js';
 import { forwardLog, subscriptions, type Subscription } from '../db/schema.js';
+import type { EventBus } from '../events/bus.js';
 import { createLogger } from '../lib/logger.js';
 import { createForwarder, type ForwarderClient } from './forwarder.js';
 import type { ForwardJob } from './types.js';
 
 const logger = createLogger({ silent: true });
+
+interface StubBus extends EventBus {
+  emitted: StreamEventInput[];
+}
+
+function makeStubBus(): StubBus {
+  const emitted: StreamEventInput[] = [];
+  return {
+    emitted,
+    emit(input) {
+      emitted.push(input);
+    },
+    on() {
+      return () => {};
+    },
+    listenerCount() {
+      return 0;
+    },
+  };
+}
 
 function seedSubscription(handle: TestDbHandle): Subscription {
   const [row] = handle.db
@@ -45,10 +67,12 @@ describe('createForwarder', () => {
     const forwardMessages = vi
       .fn<ForwarderClient['forwardMessages']>()
       .mockResolvedValue([{ id: 999 }]);
+    const bus = makeStubBus();
     const forwarder = createForwarder({
       client: { forwardMessages },
       db: handle.db,
       logger,
+      bus,
     });
 
     const outcome = await forwarder(makeJob(sub, ['42']));
@@ -67,6 +91,15 @@ describe('createForwarder', () => {
       status: 'sent',
       error: null,
     });
+    expect(bus.emitted.map((e) => e.type)).toEqual(['forward.started', 'forward.completed']);
+    expect(bus.emitted[1]).toMatchObject({
+      type: 'forward.completed',
+      subscriptionId: sub.id,
+      sourceChatId: '-100SOURCE',
+      destinationChatId: '-100DEST',
+      sourceMessageIds: ['42'],
+      destMessageIds: ['999'],
+    });
   });
 
   it('forwards an album in one call and writes one log row per source id, paired with dest ids by index', async () => {
@@ -74,10 +107,12 @@ describe('createForwarder', () => {
     const forwardMessages = vi
       .fn<ForwarderClient['forwardMessages']>()
       .mockResolvedValue([{ id: 901 }, { id: 902 }, { id: 903 }]);
+    const bus = makeStubBus();
     const forwarder = createForwarder({
       client: { forwardMessages },
       db: handle.db,
       logger,
+      bus,
     });
 
     const outcome = await forwarder(makeJob(sub, ['42', '43', '44']));
@@ -97,6 +132,12 @@ describe('createForwarder', () => {
     expect(rows[0]).toMatchObject({ sourceMessageId: '42', destMessageId: '901', status: 'sent' });
     expect(rows[1]).toMatchObject({ sourceMessageId: '43', destMessageId: '902', status: 'sent' });
     expect(rows[2]).toMatchObject({ sourceMessageId: '44', destMessageId: '903', status: 'sent' });
+    expect(bus.emitted).toHaveLength(2);
+    expect(bus.emitted[1]).toMatchObject({
+      type: 'forward.completed',
+      sourceMessageIds: ['42', '43', '44'],
+      destMessageIds: ['901', '902', '903'],
+    });
   });
 
   it('records flood_wait and returns the seconds when the client throws FloodWaitError', async () => {
@@ -107,10 +148,12 @@ describe('createForwarder', () => {
     const forwardMessages = vi
       .fn<ForwarderClient['forwardMessages']>()
       .mockRejectedValue(new FloodWaitError('flood'));
+    const bus = makeStubBus();
     const forwarder = createForwarder({
       client: { forwardMessages },
       db: handle.db,
       logger,
+      bus,
     });
 
     const outcome = await forwarder(makeJob(sub));
@@ -120,6 +163,13 @@ describe('createForwarder', () => {
     expect(row?.status).toBe('flood_wait');
     expect(row?.destMessageId).toBeNull();
     expect(row?.error).toMatch(/flood_wait 17s/);
+    expect(bus.emitted.map((e) => e.type)).toEqual(['forward.started', 'forward.flood_wait']);
+    expect(bus.emitted[1]).toMatchObject({
+      type: 'forward.flood_wait',
+      subscriptionId: sub.id,
+      sourceMessageIds: ['42'],
+      seconds: 17,
+    });
   });
 
   it('records failed and returns the error message on a non-FloodWait error', async () => {
@@ -127,10 +177,12 @@ describe('createForwarder', () => {
     const forwardMessages = vi
       .fn<ForwarderClient['forwardMessages']>()
       .mockRejectedValue(new Error('bad request'));
+    const bus = makeStubBus();
     const forwarder = createForwarder({
       client: { forwardMessages },
       db: handle.db,
       logger,
+      bus,
     });
 
     const outcome = await forwarder(makeJob(sub));
@@ -140,5 +192,34 @@ describe('createForwarder', () => {
     expect(row?.status).toBe('failed');
     expect(row?.error).toBe('bad request');
     expect(row?.destMessageId).toBeNull();
+    expect(bus.emitted.map((e) => e.type)).toEqual(['forward.started', 'forward.failed']);
+    expect(bus.emitted[1]).toMatchObject({
+      type: 'forward.failed',
+      subscriptionId: sub.id,
+      error: 'bad request',
+    });
+  });
+
+  it('emits forward.started before invoking the client', async () => {
+    const sub = seedSubscription(handle);
+    const bus = makeStubBus();
+    const forwardMessages = vi.fn<ForwarderClient['forwardMessages']>().mockImplementation(() => {
+      // Capture emit ordering at the moment the client is called.
+      expect(bus.emitted.map((e) => e.type)).toEqual(['forward.started']);
+      return Promise.resolve([{ id: 1 }]);
+    });
+    const forwarder = createForwarder({
+      client: { forwardMessages },
+      db: handle.db,
+      logger,
+      bus,
+    });
+
+    await forwarder(makeJob(sub, ['7']));
+    expect(bus.emitted[0]).toMatchObject({
+      type: 'forward.started',
+      subscriptionId: sub.id,
+      sourceMessageIds: ['7'],
+    });
   });
 });

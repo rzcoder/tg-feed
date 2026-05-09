@@ -12,6 +12,7 @@
  */
 import type { Db } from '../db/client.js';
 import { forwardLog, type ForwardLogStatus } from '../db/schema.js';
+import type { EventBus } from '../events/bus.js';
 import type { Logger } from '../lib/logger.js';
 import { isFloodWaitError } from './floodwait.js';
 import type { ForwardJob, ForwardOutcome } from './types.js';
@@ -31,15 +32,23 @@ export interface CreateForwarderDeps {
   client: ForwarderClient;
   db: Db;
   logger: Logger;
+  bus: EventBus;
 }
 
 export type Forwarder = (job: ForwardJob) => Promise<ForwardOutcome>;
 
 export function createForwarder(deps: CreateForwarderDeps): Forwarder {
-  const { client, db, logger } = deps;
+  const { client, db, logger, bus } = deps;
 
   return async (job: ForwardJob): Promise<ForwardOutcome> => {
     const messageIdNums = job.sourceMessageIds.map((id) => Number(id));
+    bus.emit({
+      type: 'forward.started',
+      subscriptionId: job.subscriptionId,
+      sourceChatId: job.sourceChatId,
+      destinationChatId: job.destinationChatId,
+      sourceMessageIds: [...job.sourceMessageIds],
+    });
     try {
       const sent = await client.forwardMessages(job.destinationChatId, {
         messages: messageIdNums,
@@ -59,6 +68,14 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         },
         'forward sent',
       );
+      bus.emit({
+        type: 'forward.completed',
+        subscriptionId: job.subscriptionId,
+        sourceChatId: job.sourceChatId,
+        destinationChatId: job.destinationChatId,
+        sourceMessageIds: [...job.sourceMessageIds],
+        destMessageIds,
+      });
       return { status: 'sent', destMessageIds };
     } catch (err) {
       if (isFloodWaitError(err)) {
@@ -75,6 +92,14 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
           },
           'forward hit flood wait',
         );
+        bus.emit({
+          type: 'forward.flood_wait',
+          subscriptionId: job.subscriptionId,
+          sourceChatId: job.sourceChatId,
+          destinationChatId: job.destinationChatId,
+          sourceMessageIds: [...job.sourceMessageIds],
+          seconds: err.seconds,
+        });
         return { status: 'flood_wait', seconds: err.seconds };
       }
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -90,6 +115,14 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         },
         'forward failed',
       );
+      bus.emit({
+        type: 'forward.failed',
+        subscriptionId: job.subscriptionId,
+        sourceChatId: job.sourceChatId,
+        destinationChatId: job.destinationChatId,
+        sourceMessageIds: [...job.sourceMessageIds],
+        error: errorMessage,
+      });
       return { status: 'failed', error: errorMessage };
     }
   };

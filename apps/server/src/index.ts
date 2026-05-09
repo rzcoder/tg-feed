@@ -16,6 +16,7 @@ import { requireWebAuthEnv } from './api/auth.js';
 import { createApiServer } from './api/server.js';
 import { config } from './config.js';
 import { closeDb, getDb } from './db/client.js';
+import { createEventBus } from './events/bus.js';
 import { createDefaultRegistry, createFilterEvaluator } from './filters/index.js';
 import { createAlbumDebouncer, createForwardingPipeline } from './forwarding/index.js';
 import { logger } from './lib/logger.js';
@@ -32,9 +33,10 @@ async function main(): Promise<void> {
   logger.info('connected to Telegram');
 
   const db = getDb();
+  const bus = createEventBus({ logger });
   const filterRegistry = createDefaultRegistry();
-  const filterEvaluator = createFilterEvaluator({ db, registry: filterRegistry, logger });
-  const pipeline = createForwardingPipeline({ client, db, logger });
+  const filterEvaluator = createFilterEvaluator({ db, registry: filterRegistry, logger, bus });
+  const pipeline = createForwardingPipeline({ client, db, logger, bus });
   const debouncer = createAlbumDebouncer({ downstream: pipeline, filterEvaluator, logger });
   attachNewMessageListener(client, db, logger, debouncer);
   await resolveSubscriptionsOnStartup(client, db, logger);
@@ -47,6 +49,7 @@ async function main(): Promise<void> {
     filterRegistry,
     webAuth,
     isProd: config.NODE_ENV === 'production',
+    bus,
   });
   await app.listen({ host: '0.0.0.0', port: config.PORT });
   logger.info({ port: config.PORT }, 'API listening');

@@ -20,6 +20,7 @@ import {
 } from '@tg-feed/shared';
 import type { Db } from '../../db/client.js';
 import { subscriptions, type Subscription } from '../../db/schema.js';
+import type { EventBus } from '../../events/bus.js';
 import { NotFoundError } from '../../lib/errors.js';
 
 const subscriptionIdParamsSchema = z.object({
@@ -28,13 +29,14 @@ const subscriptionIdParamsSchema = z.object({
 
 export interface RegisterSubscriptionDeps {
   db: Db;
+  bus: EventBus;
 }
 
 export function registerSubscriptionRoutes(
   app: FastifyInstance,
   deps: RegisterSubscriptionDeps,
 ): void {
-  const { db } = deps;
+  const { db, bus } = deps;
 
   app.get('/subscriptions', async () => {
     const rows = db.select().from(subscriptions).orderBy(asc(subscriptions.id)).all();
@@ -54,8 +56,10 @@ export function registerSubscriptionRoutes(
       })
       .returning()
       .all();
+    const row = inserted[0]!;
+    bus.emit({ type: 'subscription.changed', subscriptionId: row.id, change: 'created' });
     reply.status(201);
-    return toDto(inserted[0]!);
+    return toDto(row);
   });
 
   app.patch('/subscriptions/:id', async (request) => {
@@ -69,6 +73,7 @@ export function registerSubscriptionRoutes(
       .where(eq(subscriptions.id, id))
       .returning()
       .all();
+    bus.emit({ type: 'subscription.changed', subscriptionId: id, change: 'updated' });
     return toDto(updated[0]!);
   });
 
@@ -76,6 +81,7 @@ export function registerSubscriptionRoutes(
     const { id } = subscriptionIdParamsSchema.parse(request.params);
     const deleted = db.delete(subscriptions).where(eq(subscriptions.id, id)).returning().all();
     if (deleted.length === 0) throw new NotFoundError('subscription');
+    bus.emit({ type: 'subscription.changed', subscriptionId: id, change: 'deleted' });
     reply.status(204);
     return null;
   });

@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { StreamEvent } from '@tg-feed/shared';
 import { subscriptionFilters, subscriptions } from '../../db/schema.js';
 import { buildTestApp, type TestApp } from '../testing.js';
 
@@ -15,10 +16,15 @@ interface SubscriptionDtoLike {
 describe('subscription routes', () => {
   let testApp: TestApp;
   let cookie: string;
+  let busEvents: StreamEvent[];
 
   beforeEach(async () => {
     testApp = await buildTestApp();
     cookie = await testApp.loginAndGetCookie();
+    busEvents = [];
+    testApp.bus.on((event) => {
+      busEvents.push(event);
+    });
   });
   afterEach(async () => {
     await testApp.close();
@@ -73,6 +79,12 @@ describe('subscription routes', () => {
     });
     expect(body.id).toBeGreaterThan(0);
     expect(typeof body.createdAt).toBe('string');
+    expect(busEvents).toHaveLength(1);
+    expect(busEvents[0]).toMatchObject({
+      type: 'subscription.changed',
+      change: 'created',
+      subscriptionId: body.id,
+    });
   });
 
   it('POST /api/subscriptions honors explicit enabled: false', async () => {
@@ -102,6 +114,7 @@ describe('subscription routes', () => {
     const body = res.json() as { error: { code: string; issues: unknown[] } };
     expect(body.error.code).toBe('validation_error');
     expect(body.error.issues.length).toBeGreaterThan(0);
+    expect(busEvents).toHaveLength(0);
   });
 
   it('PATCH /api/subscriptions/:id updates a single field', async () => {
@@ -121,6 +134,12 @@ describe('subscription routes', () => {
     const body = res.json() as SubscriptionDtoLike;
     expect(body.sourceTitle).toBe('new');
     expect(body.sourceChatId).toBe('a'); // unchanged
+    expect(busEvents).toHaveLength(1);
+    expect(busEvents[0]).toMatchObject({
+      type: 'subscription.changed',
+      change: 'updated',
+      subscriptionId: id,
+    });
   });
 
   it('PATCH /api/subscriptions/:id returns 404 for unknown id', async () => {
@@ -133,6 +152,7 @@ describe('subscription routes', () => {
     expect(res.statusCode).toBe(404);
     const body = res.json() as { error: { code: string } };
     expect(body.error.code).toBe('not_found');
+    expect(busEvents).toHaveLength(0);
   });
 
   it('PATCH /api/subscriptions/:id rejects empty body', async () => {
@@ -185,6 +205,12 @@ describe('subscription routes', () => {
       .where(eq(subscriptionFilters.subscriptionId, subId))
       .all();
     expect(remainingFilters).toHaveLength(0);
+    expect(busEvents).toHaveLength(1);
+    expect(busEvents[0]).toMatchObject({
+      type: 'subscription.changed',
+      change: 'deleted',
+      subscriptionId: subId,
+    });
   });
 
   it('DELETE /api/subscriptions/:id returns 404 for unknown id', async () => {
@@ -194,6 +220,7 @@ describe('subscription routes', () => {
       headers: { cookie },
     });
     expect(res.statusCode).toBe(404);
+    expect(busEvents).toHaveLength(0);
   });
 
   it.each([

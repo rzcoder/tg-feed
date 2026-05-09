@@ -9,6 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
 import { createTestDb, type TestDbHandle } from '../db/testing.js';
+import { createEventBus, type EventBus } from '../events/bus.js';
 import { createDefaultRegistry } from '../filters/rules/index.js';
 import { createLogger } from '../lib/logger.js';
 import { type WebAuth } from './auth.js';
@@ -26,26 +27,36 @@ export interface TestApp {
   app: FastifyInstance;
   db: Db;
   dbHandle: TestDbHandle;
+  bus: EventBus;
   loginAndGetCookie(): Promise<string>;
   close(): Promise<void>;
 }
 
-export async function buildTestApp(): Promise<TestApp> {
+export interface BuildTestAppOptions {
+  /** Override the SSE heartbeat interval (default 25 s — too long for stream tests). */
+  heartbeatMs?: number;
+}
+
+export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<TestApp> {
   const dbHandle = createTestDb();
   const filterRegistry = createDefaultRegistry();
   const logger = createLogger({ silent: true });
+  const bus = createEventBus({ logger });
   const app = await createApiServer({
     db: dbHandle.db,
     logger,
     filterRegistry,
     webAuth: TEST_WEB_AUTH,
     isProd: false,
+    bus,
+    ...(options.heartbeatMs !== undefined ? { heartbeatMs: options.heartbeatMs } : {}),
   });
 
   return {
     app,
     db: dbHandle.db,
     dbHandle,
+    bus,
     async loginAndGetCookie() {
       const res = await app.inject({
         method: 'POST',

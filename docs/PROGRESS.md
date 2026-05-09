@@ -47,9 +47,13 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
       subclasses (`UnauthorizedError`/`NotFoundError`/`ValidationError`/`ConflictError`
       from new `lib/errors.ts`) to `{ error: { code, message, issues? } }`. 102 new
       tests; 238 total.
-- → [ ] **Chapter 8 — Event bus + SSE** — typed event bus, `GET /api/stream` SSE.
-- [ ] **Chapter 9 — Web skeleton** — Vite + React + Tailwind + shadcn/ui + Router +
-      TanStack Query + auth/login.
+- [x] **Chapter 8 — Event bus + SSE** — `Set`-backed `EventBus` with bus-stamped
+      `occurredAt`, threaded through forwarder / filter evaluator / subscription
+      routes; new `GET /api/stream` SSE route in the authed scope using
+      `reply.hijack()` + raw socket writes, 25 s heartbeat (override-able for
+      tests). 15 new tests; 253 total.
+- → [ ] **Chapter 9 — Web skeleton** — Vite + React + Tailwind + shadcn/ui + Router +
+  TanStack Query + auth/login.
 - [ ] **Chapter 10 — Web: Subscriptions UI**.
 - [ ] **Chapter 11 — Web: Filters UI** — schema-driven form per rule.
 - [ ] **Chapter 12 — Web: Settings UI**.
@@ -463,7 +467,104 @@ textRegex,hasMedia,minLength,senderAllowlist}.ts` plus
 
 ### Chapter 8 — Event bus + SSE
 
-_(notes to be filled in when work starts)_
+- Done. New module `apps/server/src/events/bus.ts` (singleton-via-DI, not
+  module-global) plus shared event taxonomy at
+  `packages/shared/src/events.ts`. Bus emit + listener wired into
+  `forwarder.ts` (`forward.started`/`completed`/`failed`/`flood_wait`),
+  `filters/evaluate.ts` (`forward.filtered`), and the subscription route
+  handlers (`subscription.changed`). The SSE consumer is a new authed
+  route `apps/server/src/api/routes/stream.ts`. 15 new tests; 253 total.
+- **`Set<Listener>` instead of `node:events.EventEmitter`.** `EventEmitter.emit`
+  rethrows synchronously when a listener throws, which would propagate a
+  buggy SSE write up into a forwarding-pipeline call site. The `Set`-based
+  bus catches per-listener errors, logs via the injected logger, and keeps
+  going — the forwarder/evaluator never see an error from `bus.emit`.
+  `listenerCount()` becomes `set.size` — used by the SSE cleanup test to
+  verify unsubscribe ran on disconnect. Iteration snapshots the set
+  (`[...listeners]`) so a self-unsubscribing listener doesn't mutate the
+  iterator mid-loop (covered by a dedicated test).
+- **Bus stamps `occurredAt`, not producers.** Single point of timestamping
+  = single thing to mock in tests. Producers emit a `StreamEventInput`
+  (no timestamp); the bus produces a `StreamEvent` (with `occurredAt`
+  ISO). The shared types define the input union directly with per-variant
+  fields next to the discriminator tag — `Omit<Union, 'occurredAt'>`
+  doesn't always preserve discriminated-union narrowing, so co-locating
+  is more robust.
+- **`forward.filtered` added even though PLAN.md doesn't list it.** PLAN.md
+  says "Forwarder + filter evaluator emit events" — listing two emitters
+  is the explicit license. The event peers `forward_log.status='filtered'`
+  from Ch 6 so the Ch 13 Activity feed can render filtered messages
+  alongside forwarded ones (same wire-format symmetry). Carries
+  `reasons: string[]` (un-joined) — the `forward_log.error` joining is a
+  log artifact, not a wire concern.
+- **`subscription.changed` does NOT fire for filter mutations.** PLAN.md
+  narrows to subscription mutations; the Ch 11 filter UI manages its own
+  invalidation. Event payload is intentionally minimal (just
+  `subscriptionId` + `change: 'created'|'updated'|'deleted'`) — the web
+  UI refetches via the existing CRUD endpoint, so re-sending the DTO over
+  the wire would be redundant.
+- **Forwarder emits one event per `ForwardJob`, not per source id.** Albums
+  stay atomic at the event boundary too: a 3-photo album emits one
+  `forward.started` and one `forward.completed` (with
+  `destMessageIds: string[]` of length 3) — matches the Ch 5 album-as-
+  unit decision. Per-source-id `forward_log` rows still happen as before.
+- **SSE route uses `reply.hijack()` + `reply.raw.write`.** `hijack()` tells
+  Fastify "I'm taking over this response — don't call .send() or .end()".
+  After hijack the handler owns `reply.raw` (the underlying
+  `http.ServerResponse`) and the request lifetime. `request.raw.once(
+'close')` fires on graceful close, network drop, and test
+  `AbortController.abort()` alike — that's where the heartbeat interval
+  is cleared and the bus listener unsubscribes. Verified in a dedicated
+  test that asserts `bus.listenerCount()` drops from 1 → 0 after abort.
+- **`SSE_HEARTBEAT_MS = 25_000`** module constant; `heartbeatMs` deps
+  override mirrors the `windowMs` precedent in `albumDebouncer`.
+  `buildTestApp({ heartbeatMs: 50 })` lets the heartbeat test run in
+  ~150 ms with real timers instead of 25 s. `X-Accel-Buffering: no`
+  header disables nginx response buffering for SSE; `Cache-Control:
+no-cache, no-transform` covers most other proxies. Initial `: open\n\n`
+  comment frame so clients see the stream is live before the first real
+  event (which may be many seconds away).
+- **Real timers in the heartbeat test, not fake.** `light-my-request`'s
+  chunk delivery is `process.nextTick`-driven; fake timers + the chunk
+  pipeline race in non-deterministic ways and make heartbeat tests
+  flaky. Real timers + a 50 ms interval is more reliable and the
+  contract is still what's being tested (a heartbeat does arrive).
+- **Test SSE pattern.** `app.inject({ payloadAsStream: true, signal })`
+  resolves the promise at `reply.raw.writeHead(...)` time (verified
+  against `light-my-request@6.6.0`), so the test can read
+  `res.statusCode` / `res.headers` immediately and only then start
+  consuming chunks via `res.stream()`. An `AbortController` aborts the
+  request to terminate the stream cleanly — the handler's
+  `request.raw.once('close')` listener fires on abort. SSE frame
+  parsing waits for the `\n\n` terminator AFTER the event line (two
+  separate `socket.write` calls can arrive as separate chunks; matching
+  on just `event: forward.completed` risks parsing mid-frame).
+- **Cookie auth uniformly applies.** The stream route is registered inside
+  the existing authed scope, so `requireAuth` runs as a preHandler
+  exactly like every other authed route — 401-without-cookie path is
+  the standard JSON envelope, no SSE-mode confusion.
+- **Per-listener safety net is the bus's try/catch, not
+  `socket.writableEnded` guards.** The guards inside the listener and the
+  heartbeat are a courtesy (avoid a stray write after Node has half-closed
+  the socket), but the actual non-fatal path is the bus catching and
+  logging any thrown listener errors. `socket.write` returning `false`
+  doesn't matter for personal-use SSE — backpressure is ignored.
+- **DI threading.** `CreateForwarderDeps`, `CreatePipelineDeps`,
+  `CreateFilterEvaluatorDeps`, `RegisterSubscriptionDeps`,
+  `CreateApiServerDeps` all gained `bus: EventBus`. `apps/server/src/index.ts`
+  creates the bus once after the DB is open and passes it through the
+  whole tree. `apps/server/src/api/testing.ts` `buildTestApp` builds a
+  real bus and exposes it on `TestApp.bus` for assertions and for
+  driving the SSE test (`testApp.bus.emit({...})`).
+- **Tests:** 15 new — 6 in `events/bus.test.ts` (emit/on/unsubscribe,
+  occurredAt stamp, listener-isolation, listenerCount, self-unsubscribe
+  during dispatch); 5 in `api/routes/stream.test.ts` (401, 200 +
+  Content-Type + initial open frame, full event delivery + JSON
+  payload, heartbeat with override, cleanup on disconnect); 1 in
+  `forwarder.test.ts` (started-before-client emit ordering); 3 in
+  `evaluate.test.ts` (filtered emit on rejection, no emit on pass, no
+  emit on empty filter set). Existing forwarder/evaluator/subscription
+  tests gained event assertions (no new test cases, just expanded).
 
 ### Chapter 9 — Web skeleton
 

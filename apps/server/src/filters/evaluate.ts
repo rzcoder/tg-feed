@@ -15,6 +15,7 @@
 import { and, asc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { forwardLog, subscriptionFilters, type SubscriptionFilter } from '../db/schema.js';
+import type { EventBus } from '../events/bus.js';
 import type { Logger } from '../lib/logger.js';
 import type { FilterRegistry } from './registry.js';
 import type { MessageContext } from './types.js';
@@ -31,6 +32,7 @@ export interface CreateFilterEvaluatorDeps {
   db: Db;
   registry: FilterRegistry;
   logger: Logger;
+  bus: EventBus;
 }
 
 interface PureEvaluation {
@@ -39,7 +41,7 @@ interface PureEvaluation {
 }
 
 export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEvaluator {
-  const { db, registry, logger } = deps;
+  const { db, registry, logger, bus } = deps;
 
   return {
     evaluate(
@@ -82,6 +84,12 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
         },
         'message filtered',
       );
+      bus.emit({
+        type: 'forward.filtered',
+        subscriptionId,
+        sourceMessageIds: [...sourceMessageIds],
+        reasons: [...result.reasons],
+      });
       return { pass: false };
     },
   };

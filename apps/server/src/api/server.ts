@@ -26,6 +26,7 @@ import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
+import type { EventBus } from '../events/bus.js';
 import type { FilterRegistry } from '../filters/registry.js';
 import type { Logger } from '../lib/logger.js';
 import { requireAuth, type WebAuth } from './auth.js';
@@ -34,6 +35,7 @@ import { registerAuthRoutes, registerLoginRoute } from './routes/auth.js';
 import { registerFilterRoutes } from './routes/filters.js';
 import { registerForwardLogRoutes } from './routes/forwardLog.js';
 import { registerSettingsRoutes } from './routes/settings.js';
+import { registerStreamRoutes } from './routes/stream.js';
 import { registerSubscriptionRoutes } from './routes/subscriptions.js';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -48,10 +50,13 @@ export interface CreateApiServerDeps {
   filterRegistry: FilterRegistry;
   webAuth: WebAuth;
   isProd: boolean;
+  bus: EventBus;
+  /** Override the SSE heartbeat interval — primarily for tests. */
+  heartbeatMs?: number;
 }
 
 export async function createApiServer(deps: CreateApiServerDeps): Promise<FastifyInstance> {
-  const { db, logger, filterRegistry, webAuth, isProd } = deps;
+  const { db, logger, filterRegistry, webAuth, isProd, bus, heartbeatMs } = deps;
 
   const app = Fastify({ logger: false, bodyLimit: BODY_LIMIT_BYTES });
 
@@ -90,10 +95,14 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
     async (authedScope) => {
       authedScope.addHook('preHandler', requireAuth);
       registerAuthRoutes(authedScope, { isProd });
-      registerSubscriptionRoutes(authedScope, { db });
+      registerSubscriptionRoutes(authedScope, { db, bus });
       registerFilterRoutes(authedScope, { db, filterRegistry });
       registerSettingsRoutes(authedScope, { db });
       registerForwardLogRoutes(authedScope, { db });
+      registerStreamRoutes(authedScope, {
+        bus,
+        ...(heartbeatMs !== undefined ? { heartbeatMs } : {}),
+      });
     },
     { prefix: '/api' },
   );

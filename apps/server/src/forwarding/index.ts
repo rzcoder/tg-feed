@@ -6,6 +6,7 @@
  * via `new ForwardingPipeline(...)` with stubs.
  */
 import type { Db } from '../db/client.js';
+import type { EventBus } from '../events/bus.js';
 import type { Logger } from '../lib/logger.js';
 import { createForwarder, type ForwarderClient } from './forwarder.js';
 import { ForwardingPipeline } from './queue.js';
@@ -25,10 +26,16 @@ export interface CreatePipelineDeps {
   client: ForwarderClient;
   db: Db;
   logger: Logger;
+  bus: EventBus;
 }
 
 export function createForwardingPipeline(deps: CreatePipelineDeps): ForwardingPipeline {
-  const forwarder = createForwarder({ client: deps.client, db: deps.db, logger: deps.logger });
+  const forwarder = createForwarder({
+    client: deps.client,
+    db: deps.db,
+    logger: deps.logger,
+    bus: deps.bus,
+  });
   return new ForwardingPipeline({
     forwarder,
     getDelayMs: () => getGlobalDelayMs(deps.db),
