@@ -1,14 +1,16 @@
 /**
  * @tg-feed/server — entrypoint.
  *
- * Boots the gramjs Telegram client, registers a NewMessage listener that
- * matches against the saved subscriptions, and resolves those subscriptions
- * on startup so stale ones surface as warnings. Forwarding lives in Ch 4.
+ * Boots the gramjs Telegram client, builds the forwarding pipeline,
+ * registers a NewMessage listener that matches against saved subscriptions
+ * and feeds matches into the pipeline, then resolves those subscriptions on
+ * startup so stale ones surface as warnings.
  */
 import 'dotenv/config';
 import process from 'node:process';
 import { config } from './config.js';
 import { closeDb, getDb } from './db/client.js';
+import { createForwardingPipeline } from './forwarding/index.js';
 import { logger } from './lib/logger.js';
 import { createTelegramClient, disconnectClient, requireTelegramEnv } from './tg/client.js';
 import { attachNewMessageListener } from './tg/listener.js';
@@ -22,7 +24,8 @@ async function main(): Promise<void> {
   logger.info('connected to Telegram');
 
   const db = getDb();
-  attachNewMessageListener(client, db, logger);
+  const pipeline = createForwardingPipeline({ client, db, logger });
+  attachNewMessageListener(client, db, logger, pipeline);
   await resolveSubscriptionsOnStartup(client, db, logger);
 
   logger.info('tg-feed server ready');
@@ -33,6 +36,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
     try {
+      await pipeline.stop();
       await disconnectClient(client);
     } finally {
       closeDb();

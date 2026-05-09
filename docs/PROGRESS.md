@@ -19,10 +19,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **Chapter 3 — Telegram client core** — gramjs client from env, `tg:login`
       script, `NewMessage` listener with subscription matcher, startup entity
       resolution. `pino` + `dotenv` landed.
-- → [ ] **Chapter 4 — Forwarding pipeline (no filters yet)** — per-destination FIFO,
-  throttle, FloodWait handling, `forward_log`.
-- [ ] **Chapter 5 — Album / grouped media** — `groupedId` debouncer, batched
-      `forwardMessages`.
+- [x] **Chapter 4 — Forwarding pipeline (no filters yet)** — per-destination FIFO
+      with one worker per destination chat, throttle from `app_settings`,
+      FloodWait detection + retry, `forward_log` row per attempt.
+- → [ ] **Chapter 5 — Album / grouped media** — `groupedId` debouncer, batched
+  `forwardMessages`.
 - [ ] **Chapter 6 — Filter framework** — rule registry + first rules
       (`text-contains`, `text-excludes`, `text-regex`, `has-media`, `min-length`,
       `sender-allowlist`).
@@ -140,7 +141,53 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ### Chapter 4 — Forwarding pipeline
 
-_(notes to be filled in when work starts)_
+- Done. New module `apps/server/src/forwarding/` with `types.ts`, `throttle.ts`,
+  `floodwait.ts`, `forwarder.ts`, `queue.ts`, `index.ts` (factory). Listener
+  signature gained a `forwarding: ForwardingHandle` parameter; `index.ts` builds
+  the pipeline alongside the DB and stops it before disconnecting the client.
+- **Worker-per-destination, not per-subscription.** Telegram throttles per
+  receiving chat, so the throttling domain is the destination. Two subs sharing
+  one destination share its FIFO and delay; two subs with different destinations
+  drain in parallel. Workers are lazy-created on first enqueue and live for the
+  pipeline's lifetime.
+- **Discriminated `ForwardOutcome` instead of throwing.** The forwarder owns the
+  one place where `forward_log` rows are written, and returns
+  `{ status: 'sent' | 'flood_wait' | 'failed', ... }`. The worker switches on
+  `status` — no error classification in the loop, and tests assert on the union
+  directly. FloodWait detection lives in `floodwait.ts` with a structural
+  fallback (matches by `constructor.name === 'FloodWaitError'` + numeric
+  `seconds`) for resilience against gramjs cross-realm error instances.
+- **Throttle default: 8 s.** Lives as `DEFAULT_DELAY_MS` in `throttle.ts`, mid
+  of the PLAN's 5–15 s band. `getGlobalDelayMs(db)` reads the
+  `app_settings.value.delayMs` row keyed `'global'`; missing row, missing
+  field, or non-positive number all silently fall back to the default — a
+  malformed settings row must never trip Telegram's anti-spam by disabling the
+  throttle. No seed row written this chapter; first write happens via the
+  Settings UI in Ch 12 (or earlier via API in Ch 7).
+- **`flood_wait` retry semantics.** On `FloodWaitError`: write a log row with
+  status `flood_wait`, sleep `seconds * 1000` ms, retry the **same** job (do
+  not pop from the queue). The CHECK constraint on `forward_log.status` was
+  pre-built in Ch 2 with `'flood_wait'` baked in, so no schema change needed.
+  No retry cap — Telegram bounds `seconds` itself, and personal use doesn't
+  warrant a circuit breaker.
+- **`DESTINATION_CHAT_ID` env still unused.** Subscriptions carry their own
+  `destinationChatId` (notNull) so the env is dead weight for now. Leave it in
+  `.env.example` and `config.ts` as a future default for the Subscriptions UI
+  add-flow (Ch 10) — easier than re-introducing it later.
+- **Cancellable sleep + AbortController.** Worker sleeps (both throttle and
+  flood-wait) take an `AbortSignal`. `pipeline.stop()` aborts; sleeps resolve
+  immediately, the loop checks `signal.aborted` after every wait, then exits.
+  Same `AbortSignal` is shared across all workers. An in-flight `forwarder()`
+  call is awaited to completion (one max trailing send) — gramjs has no
+  abort hook anyway.
+- **Test patterns.** `vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync(ms)`
+  drives the worker through throttle and flood-wait sleeps; the test injects a
+  `SleepFn` built on `setTimeout` so fake timers control it. The forwarder
+  test seeds a real subscription row in an in-memory DB and asserts on
+  `forward_log` rows by status. The flood-wait type-guard test uses a class
+  expression (not a class declaration) for the synthetic `FloodWaitError` —
+  vitest's transform was renaming declared classes (`FloodWaitError2`), which
+  broke the structural `constructor.name` check.
 
 ### Chapter 5 — Album handling
 
