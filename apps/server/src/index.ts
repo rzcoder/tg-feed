@@ -10,7 +10,7 @@ import 'dotenv/config';
 import process from 'node:process';
 import { config } from './config.js';
 import { closeDb, getDb } from './db/client.js';
-import { createForwardingPipeline } from './forwarding/index.js';
+import { createAlbumDebouncer, createForwardingPipeline } from './forwarding/index.js';
 import { logger } from './lib/logger.js';
 import { createTelegramClient, disconnectClient, requireTelegramEnv } from './tg/client.js';
 import { attachNewMessageListener } from './tg/listener.js';
@@ -25,7 +25,8 @@ async function main(): Promise<void> {
 
   const db = getDb();
   const pipeline = createForwardingPipeline({ client, db, logger });
-  attachNewMessageListener(client, db, logger, pipeline);
+  const debouncer = createAlbumDebouncer({ downstream: pipeline, logger });
+  attachNewMessageListener(client, db, logger, debouncer);
   await resolveSubscriptionsOnStartup(client, db, logger);
 
   logger.info('tg-feed server ready');
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
     try {
+      debouncer.stop();
       await pipeline.stop();
       await disconnectClient(client);
     } finally {

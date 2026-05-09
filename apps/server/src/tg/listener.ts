@@ -3,7 +3,7 @@ import type { TelegramClient } from 'telegram';
 import { NewMessage, type NewMessageEvent } from 'telegram/events/index.js';
 import type { Db } from '../db/client.js';
 import { subscriptions } from '../db/schema.js';
-import type { ForwardingHandle } from '../forwarding/types.js';
+import type { RawForwardingHandle } from '../forwarding/types.js';
 import type { Logger } from '../lib/logger.js';
 import { extractMatchableEvent, matchSubscription } from './messageMatcher.js';
 
@@ -11,7 +11,7 @@ export function attachNewMessageListener(
   client: TelegramClient,
   db: Db,
   logger: Logger,
-  forwarding: ForwardingHandle,
+  forwarding: RawForwardingHandle,
 ): void {
   const handler = async (event: NewMessageEvent): Promise<void> => {
     const matchable = extractMatchableEvent(event);
@@ -43,6 +43,7 @@ export function attachNewMessageListener(
       sourceChatId: matched.sourceChatId,
       destinationChatId: matched.destinationChatId,
       sourceMessageId: matchable.messageId,
+      ...(matchable.groupedId !== undefined ? { groupedId: matchable.groupedId } : {}),
     });
   };
 

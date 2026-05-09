@@ -4,6 +4,7 @@ import type { Subscription } from '../db/schema.js';
 export interface MatchableEvent {
   chatId: string;
   messageId: string;
+  groupedId?: string;
 }
 
 export function extractMatchableEvent(event: NewMessageEvent): MatchableEvent | null {
@@ -11,7 +12,12 @@ export function extractMatchableEvent(event: NewMessageEvent): MatchableEvent | 
   if (!message || message.className !== 'Message') return null;
   const chatId = message.chatId;
   if (!chatId) return null;
-  return { chatId: chatId.toString(), messageId: message.id.toString() };
+  const groupedId = message.groupedId?.toString();
+  return {
+    chatId: chatId.toString(),
+    messageId: message.id.toString(),
+    ...(groupedId !== undefined ? { groupedId } : {}),
+  };
 }
 
 export function matchSubscription(

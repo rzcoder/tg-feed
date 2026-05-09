@@ -20,12 +20,12 @@ function seedSubscription(handle: TestDbHandle): Subscription {
   return row!;
 }
 
-function makeJob(sub: Subscription, sourceMessageId = '42'): ForwardJob {
+function makeJob(sub: Subscription, sourceMessageIds: string[] = ['42']): ForwardJob {
   return {
     subscriptionId: sub.id,
     sourceChatId: sub.sourceChatId,
     destinationChatId: sub.destinationChatId,
-    sourceMessageId,
+    sourceMessageIds,
   };
 }
 
@@ -51,7 +51,7 @@ describe('createForwarder', () => {
       logger,
     });
 
-    const outcome = await forwarder(makeJob(sub, '42'));
+    const outcome = await forwarder(makeJob(sub, ['42']));
 
     expect(forwardMessages).toHaveBeenCalledWith('-100DEST', {
       messages: [42],
@@ -67,6 +67,36 @@ describe('createForwarder', () => {
       status: 'sent',
       error: null,
     });
+  });
+
+  it('forwards an album in one call and writes one log row per source id, paired with dest ids by index', async () => {
+    const sub = seedSubscription(handle);
+    const forwardMessages = vi
+      .fn<ForwarderClient['forwardMessages']>()
+      .mockResolvedValue([{ id: 901 }, { id: 902 }, { id: 903 }]);
+    const forwarder = createForwarder({
+      client: { forwardMessages },
+      db: handle.db,
+      logger,
+    });
+
+    const outcome = await forwarder(makeJob(sub, ['42', '43', '44']));
+
+    expect(forwardMessages).toHaveBeenCalledTimes(1);
+    expect(forwardMessages).toHaveBeenCalledWith('-100DEST', {
+      messages: [42, 43, 44],
+      fromPeer: '-100SOURCE',
+    });
+    expect(outcome).toEqual({ status: 'sent', destMessageIds: ['901', '902', '903'] });
+    const rows = handle.db
+      .select()
+      .from(forwardLog)
+      .all()
+      .sort((a, b) => Number(a.sourceMessageId) - Number(b.sourceMessageId));
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({ sourceMessageId: '42', destMessageId: '901', status: 'sent' });
+    expect(rows[1]).toMatchObject({ sourceMessageId: '43', destMessageId: '902', status: 'sent' });
+    expect(rows[2]).toMatchObject({ sourceMessageId: '44', destMessageId: '903', status: 'sent' });
   });
 
   it('records flood_wait and returns the seconds when the client throws FloodWaitError', async () => {

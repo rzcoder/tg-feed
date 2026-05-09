@@ -11,7 +11,7 @@ function job(destinationChatId: string, sourceMessageId: string): ForwardJob {
     subscriptionId: 1,
     sourceChatId: '-100SRC',
     destinationChatId,
-    sourceMessageId,
+    sourceMessageIds: [sourceMessageId],
   };
 }
 
@@ -52,7 +52,7 @@ describe('ForwardingPipeline', () => {
     const order: string[] = [];
     const sendTimes: number[] = [];
     const forwarder: Forwarder = vi.fn(async (j) => {
-      order.push(j.sourceMessageId);
+      order.push(j.sourceMessageIds[0]!);
       sendTimes.push(Date.now());
       return sent();
     });
@@ -90,7 +90,7 @@ describe('ForwardingPipeline', () => {
   it('drains parallel destinations independently — second destination does not wait for first', async () => {
     const events: string[] = [];
     const forwarder: Forwarder = vi.fn(async (j) => {
-      events.push(`${j.destinationChatId}:${j.sourceMessageId}`);
+      events.push(`${j.destinationChatId}:${j.sourceMessageIds[0]!}`);
       return sent();
     });
 
@@ -115,7 +115,7 @@ describe('ForwardingPipeline', () => {
     const forwarder: Forwarder = vi.fn(async (j): Promise<ForwardOutcome> => {
       callCount++;
       if (callCount === 1) return { status: 'flood_wait', seconds: 30 };
-      return { status: 'sent', destMessageIds: [`fwd-${j.sourceMessageId}`] };
+      return { status: 'sent', destMessageIds: [`fwd-${j.sourceMessageIds[0]!}`] };
     });
 
     const pipeline = new ForwardingPipeline({
@@ -132,7 +132,7 @@ describe('ForwardingPipeline', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(forwarder).toHaveBeenCalledTimes(1);
     expect(forwarder).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sourceMessageId: 'msg-1' }),
+      expect.objectContaining({ sourceMessageIds: ['msg-1'] }),
     );
 
     // Halfway through the flood backoff: still waiting.
@@ -143,14 +143,14 @@ describe('ForwardingPipeline', () => {
     await vi.advanceTimersByTimeAsync(15000);
     expect(forwarder).toHaveBeenCalledTimes(2);
     expect(forwarder).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sourceMessageId: 'msg-1' }),
+      expect.objectContaining({ sourceMessageIds: ['msg-1'] }),
     );
 
     // Then the throttle delay before the next job fires.
     await vi.advanceTimersByTimeAsync(1000);
     expect(forwarder).toHaveBeenCalledTimes(3);
     expect(forwarder).toHaveBeenLastCalledWith(
-      expect.objectContaining({ sourceMessageId: 'msg-2' }),
+      expect.objectContaining({ sourceMessageIds: ['msg-2'] }),
     );
 
     await pipeline.stop();

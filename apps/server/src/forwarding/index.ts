@@ -11,8 +11,15 @@ import { createForwarder, type ForwarderClient } from './forwarder.js';
 import { ForwardingPipeline } from './queue.js';
 import { getGlobalDelayMs } from './throttle.js';
 
-export type { ForwardJob, ForwardOutcome, ForwardingHandle } from './types.js';
+export type {
+  ForwardJob,
+  ForwardOutcome,
+  ForwardingHandle,
+  RawForwardJob,
+  RawForwardingHandle,
+} from './types.js';
 export { ForwardingPipeline } from './queue.js';
+export { ALBUM_DEBOUNCE_MS, createAlbumDebouncer, type AlbumDebouncer } from './albumDebouncer.js';
 
 export interface CreatePipelineDeps {
   client: ForwarderClient;

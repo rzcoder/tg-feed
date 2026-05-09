@@ -22,11 +22,14 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **Chapter 4 — Forwarding pipeline (no filters yet)** — per-destination FIFO
       with one worker per destination chat, throttle from `app_settings`,
       FloodWait detection + retry, `forward_log` row per attempt.
-- → [ ] **Chapter 5 — Album / grouped media** — `groupedId` debouncer, batched
-  `forwardMessages`.
-- [ ] **Chapter 6 — Filter framework** — rule registry + first rules
-      (`text-contains`, `text-excludes`, `text-regex`, `has-media`, `min-length`,
-      `sender-allowlist`).
+- [x] **Chapter 5 — Album / grouped media** — `groupedId` debouncer keyed by
+      `${sourceChatId}:${groupedId}` with a 2 s window, batched into one
+      `forwardMessages` call. `ForwardJob.sourceMessageId` lifted to
+      `sourceMessageIds: string[]`; new `RawForwardJob` carries the optional
+      `groupedId` from listener to debouncer.
+- → [ ] **Chapter 6 — Filter framework** — rule registry + first rules
+  (`text-contains`, `text-excludes`, `text-regex`, `has-media`, `min-length`,
+  `sender-allowlist`).
 - [ ] **Chapter 7 — API server** — Fastify with cookie auth, CRUD for subscriptions /
       filters / settings / log; uses shared zod schemas.
 - [ ] **Chapter 8 — Event bus + SSE** — typed event bus, `GET /api/stream` SSE.
@@ -191,7 +194,63 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
 
 ### Chapter 5 — Album handling
 
-_(notes to be filled in when work starts)_
+- Done. New module `apps/server/src/forwarding/albumDebouncer.ts` sits between
+  the listener and the existing `ForwardingPipeline`. Wiring in `index.ts` is
+  one line: `const debouncer = createAlbumDebouncer({ downstream: pipeline, logger })`,
+  then the listener takes the debouncer instead of the pipeline. Shutdown
+  order: `debouncer.stop(); await pipeline.stop(); await disconnectClient(client)`.
+- **Two job shapes, not one with optional fields.** `RawForwardJob` (listener →
+  debouncer) carries an optional `groupedId` and a singular `sourceMessageId`.
+  `ForwardJob` (debouncer → pipeline) drops `groupedId` and uses
+  `sourceMessageIds: string[]`. After debouncing the grouping work is done —
+  putting `groupedId` on `ForwardJob` would be a stale field the pipeline
+  never reads. Cost: one extra type and one shape transform in the debouncer;
+  benefit: each contract says exactly what it means.
+- **`sourceMessageId` rename was the bigger ripple.** Lifted singular →
+  `sourceMessageIds: string[]` everywhere (`types.ts`, `forwarder.ts`,
+  `queue.test.ts`, `forwarder.test.ts`). The forwarder already called
+  `client.forwardMessages` with a 1-element array internally, so the runtime
+  shape was already arrayed — the rename just lifts that into the type.
+  Considered an optional parallel field instead but rejected: every consumer
+  would have to branch on which shape was present.
+- **Window key: `${sourceChatId}:${groupedId}`.** gramjs `groupedId` is per
+  account, not per chat; same numeric id appearing in two source chats inside
+  the 2 s window is unlikely but cheap to defuse. Both halves are numeric
+  strings so `:` is unambiguous.
+- **`ALBUM_DEBOUNCE_MS = 2000`** as a module constant, mirroring the
+  `DEFAULT_DELAY_MS` precedent in `throttle.ts`. No `app_settings` row this
+  chapter — PLAN says fixed 2 s, and YAGNI for personal use. Override hook
+  (`windowMs` ctor option) exists for tests.
+- **Per-group `setTimeout`, no abstraction over it.** Bounded by concurrent
+  in-flight albums (a handful at most). The `SleepFn` injection in
+  `queue.ts:22` only exists because `cancellableSleep` returns a Promise;
+  the debouncer just calls `setTimeout` directly and `vi.useFakeTimers()` in
+  tests controls it without ceremony.
+- **On flush: dedupe via `Set`, sort numerically ascending.** Telegram orders
+  album items by message id; an out-of-order array passed to
+  `forwardMessages` can break album grouping in the destination. Arrival
+  order is _usually_ ascending under normal conditions but not guaranteed
+  under bursts.
+- **`stop()` drops pending groups, doesn't flush them.** Matches the queue's
+  ignore-after-stop behavior. Lost album members at shutdown are no different
+  from any other miss while offline — the listener doesn't persist incoming
+  messages anywhere.
+- **`forward_log`: one row per source id**, paired by index with the
+  `forwardMessages` return array. Schema unchanged. For an album of 3, that's
+  3 `'sent'` rows each with their own `destMessageId` (gramjs preserves
+  order). Error paths (`flood_wait`, `failed`) also write one row per source
+  id with `destMessageId = null` — preserves the per-source audit trail
+  whether or not we got dest ids back.
+- **`MatchableEvent` gained `groupedId?: string`**, extracted in
+  `extractMatchableEvent` via `message.groupedId?.toString()`. Per Ch 3
+  precedent the adapter half is exercised end-to-end by the listener (no
+  unit test) — only the pure `matchSubscription` is covered directly.
+- **Tests cover the contract, not the timer mechanics.** Six tests in
+  `albumDebouncer.test.ts`: pass-through for ungrouped, buffering + sort on
+  flush, no conflation across `sourceChatId`, straggler treated as new group,
+  dedupe within a group, stop drops pending. New album-shape test in
+  `forwarder.test.ts` asserts one `forwardMessages` call + N log rows for an
+  N-element source id list.
 
 ### Chapter 6 — Filter framework
 

@@ -1,9 +1,10 @@
 /**
  * Single-shot forward + log writer.
  *
- * One call = one `forwardMessages` attempt + one `forward_log` row. The
- * worker in `queue.ts` drives looping/retry; this module only knows how to
- * perform one attempt and record what happened.
+ * One call = one `forwardMessages` attempt + N `forward_log` rows (one per
+ * source message id in `job.sourceMessageIds`). The worker in `queue.ts`
+ * drives looping/retry; this module only knows how to perform one attempt and
+ * record what happened.
  *
  * Returning a discriminated `ForwardOutcome` (instead of throwing) keeps the
  * worker loop free of error classification — the worker just switches on
@@ -38,20 +39,22 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
   const { client, db, logger } = deps;
 
   return async (job: ForwardJob): Promise<ForwardOutcome> => {
-    const messageIdNum = Number(job.sourceMessageId);
+    const messageIdNums = job.sourceMessageIds.map((id) => Number(id));
     try {
       const sent = await client.forwardMessages(job.destinationChatId, {
-        messages: [messageIdNum],
+        messages: messageIdNums,
         fromPeer: job.sourceChatId,
       });
       const destMessageIds = sent.map((m) => m.id.toString());
-      writeLog(db, job, 'sent', destMessageIds[0] ?? null, null);
+      job.sourceMessageIds.forEach((sourceId, i) => {
+        writeLog(db, job, sourceId, 'sent', destMessageIds[i] ?? null, null);
+      });
       logger.info(
         {
           subscriptionId: job.subscriptionId,
           sourceChatId: job.sourceChatId,
           destinationChatId: job.destinationChatId,
-          sourceMessageId: job.sourceMessageId,
+          sourceMessageIds: job.sourceMessageIds,
           destMessageIds,
         },
         'forward sent',
@@ -59,12 +62,15 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
       return { status: 'sent', destMessageIds };
     } catch (err) {
       if (isFloodWaitError(err)) {
-        writeLog(db, job, 'flood_wait', null, `flood_wait ${err.seconds}s`);
+        const errorText = `flood_wait ${err.seconds}s`;
+        job.sourceMessageIds.forEach((sourceId) => {
+          writeLog(db, job, sourceId, 'flood_wait', null, errorText);
+        });
         logger.warn(
           {
             subscriptionId: job.subscriptionId,
             destinationChatId: job.destinationChatId,
-            sourceMessageId: job.sourceMessageId,
+            sourceMessageIds: job.sourceMessageIds,
             seconds: err.seconds,
           },
           'forward hit flood wait',
@@ -72,12 +78,14 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         return { status: 'flood_wait', seconds: err.seconds };
       }
       const errorMessage = err instanceof Error ? err.message : String(err);
-      writeLog(db, job, 'failed', null, errorMessage);
+      job.sourceMessageIds.forEach((sourceId) => {
+        writeLog(db, job, sourceId, 'failed', null, errorMessage);
+      });
       logger.error(
         {
           subscriptionId: job.subscriptionId,
           destinationChatId: job.destinationChatId,
-          sourceMessageId: job.sourceMessageId,
+          sourceMessageIds: job.sourceMessageIds,
           err,
         },
         'forward failed',
@@ -90,6 +98,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
 function writeLog(
   db: Db,
   job: ForwardJob,
+  sourceMessageId: string,
   status: ForwardLogStatus,
   destMessageId: string | null,
   error: string | null,
@@ -97,7 +106,7 @@ function writeLog(
   db.insert(forwardLog)
     .values({
       subscriptionId: job.subscriptionId,
-      sourceMessageId: job.sourceMessageId,
+      sourceMessageId,
       destMessageId,
       status,
       error,
