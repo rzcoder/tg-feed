@@ -8,7 +8,6 @@ import {
   subscriptionFilters,
   appSettings,
   forwardLog,
-  tgSession,
   type ForwardLogStatus,
 } from './schema.js';
 
@@ -41,7 +40,18 @@ describe('db schema', () => {
       expect(row?.name).toBe('ops');
       expect(row?.chatId).toBe('-1009374102931');
       expect(row?.note).toBe('Primary ops channel');
+      expect(row?.iconDataUrl).toBeNull();
       expect(row?.createdAt).toBeInstanceOf(Date);
+    });
+
+    it('persists iconDataUrl when supplied', () => {
+      const dataUrl = 'data:image/jpeg;base64,/9j/4AAQ==';
+      const [row] = db
+        .insert(destinations)
+        .values({ name: 'd2', chatId: '-1001111111111', iconDataUrl: dataUrl })
+        .returning()
+        .all();
+      expect(row?.iconDataUrl).toBe(dataUrl);
     });
   });
 
@@ -64,6 +74,7 @@ describe('db schema', () => {
       expect(row.sourceTitle).toBe('Test Channel');
       expect(row.destinationId).toBe(destId);
       expect(row.handle).toBeNull();
+      expect(row.iconDataUrl).toBeNull();
       expect(row.enabled).toBe(true);
       expect(row.createdAt).toBeInstanceOf(Date);
     });
@@ -91,13 +102,23 @@ describe('db schema', () => {
       ).toThrow(/FOREIGN KEY/i);
     });
 
-    it('blocks deleting a destination still referenced by a subscription', () => {
+    it('detaches subscriptions when their destination is deleted (ON DELETE SET NULL)', () => {
       db.insert(subscriptions)
         .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
         .run();
-      expect(() => db.delete(destinations).where(eq(destinations.id, destId)).run()).toThrow(
-        /FOREIGN KEY/i,
-      );
+      db.delete(destinations).where(eq(destinations.id, destId)).run();
+      const surviving = db.select().from(subscriptions).all();
+      expect(surviving).toHaveLength(1);
+      expect(surviving[0]!.destinationId).toBeNull();
+    });
+
+    it('allows inserting a subscription without a destination', () => {
+      const inserted = db
+        .insert(subscriptions)
+        .values({ sourceChatId: 'detached', sourceTitle: 't', destinationId: null })
+        .returning()
+        .all();
+      expect(inserted[0]!.destinationId).toBeNull();
     });
   });
 
@@ -229,21 +250,6 @@ describe('db schema', () => {
         db.insert(forwardLog).values({ sourceMessageId: 'x', status }).run();
       }
       expect(db.select().from(forwardLog).all()).toHaveLength(statuses.length);
-    });
-  });
-
-  describe('tg_session', () => {
-    it('stores encrypted strings keyed by string', () => {
-      db.insert(tgSession).values({ key: 'forwarder', encryptedString: 'aes-blob' }).run();
-      const [row] = db.select().from(tgSession).where(eq(tgSession.key, 'forwarder')).all();
-      expect(row?.encryptedString).toBe('aes-blob');
-    });
-
-    it('rejects duplicate primary key', () => {
-      db.insert(tgSession).values({ key: 'k', encryptedString: 'a' }).run();
-      expect(() => db.insert(tgSession).values({ key: 'k', encryptedString: 'b' }).run()).toThrow(
-        /UNIQUE|PRIMARY KEY/i,
-      );
     });
   });
 });

@@ -11,3 +11,5 @@ export * from './filters.js';
 export * from './forwardLog.js';
 export * from './api.js';
 export * from './events.js';
+export * from './exportImport.js';
+export * from './telegramAccount.js';

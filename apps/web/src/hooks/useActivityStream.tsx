@@ -16,6 +16,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { StreamEvent } from '@tg-feed/shared';
+import { DESTINATIONS_KEY } from './useDestinations';
 import { SUBSCRIPTIONS_KEY } from './useSubscriptions';
 
 export type ConnectionState = 'live' | 'reconnect' | 'down';
@@ -72,6 +73,15 @@ export function StreamProvider({
         qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
         return;
       }
+      if (parsed.type === 'destination.changed') {
+        // The access monitor flips a destination's `accessStatus` when
+        // userbot membership is gained or lost. Both the destinations
+        // list and the subscription rows (which join `accessStatus` for
+        // the destination indicator) must refetch.
+        qc.invalidateQueries({ queryKey: DESTINATIONS_KEY });
+        qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
+        return;
+      }
       if (FORWARD_EVENT_TYPES.has(parsed.type)) {
         setLastEvent(parsed);
       }
@@ -86,6 +96,7 @@ export function StreamProvider({
       'forward.flood_wait',
       'forward.filtered',
       'subscription.changed',
+      'destination.changed',
     ] as const;
     types.forEach((t) => es.addEventListener(t, dispatch));
 

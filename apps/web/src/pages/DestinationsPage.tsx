@@ -6,7 +6,7 @@ import { useToast } from '@/components/ui/toast';
 import { DestRow } from '@/components/domain/DestRow';
 import { EmptyState } from '@/components/domain/EmptyState';
 import { SectionHeader } from '@/components/domain/SectionHeader';
-import { DestSheet } from '@/components/sheets/DestSheet';
+import { DestSheet, type DestSheetSubmit } from '@/components/sheets/DestSheet';
 import {
   useCreateDestination,
   useDeleteDestination,
@@ -25,24 +25,42 @@ export function DestinationsPage() {
 
   const sheet = useSheetState<DestinationDto>();
 
-  const submit = (data: { name: string; chatId: string; note?: string }) => {
+  const submit = (data: DestSheetSubmit) => {
     if (sheet.mode === 'edit' && sheet.initial) {
+      // Edit only changes name + note today; chatId is locked in the sheet
+      // and inviteHash is never set in edit mode.
       updateMut.mutate(
-        { id: sheet.initial.id, body: data },
+        {
+          id: sheet.initial.id,
+          body: {
+            name: data.name,
+            ...(data.note !== undefined ? { note: data.note } : {}),
+          },
+        },
         {
           onSuccess: () => {
             toast.show('Destination updated');
             sheet.close();
           },
+          onError: (err) => toast.show(apiErrorMessage(err, 'Failed to update destination')),
         },
       );
     } else {
-      createMut.mutate(data, {
-        onSuccess: () => {
-          toast.show('Destination added');
-          sheet.close();
+      createMut.mutate(
+        {
+          name: data.name,
+          // Schema refines exactly one of chatId / inviteHash on the wire.
+          ...(data.inviteHash ? { inviteHash: data.inviteHash } : { chatId: data.chatId! }),
+          ...(data.note !== undefined ? { note: data.note } : {}),
         },
-      });
+        {
+          onSuccess: () => {
+            toast.show('Destination added');
+            sheet.close();
+          },
+          onError: (err) => toast.show(apiErrorMessage(err, 'Failed to add destination')),
+        },
+      );
     }
   };
 

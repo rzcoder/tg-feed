@@ -34,7 +34,7 @@ export function FilterSheetController({
         updateLibMut.mutate(
           {
             id: sheet.initial.id,
-            body: { name: data.name ?? '', params: data.params },
+            body: { name: data.name ?? '', params: data.params, mode: data.mode },
           },
           {
             onSuccess: () => {
@@ -53,6 +53,7 @@ export function FilterSheetController({
             name: data.name ?? '',
             ruleType: data.ruleType,
             params: data.params,
+            mode: data.mode,
           } as Parameters<typeof createLibMut.mutate>[0],
           {
             onSuccess: () => {
@@ -70,7 +71,7 @@ export function FilterSheetController({
           {
             subscriptionId,
             filterId: sheet.initial.id,
-            body: { params: data.params },
+            body: { params: data.params, mode: data.mode },
           },
           {
             onSuccess: () => {
@@ -87,6 +88,7 @@ export function FilterSheetController({
             body: {
               ruleType: data.ruleType,
               params: data.params,
+              mode: data.mode,
             } as Parameters<typeof createSubMut.mutate>[0]['body'],
           },
           {

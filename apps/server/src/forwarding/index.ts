@@ -20,7 +20,14 @@ export type {
   RawForwardingHandle,
 } from './types.js';
 export { ForwardingPipeline } from './queue.js';
-export { ALBUM_DEBOUNCE_MS, createAlbumDebouncer, type AlbumDebouncer } from './albumDebouncer.js';
+export { createAlbumDebouncer, type AlbumDebouncer } from './albumDebouncer.js';
+export {
+  DEFAULT_ALBUM_DEBOUNCE_MS,
+  DEFAULT_DELAY_MS,
+  GLOBAL_SETTINGS_KEY,
+  getAlbumDebounceMs,
+  getGlobalDelayMs,
+} from './throttle.js';
 
 export interface CreatePipelineDeps {
   client: ForwarderClient;

@@ -3,11 +3,13 @@ import {
   createDestination,
   deleteDestination,
   listDestinations,
+  resolveDestination,
   updateDestination,
 } from '@/api/destinationsApi';
 import type {
   CreateDestinationRequest,
   DestinationDto,
+  ResolveDestinationResponse,
   UpdateDestinationRequest,
 } from '@tg-feed/shared';
 
@@ -42,5 +44,11 @@ export function useDeleteDestination() {
   return useMutation<void, Error, number>({
     mutationFn: deleteDestination,
     onSuccess: () => qc.invalidateQueries({ queryKey: DESTINATIONS_KEY }),
+  });
+}
+
+export function useResolveDestination() {
+  return useMutation<ResolveDestinationResponse, Error, string>({
+    mutationFn: resolveDestination,
   });
 }

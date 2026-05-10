@@ -29,6 +29,55 @@
       "when": 1778600000000,
       "tag": "0003_subscriptions_source_chat_id_index",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1778700000000,
+      "tag": "0004_subscriptions_forwarding_restricted_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1778800000000,
+      "tag": "0005_drop_tg_session",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1778900000000,
+      "tag": "0006_access_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779000000000,
+      "tag": "0007_filter_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779100000000,
+      "tag": "0008_icon_data_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1779200000000,
+      "tag": "0009_subscription_destination_nullable",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1779300000000,
+      "tag": "0010_telegram_account",
+      "breakpoints": true
     }
   ]
 }

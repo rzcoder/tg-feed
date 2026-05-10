@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ChevronLeft, Check, Plus } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, Check, Plus, Slash } from 'lucide-react';
 import {
   filterRuleParamsSchemas,
   type DestinationDto,
+  type FilterMode,
   type FilterRuleType,
   type InlineFilterInput,
   type LibraryFilterDto,
@@ -17,6 +18,7 @@ import { describeFilter } from '@/lib/describeFilter';
 import { useResolveSubscription } from '@/hooks/useSubscriptions';
 import { useSubscriptionFilters } from '@/hooks/useFilters';
 import { ApiError } from '@/api/client';
+import { EntityIcon } from '@/components/domain/EntityIcon';
 import { FilterRow } from '@/components/domain/FilterRow';
 import { RuleForm } from '@/components/domain/RuleForm';
 import { RuleListItem } from '@/components/domain/RuleListItem';
@@ -27,13 +29,25 @@ export interface InlineFilterDraft {
   ruleType: FilterRuleType;
   params: Record<string, unknown>;
   enabled: boolean;
+  mode: FilterMode;
 }
 
 export interface SubSheetSubmit {
-  sourceChatId: string;
+  /**
+   * Resolved chat id when known (public link / username / numeric id, or
+   * already-member private invite). `null` only for `t.me/+HASH` invites
+   * where the userbot isn't a member yet — in that case `inviteHash` is
+   * non-null and the server joins on create to derive the id.
+   */
+  sourceChatId: string | null;
+  inviteHash: string | null;
   sourceTitle: string;
   handle: string | null;
-  destinationId: number;
+  /**
+   * Null means "no destination" — subscription is created/saved in a
+   * detached state and won't forward until the user attaches a destination.
+   */
+  destinationId: number | null;
   libraryFilterIds: number[];
   /**
    * Bulk-replace set of private inline filters. Empty array = drop all on
@@ -92,6 +106,7 @@ export function SubSheet({
   // Step-local draft buffer; committed back into `inlineFilters` only on Save.
   const [draftRule, setDraftRule] = useState<FilterRuleType | null>(null);
   const [draftParams, setDraftParams] = useState<Record<string, unknown>>({});
+  const [draftMode, setDraftMode] = useState<FilterMode>('include');
 
   const {
     mutate: mutateResolve,
@@ -124,6 +139,7 @@ export function SubSheet({
     setStep({ kind: 'list' });
     setDraftRule(null);
     setDraftParams({});
+    setDraftMode('include');
   }, [open, isEdit, initial, destinations, resetResolve]);
 
   // Seed inline filters from the server once they land. Ignored on subsequent
@@ -143,6 +159,7 @@ export function SubSheet({
         ruleType: f.ruleType,
         params: { ...f.params },
         enabled: f.enabled,
+        mode: f.mode,
       })),
     );
     setSeeded(true);
@@ -173,13 +190,12 @@ export function SubSheet({
 
   const canSave = (() => {
     if (submitting) return false;
-    if (destId === null) return false;
     if (isEdit) return true;
     return !!resolved && !resolving;
   })();
 
   const handleSubmit = () => {
-    if (!canSave || destId === null) return;
+    if (!canSave) return;
     // Each draft was already parsed through `filterRuleParamsSchemas[ruleType]`
     // before landing in `inlineFilters`, so the runtime shape matches the
     // discriminated union — TS just can't prove it via dynamic key lookup.
@@ -189,11 +205,13 @@ export function SubSheet({
           ruleType: d.ruleType,
           params: d.params,
           enabled: d.enabled,
+          mode: d.mode,
         }) as InlineFilterInput,
     );
     if (isEdit && initial) {
       onSubmit({
         sourceChatId: initial.sourceChatId,
+        inviteHash: null,
         sourceTitle: initial.sourceTitle,
         handle: initial.handle,
         destinationId: destId,
@@ -202,7 +220,11 @@ export function SubSheet({
       });
     } else if (resolved) {
       onSubmit({
-        sourceChatId: resolved.sourceChatId,
+        // For not-yet-joined private invites the resolve preview can't
+        // know the chat id; the server joins via importInvite and derives
+        // the id during create. Otherwise we forward the resolved id.
+        sourceChatId: resolved.sourceChatId ?? null,
+        inviteHash: resolved.inviteHash,
         sourceTitle: resolved.sourceTitle,
         handle: resolved.handle,
         destinationId: destId,
@@ -219,17 +241,20 @@ export function SubSheet({
   const startAddInline = () => {
     setDraftRule(null);
     setDraftParams({});
+    setDraftMode('include');
     setStep({ kind: 'pick-rule' });
   };
   const pickInlineRule = (rt: FilterRuleType) => {
     setDraftRule(rt);
     setDraftParams({ ...DEFAULTS[rt] });
+    setDraftMode('include');
     setStep({ kind: 'edit-params', index: -1 });
   };
   const startEditInline = (index: number) => {
     const row = inlineFilters[index]!;
     setDraftRule(row.ruleType);
     setDraftParams({ ...row.params });
+    setDraftMode(row.mode);
     setStep({ kind: 'edit-params', index });
   };
   const commitDraft = () => {
@@ -248,21 +273,26 @@ export function SubSheet({
             ruleType: draftRule,
             params: validated,
             enabled: true,
+            mode: draftMode,
           },
         ];
       }
       return prev.map((row, i) =>
-        i === step.index ? { ...row, ruleType: draftRule, params: validated } : row,
+        i === step.index
+          ? { ...row, ruleType: draftRule, params: validated, mode: draftMode }
+          : row,
       );
     });
     setStep({ kind: 'list' });
     setDraftRule(null);
     setDraftParams({});
+    setDraftMode('include');
   };
   const cancelDraft = () => {
     setStep({ kind: 'list' });
     setDraftRule(null);
     setDraftParams({});
+    setDraftMode('include');
   };
   const removeInline = (index: number) => {
     setInlineFilters((prev) => prev.filter((_, i) => i !== index));
@@ -326,7 +356,13 @@ export function SubSheet({
 
       {step.kind === 'edit-params' && draftRule && (
         <div className="flex flex-col gap-3">
-          <RuleForm type={draftRule} params={draftParams} setParams={setDraftParams} />
+          <RuleForm
+            type={draftRule}
+            params={draftParams}
+            setParams={setDraftParams}
+            mode={draftMode}
+            setMode={setDraftMode}
+          />
         </div>
       )}
 
@@ -339,11 +375,13 @@ export function SubSheet({
               value={link}
               onChange={(e) => !isEdit && setLink(e.target.value)}
               disabled={isEdit}
-              placeholder="@channel or t.me/channel"
+              placeholder="@channel, t.me link, t.me/+invite, or chat id"
               autoFocus={!isEdit}
               monospace
             />
-            {!isEdit && <Hint>Paste a Telegram link or @username.</Hint>}
+            {!isEdit && (
+              <Hint>Paste any Telegram link, @username, invite link, or numeric chat id.</Hint>
+            )}
             {isEdit && <Hint>Source channel can't be changed — delete and re-add to switch.</Hint>}
           </div>
 
@@ -352,8 +390,11 @@ export function SubSheet({
           )}
 
           <div>
-            <Label>Destination</Label>
+            <Label>
+              Destination <span className="text-text-faint font-normal">(optional)</span>
+            </Label>
             <div className="flex flex-col gap-1.5">
+              <DestRadioNone selected={destId === null} onSelect={() => setDestId(null)} />
               {destinations.map((d) => (
                 <DestRadio
                   key={d.id}
@@ -363,7 +404,9 @@ export function SubSheet({
                 />
               ))}
               {destinations.length === 0 && (
-                <Hint>No destinations — add one in the Destinations tab first.</Hint>
+                <Hint>
+                  No destinations yet — add one in the Destinations tab to enable forwarding.
+                </Hint>
               )}
             </div>
           </div>
@@ -416,6 +459,7 @@ export function SubSheet({
                       ruleType: row.ruleType,
                       params: row.params,
                       enabled: row.enabled,
+                      mode: row.mode,
                     }}
                     onToggle={() => toggleInline(i)}
                     onEdit={() => startEditInline(i)}
@@ -484,7 +528,15 @@ function ResolvedCard({
   error,
 }: {
   resolving: boolean;
-  resolved: { sourceChatId: string; sourceTitle: string; handle: string | null } | null | undefined;
+  resolved:
+    | {
+        sourceChatId: string | null;
+        sourceTitle: string;
+        handle: string | null;
+        inviteHash: string | null;
+      }
+    | null
+    | undefined;
   error: Error | null;
 }) {
   if (error && !resolving) {
@@ -516,12 +568,47 @@ function ResolvedCard({
             <div className="flex gap-1.5 text-[11px] text-text-muted">
               <span className="font-mono">{resolved.handle ?? '—'}</span>
               <span className="text-text-faint">·</span>
-              <span className="font-mono">{resolved.sourceChatId}</span>
+              {resolved.sourceChatId ? (
+                <span className="font-mono">{resolved.sourceChatId}</span>
+              ) : (
+                <span>will join on add</span>
+              )}
             </div>
           </>
         )}
       </div>
     </div>
+  );
+}
+
+function DestRadioNone({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors',
+        selected
+          ? 'bg-warning-soft border border-warning/40'
+          : 'bg-bg border border-border hover:bg-surface-2',
+      )}
+    >
+      <span
+        className={cn(
+          'w-4 h-4 rounded-full border-[1.5px] grid place-items-center flex-shrink-0',
+          selected ? 'border-warning bg-warning' : 'border-border-strong',
+        )}
+      >
+        {selected && <span className="w-1.5 h-1.5 rounded-full bg-warning-fg" />}
+      </span>
+      <span className="grid place-items-center w-9 h-9 rounded-lg bg-bg text-text-faint border border-border flex-shrink-0">
+        <Slash size={14} strokeWidth={2.2} />
+      </span>
+      <div className="flex flex-col flex-1 min-w-0 gap-px">
+        <div className="text-[13px] font-medium tracking-tight">No destination</div>
+        <div className="text-[11px] text-text-muted">Subscription saved but won't forward.</div>
+      </div>
+    </button>
   );
 }
 
@@ -553,9 +640,15 @@ function DestRadio({
       >
         {selected && <span className="w-1.5 h-1.5 rounded-full bg-accent-fg" />}
       </span>
+      <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" size="sm" />
       <div className="flex flex-col flex-1 min-w-0 gap-px">
-        <div className="text-[13px] font-medium tracking-tight">{destination.name}</div>
-        <div className="font-mono text-[11px] text-text-muted">{destination.chatId}</div>
+        <div className="text-[13px] font-medium tracking-tight truncate">{destination.name}</div>
+        <div className="font-mono text-[11px] text-text-muted truncate">
+          {destination.chatId}
+          {destination.note && (
+            <span className="ml-2 font-sans italic text-text-faint">({destination.note})</span>
+          )}
+        </div>
       </div>
     </button>
   );

@@ -8,7 +8,7 @@
  */
 import { X } from 'lucide-react';
 import { type KeyboardEvent } from 'react';
-import type { FilterRuleType } from '@tg-feed/shared';
+import type { FilterMode, FilterRuleType } from '@tg-feed/shared';
 import { Input, Label, Hint } from '@/components/ui/input';
 import { cn } from '@/lib/cn';
 
@@ -16,13 +16,29 @@ interface RuleFormProps {
   type: FilterRuleType;
   params: Record<string, unknown>;
   setParams: (next: Record<string, unknown>) => void;
+  /**
+   * `mode` toggle — shown when both `mode` and `setMode` are provided. When
+   * absent, callers (older flows that haven't been updated) get the legacy
+   * include-only behavior implicitly via the server default.
+   */
+  mode?: FilterMode;
+  setMode?: (next: FilterMode) => void;
   /** Library filters add a Name field at the top of the form. */
   showName?: boolean;
   name?: string;
   setName?: (next: string) => void;
 }
 
-export function RuleForm({ type, params, setParams, showName, name, setName }: RuleFormProps) {
+export function RuleForm({
+  type,
+  params,
+  setParams,
+  mode,
+  setMode,
+  showName,
+  name,
+  setName,
+}: RuleFormProps) {
   return (
     <>
       {showName && setName && (
@@ -38,6 +54,8 @@ export function RuleForm({ type, params, setParams, showName, name, setName }: R
           <Hint>A short label so you can recognise this filter when attaching it.</Hint>
         </div>
       )}
+
+      {mode !== undefined && setMode && <ModeToggle value={mode} onChange={setMode} />}
 
       {(type === 'text-contains' || type === 'text-excludes') && (
         <>
@@ -142,6 +160,44 @@ export function RuleForm({ type, params, setParams, showName, name, setName }: R
         <SenderAllowlistInput params={params} setParams={setParams} />
       )}
     </>
+  );
+}
+
+function ModeToggle({
+  value,
+  onChange,
+}: {
+  value: FilterMode;
+  onChange: (next: FilterMode) => void;
+}) {
+  const options: { v: FilterMode; l: string; d: string }[] = [
+    { v: 'include', l: 'Include', d: 'Forward only when this rule matches.' },
+    { v: 'exclude', l: 'Exclude', d: 'Drop the message when this rule matches.' },
+  ];
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label className="mb-0">Mode</Label>
+      <div className="flex border border-border rounded-lg overflow-hidden bg-bg">
+        {options.map((o) => {
+          const active = value === o.v;
+          return (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => onChange(o.v)}
+              className={cn(
+                'flex-1 px-3 py-2 text-[12.5px] font-medium tracking-tight transition-colors',
+                active ? 'bg-accent text-accent-fg' : 'bg-bg text-text-muted hover:bg-surface-2',
+              )}
+              aria-pressed={active}
+            >
+              {o.l}
+            </button>
+          );
+        })}
+      </div>
+      <Hint>{options.find((o) => o.v === value)?.d}</Hint>
+    </div>
   );
 }
 

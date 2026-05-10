@@ -32,7 +32,11 @@ import type { Db } from '../db/client.js';
 import type { EventBus } from '../events/bus.js';
 import type { FilterRegistry } from '../filters/registry.js';
 import type { Logger } from '../lib/logger.js';
-import type { EntityResolver } from '../tg/entityResolver.js';
+import type { ChatResolver } from '../tg/chatResolver.js';
+import type { ImportInviteFn } from '../tg/inviteResolver.js';
+import type { JoinChannelFn } from '../tg/joinChannel.js';
+import type { LoginSessionStore } from '../tg/loginSession.js';
+import type { ProfilePhotoFetcher } from '../tg/profilePhoto.js';
 import { requireAuth, type WebAuth } from './auth.js';
 import { makeErrorHandler } from './errorHandler.js';
 import { registerAuthRoutes, registerLoginRoute } from './routes/auth.js';
@@ -44,6 +48,7 @@ import { registerSettingsRoutes } from './routes/settings.js';
 import { registerStreamRoutes } from './routes/stream.js';
 import { registerSubscriptionRoutes } from './routes/subscriptions.js';
 import { registerSystemRoutes } from './routes/system.js';
+import { registerTelegramAccountRoutes } from './routes/telegramAccount.js';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 // `apps/server/src/api/server.ts` → repo root → `apps/web/dist`
@@ -61,28 +66,93 @@ export interface CreateApiServerDeps {
   /** Override the SSE heartbeat interval — primarily for tests. */
   heartbeatMs?: number;
   /**
-   * gramjs-backed resolver for `POST /api/subscriptions/resolve`. Optional
-   * because the API can boot in test/migrate-only modes without Telegram
-   * env; the route returns 503 `telegram_unavailable` when missing.
+   * Lazy lookup for the universal "paste-anything" resolver used by
+   * `POST /subscriptions/resolve` and `POST /destinations/resolve`. The
+   * boot path in `apps/server/src/index.ts` populates this asynchronously
+   * after `app.listen()` returns, so route handlers must dereference per
+   * request rather than at registration time. Optional for tests and
+   * Telegram-less boots; routes return 503 `telegram_unavailable` (or
+   * `telegram_initializing` while `getTelegramStatus().state ===
+   * 'connecting'`) when the getter yields undefined.
    */
-  entityResolver?: EntityResolver;
+  getChatResolver?: () => ChatResolver | undefined;
   /**
-   * Snapshot of Telegram subsystem state captured at boot. Surfaced via
-   * `GET /api/system/status` so the web UI can warn the operator when
-   * Telegram is unavailable. Optional for tests; defaults to a generic
-   * "not initialized" reason when absent.
+   * Lazy lookup for the `messages.ImportChatInvite` wrapper used by both
+   * subscription and destination create endpoints when the body carries
+   * `inviteHash`. Same lifecycle as `getChatResolver`.
    */
-  telegramStatus?: TelegramStatus;
+  getImportInvite?: () => ImportInviteFn | undefined;
+  /**
+   * Lazy lookup for the auto-join helper invoked from POST /subscriptions
+   * after the row is inserted. Same lifecycle as `getChatResolver`; when
+   * undefined, new subscriptions get the default 'ok' status and rely on
+   * the access monitor's first sweep to correct it.
+   */
+  getJoinChannel?: () => JoinChannelFn | undefined;
+  /**
+   * Lazy lookup for the best-effort profile-photo fetcher used by both
+   * create endpoints (`POST /subscriptions`, `POST /destinations`) to
+   * populate the new row's `iconDataUrl` immediately. Same lifecycle as
+   * `getChatResolver`; without it new rows stay icon-less until the access
+   * monitor's lazy backfill catches them.
+   */
+  getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
+  /**
+   * Live getter for the Telegram subsystem state. Surfaced via
+   * `GET /api/system/status` so the web UI can warn the operator when
+   * Telegram is unavailable. The getter is read on each request, so the
+   * boot path can flip 'connecting' → 'connected' (or the health monitor
+   * can flip 'connected' → 'disconnected') and clients pick up the change
+   * without a restart. Optional for tests; defaults to a generic "not
+   * initialized" reason when absent.
+   */
+  getTelegramStatus?: () => TelegramStatus;
+  /**
+   * Returns the loaded `TG_SESSION_ENCRYPTION_KEY` as a 32-byte Buffer, or
+   * null when the env var is not set. Used by the telegram-account routes
+   * to refuse account writes when no key is configured, and by the system
+   * import route to skip encrypted blobs whose fingerprint doesn't match.
+   * Optional — when absent, both paths behave as if the key is unset.
+   */
+  getEncryptionKey?: () => Buffer | null;
+  /**
+   * In-memory store for in-progress sign-ins from the Settings page.
+   * Optional — telegram-account routes return 503 when missing (for tests
+   * that don't exercise the login flow).
+   */
+  loginSessionStore?: LoginSessionStore;
+  /**
+   * Triggers a live-swap of the gramjs client and dependent runtime
+   * (pipeline, debouncer, monitors, resolvers). Called after a successful
+   * sign-in or sign-out so the running app picks up the new credentials
+   * without a restart. Optional for tests; in tests the routes still write
+   * the row but no swap occurs.
+   */
+  reloadTelegramSession?: () => Promise<void>;
 }
 
 const DEFAULT_TELEGRAM_STATUS: TelegramStatus = {
+  state: 'disconnected',
   connected: false,
   reason: 'Telegram client not initialized',
 };
 
 export async function createApiServer(deps: CreateApiServerDeps): Promise<FastifyInstance> {
-  const { db, logger, filterRegistry, webAuth, isProd, bus, heartbeatMs, entityResolver } = deps;
-  const telegramStatus = deps.telegramStatus ?? DEFAULT_TELEGRAM_STATUS;
+  const {
+    db,
+    logger,
+    filterRegistry,
+    webAuth,
+    isProd,
+    bus,
+    heartbeatMs,
+    getChatResolver,
+    getImportInvite,
+    getJoinChannel,
+    getFetchProfilePhoto,
+  } = deps;
+  const getTelegramStatus =
+    deps.getTelegramStatus ?? ((): TelegramStatus => DEFAULT_TELEGRAM_STATUS);
 
   const app = Fastify({ logger: false, bodyLimit: BODY_LIMIT_BYTES });
 
@@ -131,12 +201,22 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
     async (authedScope) => {
       authedScope.addHook('preHandler', requireAuth);
       registerAuthRoutes(authedScope, { isProd });
-      registerDestinationRoutes(authedScope, { db });
+      registerDestinationRoutes(authedScope, {
+        db,
+        getTelegramStatus,
+        ...(getChatResolver !== undefined ? { getChatResolver } : {}),
+        ...(getImportInvite !== undefined ? { getImportInvite } : {}),
+        ...(getFetchProfilePhoto !== undefined ? { getFetchProfilePhoto } : {}),
+      });
       registerLibraryFilterRoutes(authedScope, { db });
       registerSubscriptionRoutes(authedScope, {
         db,
         bus,
-        ...(entityResolver !== undefined ? { entityResolver } : {}),
+        getTelegramStatus,
+        ...(getChatResolver !== undefined ? { getChatResolver } : {}),
+        ...(getImportInvite !== undefined ? { getImportInvite } : {}),
+        ...(getJoinChannel !== undefined ? { getJoinChannel } : {}),
+        ...(getFetchProfilePhoto !== undefined ? { getFetchProfilePhoto } : {}),
       });
       registerFilterRoutes(authedScope, { db, filterRegistry });
       registerSettingsRoutes(authedScope, { db });
@@ -145,7 +225,25 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
         bus,
         ...(heartbeatMs !== undefined ? { heartbeatMs } : {}),
       });
-      registerSystemRoutes(authedScope, { telegramStatus });
+      registerSystemRoutes(authedScope, {
+        db,
+        getTelegramStatus,
+        ...(deps.getEncryptionKey !== undefined ? { getEncryptionKey: deps.getEncryptionKey } : {}),
+        ...(deps.reloadTelegramSession !== undefined
+          ? { reloadTelegramSession: deps.reloadTelegramSession }
+          : {}),
+      });
+      registerTelegramAccountRoutes(authedScope, {
+        db,
+        ...(deps.getEncryptionKey !== undefined ? { getEncryptionKey: deps.getEncryptionKey } : {}),
+        ...(deps.loginSessionStore !== undefined
+          ? { loginSessionStore: deps.loginSessionStore }
+          : {}),
+        ...(deps.reloadTelegramSession !== undefined
+          ? { reloadTelegramSession: deps.reloadTelegramSession }
+          : {}),
+        getTelegramStatus,
+      });
     },
     { prefix: '/api' },
   );

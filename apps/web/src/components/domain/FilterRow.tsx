@@ -30,6 +30,7 @@ export function FilterRow({
 }: FilterRowProps) {
   const Icon = FILTER_RULE_ICONS[filter.ruleType] ?? Hash;
   const enabled = filter.enabled !== false;
+  const isExclude = filter.mode === 'exclude';
   return (
     <div
       className={cn(
@@ -55,6 +56,11 @@ export function FilterRow({
           {library && (
             <span className="text-[9.5px] font-semibold tracking-wide uppercase px-1.5 py-px rounded-sm bg-accent-soft text-accent">
               Library
+            </span>
+          )}
+          {isExclude && (
+            <span className="text-[9.5px] font-semibold tracking-wide uppercase px-1.5 py-px rounded-sm bg-warning-soft text-warning border border-warning/30">
+              Exclude
             </span>
           )}
         </div>

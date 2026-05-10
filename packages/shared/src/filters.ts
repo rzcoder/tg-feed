@@ -20,6 +20,14 @@ export const FILTER_RULE_TYPES = [
 
 export type FilterRuleType = (typeof FILTER_RULE_TYPES)[number];
 
+// Per-filter mode (orthogonal to rule type). 'include' is the default and
+// matches the historical AND-pass semantics: a message forwards only if
+// every include filter matches. 'exclude' inverts the rule for that one
+// row — the filter rejects the message when its rule does match.
+export const FILTER_MODES = ['include', 'exclude'] as const;
+export const filterModeSchema = z.enum(FILTER_MODES);
+export type FilterMode = z.infer<typeof filterModeSchema>;
+
 export const textContainsParamsSchema = z.object({
   value: z.string().min(1),
   caseInsensitive: z.boolean().default(true),

@@ -31,8 +31,6 @@ import type { MessageContext } from '../filters/types.js';
 import type { Logger } from '../lib/logger.js';
 import type { ForwardJob, ForwardingHandle, RawForwardJob, RawForwardingHandle } from './types.js';
 
-export const ALBUM_DEBOUNCE_MS = 2000;
-
 interface PendingGroup {
   jobs: RawForwardJob[];
   timer: ReturnType<typeof setTimeout>;
@@ -42,7 +40,13 @@ export interface AlbumDebouncerDeps {
   downstream: ForwardingHandle;
   filterEvaluator: FilterEvaluator;
   logger: Logger;
-  windowMs?: number;
+  /**
+   * Live-reads the debounce window from app_settings on each new album.
+   * Wired up to `getAlbumDebounceMs(db)` in production; tests pass a
+   * constant. Read per-album rather than per-debouncer so the Settings
+   * UI takes effect on the next album without a restart.
+   */
+  getWindowMs: () => number;
 }
 
 export interface AlbumDebouncer extends RawForwardingHandle {
@@ -50,8 +54,7 @@ export interface AlbumDebouncer extends RawForwardingHandle {
 }
 
 export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
-  const { downstream, filterEvaluator, logger } = deps;
-  const windowMs = deps.windowMs ?? ALBUM_DEBOUNCE_MS;
+  const { downstream, filterEvaluator, logger, getWindowMs } = deps;
   const pending = new Map<string, PendingGroup>();
   let stopped = false;
 
@@ -111,7 +114,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
         return;
       }
 
-      const timer = setTimeout(() => flush(key), windowMs);
+      const timer = setTimeout(() => flush(key), getWindowMs());
       pending.set(key, { jobs: [raw], timer });
     },
 

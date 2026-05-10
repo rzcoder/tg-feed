@@ -59,6 +59,21 @@ export class UpstreamError extends AppError {
 }
 
 /**
+ * Builds the right 503 for a Telegram dep that's currently undefined.
+ * `telegram_initializing` (transient, retry) when the lifecycle phase is
+ * still 'connecting'; `telegram_unavailable` (configure / re-login) for
+ * the steady-state disconnected case. Both subscription and destination
+ * routes use the same logic, so it lives here to keep the message and
+ * code mapping consistent.
+ */
+export function telegramUnavailableError(status: { state: string }): UpstreamError {
+  if (status.state === 'connecting') {
+    return new UpstreamError('Telegram is starting up; retry in a moment', 'telegram_initializing');
+  }
+  return new UpstreamError('Telegram client not configured', 'telegram_unavailable');
+}
+
+/**
  * Thrown for "this shouldn't happen" cases — e.g. a row that exists at
  * INSERT-time disappearing before the immediate follow-up read. Maps to
  * 500; the message is logged but `errorHandler.ts` only echoes the

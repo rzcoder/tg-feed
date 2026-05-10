@@ -13,8 +13,11 @@
  * The resolve endpoint is preview-only — it never writes to the DB. The
  * UI submits the resolved fields back to POST /subscriptions to commit.
  * Routes that need the gramjs entity resolver gate on its presence and
- * return 503 `telegram_unavailable` when not configured (test mode, missing
- * Telegram env), mirroring the precedent from `requireWebAuthEnv`.
+ * return 503 — `telegram_initializing` while the Telegram subsystem is
+ * still bootstrapping (background init in `apps/server/src/index.ts`),
+ * `telegram_unavailable` once it's settled in a disconnected state (test
+ * mode, missing Telegram env). The web UI keys on the code: the first is
+ * a transient retry; the second points the operator at configuration.
  *
  * Library filter attachments are exposed two ways:
  * - bulk-replace via `libraryFilterIds` on POST/PATCH /subscriptions[/:id]
@@ -41,6 +44,7 @@ import {
   type ResolveSubscriptionResponse,
   type SubscriptionDto,
   type SubscriptionListResponse,
+  type TelegramStatus,
 } from '@tg-feed/shared';
 import type { Db } from '../../db/client.js';
 import {
@@ -52,8 +56,17 @@ import {
   subscriptions,
 } from '../../db/schema.js';
 import type { EventBus } from '../../events/bus.js';
-import { InternalError, NotFoundError, UpstreamError, ValidationError } from '../../lib/errors.js';
-import type { EntityResolver } from '../../tg/entityResolver.js';
+import {
+  InternalError,
+  NotFoundError,
+  UpstreamError,
+  ValidationError,
+  telegramUnavailableError,
+} from '../../lib/errors.js';
+import type { ChatResolver } from '../../tg/chatResolver.js';
+import type { ImportInviteFn } from '../../tg/inviteResolver.js';
+import type { JoinChannelFn } from '../../tg/joinChannel.js';
+import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import { idParamsSchema } from './_params.js';
 
 // `db.transaction(cb)` passes `cb` a tx handle whose query interface matches
@@ -69,25 +82,68 @@ const libraryFilterAttachmentParamsSchema = z.object({
 export interface RegisterSubscriptionDeps {
   db: Db;
   bus: EventBus;
-  entityResolver?: EntityResolver;
+  /**
+   * Live status getter used to distinguish "Telegram is starting up — try
+   * again in a moment" from "Telegram is not configured at all". Drives
+   * the error code returned when a tg-dep getter yields undefined.
+   */
+  getTelegramStatus: () => TelegramStatus;
+  /**
+   * Lazy lookup for the universal "paste-anything" resolver — backs
+   * `POST /subscriptions/resolve`. Read per request because the boot path
+   * fills it asynchronously after `app.listen()`. Accepts any of:
+   * `@username`, `t.me/username`, `t.me/+HASH`, `+HASH`, or numeric chat id.
+   */
+  getChatResolver?: () => ChatResolver | undefined;
+  /**
+   * Lazy lookup for the `messages.ImportChatInvite` wrapper invoked from
+   * `POST /subscriptions` when the body carries `inviteHash`. Same
+   * lifecycle as `getChatResolver`.
+   */
+  getImportInvite?: () => ImportInviteFn | undefined;
+  /**
+   * Lazy lookup for the auto-join helper invoked after a successful
+   * POST /subscriptions insert (chatId path). When the getter yields
+   * undefined the row keeps the default 'ok' status and the access
+   * monitor's first sweep corrects it. The `inviteHash` path bypasses
+   * this — `importInvite` already joined.
+   */
+  getJoinChannel?: () => JoinChannelFn | undefined;
+  /**
+   * Lazy lookup for the best-effort profile-photo fetcher invoked after
+   * the row is inserted. When undefined the row's `iconDataUrl` stays
+   * null and the access monitor's lazy backfill catches it later.
+   */
+  getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
 }
 
 export function registerSubscriptionRoutes(
   app: FastifyInstance,
   deps: RegisterSubscriptionDeps,
 ): void {
-  const { db, bus, entityResolver } = deps;
+  const {
+    db,
+    bus,
+    getTelegramStatus,
+    getChatResolver,
+    getImportInvite,
+    getJoinChannel,
+    getFetchProfilePhoto,
+  } = deps;
 
   app.post('/subscriptions/resolve', async (request) => {
-    if (!entityResolver) {
-      throw new UpstreamError('Telegram client not configured', 'telegram_unavailable');
+    const chatResolver = getChatResolver?.();
+    if (!chatResolver) {
+      throw telegramUnavailableError(getTelegramStatus());
     }
     const body = resolveSubscriptionRequestSchema.parse(request.body);
-    const resolved = await entityResolver(body.input);
+    const resolved = await chatResolver(body.input);
     const response: ResolveSubscriptionResponse = {
-      sourceChatId: resolved.sourceChatId,
-      sourceTitle: resolved.sourceTitle,
+      sourceChatId: resolved.chatId,
+      sourceTitle: resolved.title,
       handle: resolved.handle,
+      inviteHash: resolved.inviteHash,
+      alreadyMember: resolved.alreadyMember,
     };
     return response;
   });
@@ -100,26 +156,50 @@ export function registerSubscriptionRoutes(
 
   app.post('/subscriptions', async (request, reply) => {
     const body = createSubscriptionRequestSchema.parse(request.body);
-    // FK is `ON DELETE RESTRICT` but we 400 (rather than 500 from FK
-    // failure) for a missing destination so the UI can render a clear
-    // message.
-    const dest = db
-      .select()
-      .from(destinations)
-      .where(eq(destinations.id, body.destinationId))
-      .get();
-    if (!dest) throw new ValidationError('destination not found');
+    // `destinationId` is now optional/nullable — only validate when provided.
+    // FK SET NULL would coalesce a bad id silently, so we still 400 up-front
+    // for a missing one to surface a clear UI message.
+    if (body.destinationId !== undefined && body.destinationId !== null) {
+      const dest = db
+        .select()
+        .from(destinations)
+        .where(eq(destinations.id, body.destinationId))
+        .get();
+      if (!dest) throw new ValidationError('destination not found');
+    }
     if (body.libraryFilterIds && body.libraryFilterIds.length > 0) {
       assertLibraryFiltersExist(db, body.libraryFilterIds);
     }
+
+    // Resolve the source chat id from either the resolved id (existing flow)
+    // or by joining via invite hash (new flow). The hash path is destructive
+    // and runs *before* the insert so a join failure doesn't leave a
+    // half-baked row behind.
+    let sourceChatId: string;
+    let preJoined = false;
+    if (body.inviteHash) {
+      const importInvite = getImportInvite?.();
+      if (!importInvite) {
+        throw telegramUnavailableError(getTelegramStatus());
+      }
+      const join = await importInvite(body.inviteHash);
+      if (join.status !== 'ok' || !join.chatId) {
+        throw new UpstreamError('failed to join via invite link', 'invite_join_failed');
+      }
+      sourceChatId = join.chatId;
+      preJoined = true;
+    } else {
+      sourceChatId = body.sourceChatId!;
+    }
+
     const newId = db.transaction((tx) => {
       const inserted = tx
         .insert(subscriptions)
         .values({
-          sourceChatId: body.sourceChatId,
+          sourceChatId,
           sourceTitle: body.sourceTitle,
           handle: body.handle ?? null,
-          destinationId: body.destinationId,
+          destinationId: body.destinationId ?? null,
           ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
         })
         .returning({ id: subscriptions.id })
@@ -133,6 +213,37 @@ export function registerSubscriptionRoutes(
       }
       return row.id;
     });
+    // For the chatId path: auto-join the source channel so the userbot
+    // starts receiving its events. Done outside the transaction (gramjs
+    // network I/O can't be atomic with SQLite) and before the SSE emit so
+    // the DTO read by the UI carries the post-join status.
+    if (preJoined) {
+      // Already joined via importInvite; just stamp the access check.
+      db.update(subscriptions)
+        .set({ sourceAccessStatus: 'ok', sourceAccessCheckedAt: new Date() })
+        .where(eq(subscriptions.id, newId))
+        .run();
+    } else {
+      const joinChannel = getJoinChannel?.();
+      if (joinChannel) {
+        const status = await joinChannel(sourceChatId);
+        db.update(subscriptions)
+          .set({ sourceAccessStatus: status, sourceAccessCheckedAt: new Date() })
+          .where(eq(subscriptions.id, newId))
+          .run();
+      }
+    }
+    // Best-effort profile photo fetch. Same reasoning as on the
+    // destination create path: the fetcher swallows errors and returns
+    // null, so failure means the row stays icon-less until the access
+    // monitor's lazy backfill kicks in.
+    const fetchProfilePhoto = getFetchProfilePhoto?.();
+    if (fetchProfilePhoto) {
+      const iconDataUrl = await fetchProfilePhoto(sourceChatId);
+      if (iconDataUrl !== null) {
+        db.update(subscriptions).set({ iconDataUrl }).where(eq(subscriptions.id, newId)).run();
+      }
+    }
     bus.emit({ type: 'subscription.changed', subscriptionId: newId, change: 'created' });
     const dto = getSubscription(db, newId);
     if (!dto) throw new InternalError('subscription disappeared after insert');
@@ -145,7 +256,7 @@ export function registerSubscriptionRoutes(
     const body = updateSubscriptionRequestSchema.parse(request.body);
     const existing = db.select().from(subscriptions).where(eq(subscriptions.id, id)).get();
     if (!existing) throw new NotFoundError('subscription');
-    if (body.destinationId !== undefined) {
+    if (body.destinationId !== undefined && body.destinationId !== null) {
       const dest = db
         .select({ id: destinations.id })
         .from(destinations)
@@ -240,10 +351,15 @@ interface SubscriptionListRow {
   sourceChatId: string;
   sourceTitle: string;
   handle: string | null;
-  destinationId: number;
-  destinationName: string;
-  destinationChatId: string;
+  iconDataUrl: string | null;
+  destinationId: number | null;
+  destinationName: string | null;
+  destinationChatId: string | null;
   enabled: boolean;
+  forwardingRestrictedAt: Date | null;
+  sourceAccessStatus: 'ok' | 'no_access';
+  sourceAccessCheckedAt: Date | null;
+  destinationAccessStatus: 'ok' | 'no_access' | null;
   createdAt: Date;
   filterCount: number;
   forwardedCount: number;
@@ -263,7 +379,7 @@ function assertLibraryFiltersExist(db: DbOrTx, ids: readonly number[]): void {
   }
 }
 
-function replaceLibraryFilterAttachments(
+export function replaceLibraryFilterAttachments(
   db: DbOrTx,
   subscriptionId: number,
   libraryFilterIds: readonly number[],
@@ -281,7 +397,7 @@ function replaceLibraryFilterAttachments(
 // array has already been zod-validated as a discriminated union, so each
 // element's `params` is guaranteed to match its `ruleType`. Empty array =
 // drop all (matches `replaceLibraryFilterAttachments` semantics).
-function replaceInlineFilters(
+export function replaceInlineFilters(
   db: DbOrTx,
   subscriptionId: number,
   inputs: readonly InlineFilterInput[],
@@ -297,6 +413,7 @@ function replaceInlineFilters(
         ruleType: f.ruleType,
         params: f.params,
         ...(f.enabled !== undefined ? { enabled: f.enabled } : {}),
+        ...(f.mode !== undefined ? { mode: f.mode } : {}),
       })),
     )
     .run();
@@ -351,10 +468,15 @@ const subscriptionListColumns = {
   sourceChatId: subscriptions.sourceChatId,
   sourceTitle: subscriptions.sourceTitle,
   handle: subscriptions.handle,
+  iconDataUrl: subscriptions.iconDataUrl,
   destinationId: subscriptions.destinationId,
   destinationName: destinations.name,
   destinationChatId: destinations.chatId,
   enabled: subscriptions.enabled,
+  forwardingRestrictedAt: subscriptions.forwardingRestrictedAt,
+  sourceAccessStatus: subscriptions.sourceAccessStatus,
+  sourceAccessCheckedAt: subscriptions.sourceAccessCheckedAt,
+  destinationAccessStatus: destinations.accessStatus,
   createdAt: subscriptions.createdAt,
   filterCount: filterCountSubquery,
   forwardedCount: forwardedCountSubquery,
@@ -364,7 +486,7 @@ function listSubscriptions(db: Db): SubscriptionDto[] {
   const rows = db
     .select(subscriptionListColumns)
     .from(subscriptions)
-    .innerJoin(destinations, eq(subscriptions.destinationId, destinations.id))
+    .leftJoin(destinations, eq(subscriptions.destinationId, destinations.id))
     .orderBy(asc(subscriptions.id))
     .all();
   const libIdsBySub = loadLibraryFilterIdsBatch(
@@ -378,7 +500,7 @@ export function getSubscription(db: Db, id: number): SubscriptionDto | undefined
   const row = db
     .select(subscriptionListColumns)
     .from(subscriptions)
-    .innerJoin(destinations, eq(subscriptions.destinationId, destinations.id))
+    .leftJoin(destinations, eq(subscriptions.destinationId, destinations.id))
     .where(eq(subscriptions.id, id))
     .get();
   if (!row) return undefined;
@@ -391,6 +513,7 @@ function toDto(row: SubscriptionListRow, libraryFilterIds: number[]): Subscripti
     sourceChatId: row.sourceChatId,
     sourceTitle: row.sourceTitle,
     handle: row.handle,
+    iconDataUrl: row.iconDataUrl,
     destinationId: row.destinationId,
     destinationName: row.destinationName,
     destinationChatId: row.destinationChatId,
@@ -398,6 +521,14 @@ function toDto(row: SubscriptionListRow, libraryFilterIds: number[]): Subscripti
     filterCount: Number(row.filterCount ?? 0),
     forwardedCount: Number(row.forwardedCount ?? 0),
     libraryFilterIds,
+    forwardingRestrictedAt: row.forwardingRestrictedAt
+      ? row.forwardingRestrictedAt.toISOString()
+      : null,
+    sourceAccessStatus: row.sourceAccessStatus,
+    sourceAccessCheckedAt: row.sourceAccessCheckedAt
+      ? row.sourceAccessCheckedAt.toISOString()
+      : null,
+    destinationAccessStatus: row.destinationAccessStatus,
     createdAt: row.createdAt.toISOString(),
   };
 }

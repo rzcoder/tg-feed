@@ -37,10 +37,20 @@ export interface ForwardJob {
   sourceMessageIds: string[];
 }
 
+export type ForwardFailureKind =
+  | 'transient'
+  | 'permanent_chat_forwards_restricted'
+  | 'permanent_message_id_invalid'
+  | 'permanent_peer_id_invalid'
+  | 'permanent_channel_private'
+  | 'permanent_user_banned_in_channel'
+  | 'permanent_chat_write_forbidden'
+  | 'fatal_auth_key_unregistered';
+
 export type ForwardOutcome =
   | { status: 'sent'; destMessageIds: string[] }
-  | { status: 'flood_wait'; seconds: number }
-  | { status: 'failed'; error: string };
+  | { status: 'flood_wait'; seconds: number; kind: 'flood_wait' | 'slow_mode' }
+  | { status: 'failed'; error: string; failureKind: ForwardFailureKind };
 
 export interface RawForwardingHandle {
   enqueue(raw: RawForwardJob): void;

@@ -31,8 +31,9 @@ tracked in [PROGRESS.md](PROGRESS.md).
 - **Throttling.** Telegram silently classifies high-rate userbots as spam. Hard floor
   delay between forwards (5–15 s by default, configurable) per destination.
 - **FloodWait.** On `FLOOD_WAIT_X`, requeue with `seconds * 1000` ms backoff.
-- **Encrypted session storage.** AES-encrypt the session string at rest if persisted to
-  DB (env-supplied key). For MVP the env value is the source of truth.
+- **Session storage.** Env value (`TG_SESSION_STRING`) is the only source of truth;
+  the originally-planned encrypted-at-rest cache and its `TG_SESSION_ENCRYPTION_KEY`
+  knob were dropped (see migration 0005).
 - **Event-driven listening.** `client.addEventHandler(handler, new NewMessage({}))` —
   no polling.
 
@@ -162,7 +163,6 @@ Each chapter ends with green tests, lint pass, working scripts, and an updated
   - `subscription_filters(id, subscriptionId, ruleType, params JSON, enabled)`
   - `app_settings(key PK, value JSON)` — global throttle/delay settings
   - `forward_log(id, subscriptionId, sourceMessageId, destMessageId, status, error, createdAt)`
-  - `tg_session(key PK, encryptedString)` — optional cache (env wins for MVP)
 - drizzle migration setup; `pnpm db:generate`, `pnpm db:migrate`.
 - Singleton DB client with WAL pragma.
 - `apps/server/src/config.ts` (zod-validated env).
@@ -300,7 +300,7 @@ Each chapter ends with green tests, lint pass, working scripts, and an updated
 **End-to-end (after Chapter 14):**
 
 - `cp .env.example .env`; fill `TG_API_ID`, `TG_API_HASH`, `TG_SESSION_STRING`,
-  `WEB_PASSWORD`, `SESSION_SECRET`, `DESTINATION_CHAT_ID`.
+  `WEB_PASSWORD`, `SESSION_SECRET`.
 - `pnpm tg:login` (one-time).
 - `pnpm dev` boots server + web; open `http://localhost:5173`, log in, add a
   subscription → public channel, attach a `text-contains` filter, observe forwards in

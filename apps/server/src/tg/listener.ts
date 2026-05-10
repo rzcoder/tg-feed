@@ -85,5 +85,12 @@ export function attachNewMessageListener(
     }
   };
 
-  client.addEventHandler(safeHandler, new NewMessage({}));
+  // `incoming: true` filters out events the userbot itself produced. Without
+  // this, if a destination chat ever overlaps with a subscribed source the
+  // forwarded copy would be re-ingested as a new event and cause a loop.
+  // The SQL filter on `sourceChatId` happens to mask most of those today,
+  // but excluding self-events at the gramjs layer is cheaper and removes the
+  // foot-gun entirely. `outgoing: false` is mutually exclusive with this and
+  // would be the equivalent inverse selector — gramjs accepts either form.
+  client.addEventHandler(safeHandler, new NewMessage({ incoming: true }));
 }

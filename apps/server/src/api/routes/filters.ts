@@ -78,6 +78,7 @@ export function registerFilterRoutes(app: FastifyInstance, deps: RegisterFilterD
         ruleType: body.ruleType,
         params: body.params,
         ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
+        ...(body.mode !== undefined ? { mode: body.mode } : {}),
       })
       .returning()
       .all();
@@ -100,6 +101,7 @@ export function registerFilterRoutes(app: FastifyInstance, deps: RegisterFilterD
       patch.params = parsed.data;
     }
     if (body.enabled !== undefined) patch.enabled = body.enabled;
+    if (body.mode !== undefined) patch.mode = body.mode;
 
     const updated = db
       .update(subscriptionFilters)
@@ -146,5 +148,6 @@ function toDto(row: SubscriptionFilter): SubscriptionFilterDto {
     ruleType: row.ruleType,
     params: row.params as Record<string, unknown>,
     enabled: row.enabled,
+    mode: row.mode,
   };
 }

@@ -114,7 +114,7 @@ describe('ForwardingPipeline', () => {
     let callCount = 0;
     const forwarder: Forwarder = vi.fn(async (j): Promise<ForwardOutcome> => {
       callCount++;
-      if (callCount === 1) return { status: 'flood_wait', seconds: 30 };
+      if (callCount === 1) return { status: 'flood_wait', seconds: 30, kind: 'flood_wait' };
       return { status: 'sent', destMessageIds: [`fwd-${j.sourceMessageIds[0]!}`] };
     });
 

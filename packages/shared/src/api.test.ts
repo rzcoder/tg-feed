@@ -51,13 +51,22 @@ describe('createSubscriptionRequestSchema', () => {
       }).success,
     ).toBe(false);
   });
-  it('rejects missing destinationId', () => {
+  it('accepts missing destinationId (subscription created in detached state)', () => {
     expect(
       createSubscriptionRequestSchema.safeParse({
         sourceChatId: '-100123',
         sourceTitle: 'src',
       }).success,
-    ).toBe(false);
+    ).toBe(true);
+  });
+  it('accepts an explicit null destinationId', () => {
+    expect(
+      createSubscriptionRequestSchema.safeParse({
+        sourceChatId: '-100123',
+        sourceTitle: 'src',
+        destinationId: null,
+      }).success,
+    ).toBe(true);
   });
   it('rejects empty string fields', () => {
     expect(

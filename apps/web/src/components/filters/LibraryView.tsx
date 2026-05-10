@@ -56,6 +56,7 @@ export function LibraryView({ openAdd, openEdit }: LibraryViewProps) {
                   params: f.params,
                   name: f.name,
                   enabled: true,
+                  mode: f.mode,
                 }}
                 library
                 onEdit={() => openEdit(f)}

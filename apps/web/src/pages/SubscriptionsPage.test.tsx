@@ -22,6 +22,7 @@ const sub = {
   sourceChatId: '-1001234567890',
   sourceTitle: 'Anthropic',
   handle: '@anthropic_ai',
+  iconDataUrl: null,
   destinationId: 1,
   destinationName: 'ops',
   destinationChatId: '-1009999999999',
@@ -29,6 +30,10 @@ const sub = {
   filterCount: 2,
   forwardedCount: 42,
   libraryFilterIds: [],
+  forwardingRestrictedAt: null,
+  sourceAccessStatus: 'ok' as const,
+  sourceAccessCheckedAt: null,
+  destinationAccessStatus: 'ok' as const,
   createdAt: '2026-01-01T00:00:00Z',
 };
 
@@ -37,7 +42,10 @@ const destination = {
   name: 'ops',
   chatId: '-1009999999999',
   note: null,
+  iconDataUrl: null,
   usageCount: 1,
+  accessStatus: 'ok' as const,
+  accessCheckedAt: null,
   createdAt: '2026-01-01T00:00:00Z',
 };
 

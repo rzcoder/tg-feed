@@ -7,40 +7,43 @@
  * named maps (`FILTER_RULE_LABELS` etc.) are derived from it.
  */
 import { Ban, FileImage, Regex, Ruler, TextCursorInput, User, type LucideIcon } from 'lucide-react';
-import type { FilterRuleType } from '@tg-feed/shared';
+import type { FilterMode, FilterRuleType } from '@tg-feed/shared';
 
 export interface FilterLike {
   ruleType: FilterRuleType;
   params: Record<string, unknown>;
+  /** Optional — when 'exclude', the description is prefixed with "Exclude: ". */
+  mode?: FilterMode;
 }
 
 export function describeFilter(f: FilterLike): string {
   const p = f.params;
+  const prefix = f.mode === 'exclude' ? 'Exclude: ' : '';
   switch (f.ruleType) {
     case 'text-contains': {
       const value = (p.value as string) ?? '';
       const caseInsensitive = p.caseInsensitive !== false;
-      return `contains "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}`;
+      return `${prefix}contains "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}`;
     }
     case 'text-excludes': {
       const value = (p.value as string) ?? '';
       const caseInsensitive = p.caseInsensitive !== false;
-      return `excludes "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}`;
+      return `${prefix}excludes "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}`;
     }
     case 'text-regex': {
       const pattern = (p.pattern as string) ?? '';
       const flags = (p.flags as string) ?? '';
-      return `/${pattern}/${flags}`;
+      return `${prefix}/${pattern}/${flags}`;
     }
     case 'has-media': {
-      return p.required === false ? 'must NOT have media' : 'must have media';
+      return `${prefix}${p.required === false ? 'must NOT have media' : 'must have media'}`;
     }
     case 'min-length': {
-      return `min length ${p.min ?? 0}`;
+      return `${prefix}min length ${p.min ?? 0}`;
     }
     case 'sender-allowlist': {
       const usernames = (p.usernames as string[]) ?? [];
-      return `sender ∈ [${usernames.join(', ')}]`;
+      return `${prefix}sender ∈ [${usernames.join(', ')}]`;
     }
   }
 }

@@ -1,35 +1,85 @@
 import { describe, expect, it } from 'vitest';
-import { NotFoundError, UpstreamError, ValidationError } from '../lib/errors.js';
-import { createEntityResolver, entityToResolved, normaliseHandle } from './entityResolver.js';
+import { UpstreamError, ValidationError } from '../lib/errors.js';
+import { entityToResolved, parseInput } from './entityResolver.js';
 
-type ResolverClient = Parameters<typeof createEntityResolver>[0];
-
-describe('normaliseHandle', () => {
-  it('strips https://, t.me/, leading @, and trailing path/query', () => {
-    expect(normaliseHandle('https://t.me/anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('http://t.me/anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('https://telegram.me/anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('t.me/anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('@anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('@@anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('anthropic_ai')).toBe('anthropic_ai');
-    expect(normaliseHandle('https://t.me/anthropic_ai/123')).toBe('anthropic_ai');
-    expect(normaliseHandle('https://t.me/anthropic_ai?bar=1')).toBe('anthropic_ai');
-    expect(normaliseHandle('  anthropic_ai  ')).toBe('anthropic_ai');
+describe('parseInput', () => {
+  it('classifies handles (with prefix variants) as { kind: "handle" }', () => {
+    expect(parseInput('https://t.me/anthropic_ai')).toEqual({
+      kind: 'handle',
+      value: 'anthropic_ai',
+    });
+    expect(parseInput('http://t.me/anthropic_ai')).toEqual({
+      kind: 'handle',
+      value: 'anthropic_ai',
+    });
+    expect(parseInput('https://telegram.me/anthropic_ai')).toEqual({
+      kind: 'handle',
+      value: 'anthropic_ai',
+    });
+    expect(parseInput('t.me/anthropic_ai')).toEqual({ kind: 'handle', value: 'anthropic_ai' });
+    expect(parseInput('@anthropic_ai')).toEqual({ kind: 'handle', value: 'anthropic_ai' });
+    expect(parseInput('@@anthropic_ai')).toEqual({ kind: 'handle', value: 'anthropic_ai' });
+    expect(parseInput('anthropic_ai')).toEqual({ kind: 'handle', value: 'anthropic_ai' });
+    expect(parseInput('https://t.me/anthropic_ai/123')).toEqual({
+      kind: 'handle',
+      value: 'anthropic_ai',
+    });
+    expect(parseInput('https://t.me/anthropic_ai?bar=1')).toEqual({
+      kind: 'handle',
+      value: 'anthropic_ai',
+    });
+    expect(parseInput('  anthropic_ai  ')).toEqual({ kind: 'handle', value: 'anthropic_ai' });
   });
+
+  it('classifies invite links as { kind: "invite" }', () => {
+    expect(parseInput('https://t.me/+LtdmkRfh24oxZjYy')).toEqual({
+      kind: 'invite',
+      hash: 'LtdmkRfh24oxZjYy',
+    });
+    expect(parseInput('http://t.me/+LtdmkRfh24oxZjYy')).toEqual({
+      kind: 'invite',
+      hash: 'LtdmkRfh24oxZjYy',
+    });
+    expect(parseInput('t.me/+LtdmkRfh24oxZjYy')).toEqual({
+      kind: 'invite',
+      hash: 'LtdmkRfh24oxZjYy',
+    });
+    expect(parseInput('+LtdmkRfh24oxZjYy')).toEqual({ kind: 'invite', hash: 'LtdmkRfh24oxZjYy' });
+    // Hyphen / underscore allowed in hashes.
+    expect(parseInput('+abc-def_ghi')).toEqual({ kind: 'invite', hash: 'abc-def_ghi' });
+    // Trailing junk after the hash is stripped.
+    expect(parseInput('https://t.me/+LtdmkRfh/extra?q=1')).toEqual({
+      kind: 'invite',
+      hash: 'LtdmkRfh',
+    });
+  });
+
+  it('classifies numeric ids as { kind: "chatId" }', () => {
+    expect(parseInput('-1001234567890')).toEqual({ kind: 'chatId', value: '-1001234567890' });
+    expect(parseInput('1234567')).toEqual({ kind: 'chatId', value: '1234567' });
+    expect(parseInput('  -1001234567  ')).toEqual({ kind: 'chatId', value: '-1001234567' });
+  });
+
   it('rejects empty input', () => {
-    expect(() => normaliseHandle('')).toThrow(ValidationError);
-    expect(() => normaliseHandle('   ')).toThrow(ValidationError);
-    expect(() => normaliseHandle('@')).toThrow(ValidationError);
+    expect(() => parseInput('')).toThrow(ValidationError);
+    expect(() => parseInput('   ')).toThrow(ValidationError);
+    expect(() => parseInput('@')).toThrow(ValidationError);
   });
-  it('rejects too-short or too-long names', () => {
-    expect(() => normaliseHandle('abc')).toThrow(ValidationError);
-    expect(() => normaliseHandle('a'.repeat(33))).toThrow(ValidationError);
+
+  it('rejects too-short / too-long handles', () => {
+    expect(() => parseInput('abc')).toThrow(ValidationError);
+    expect(() => parseInput('a'.repeat(33))).toThrow(ValidationError);
   });
-  it('rejects non-letter/digit/underscore characters', () => {
-    expect(() => normaliseHandle('foo-bar')).toThrow(ValidationError);
-    expect(() => normaliseHandle('foo bar')).toThrow(ValidationError);
-    expect(() => normaliseHandle('foo.bar')).toThrow(ValidationError);
+
+  it('rejects handles with disallowed characters', () => {
+    expect(() => parseInput('foo-bar')).toThrow(ValidationError);
+    expect(() => parseInput('foo bar')).toThrow(ValidationError);
+    expect(() => parseInput('foo.bar')).toThrow(ValidationError);
+  });
+
+  it('rejects an invite hash with disallowed characters', () => {
+    expect(() => parseInput('+abc.def')).toThrow(ValidationError);
+    expect(() => parseInput('+')).toThrow(ValidationError);
   });
 });
 
@@ -80,43 +130,5 @@ describe('entityToResolved', () => {
   it('falls back sourceTitle to handle when no title or names', () => {
     const result = entityToResolved({ id: { toString: () => '1' }, username: 'bot' }, 'bot');
     expect(result.sourceTitle).toBe('bot');
-  });
-});
-
-describe('createEntityResolver error mapping', () => {
-  it('maps USERNAME_NOT_OCCUPIED → NotFoundError', async () => {
-    const stub = {
-      getEntity: () => {
-        throw new Error('USERNAME_NOT_OCCUPIED: this username is not occupied');
-      },
-    } as unknown as ResolverClient;
-    const resolver = createEntityResolver(stub);
-    await expect(resolver('foo_bar')).rejects.toBeInstanceOf(NotFoundError);
-  });
-
-  it('maps CHANNEL_PRIVATE → UpstreamError with code private_channel', async () => {
-    const stub = {
-      getEntity: () => {
-        throw new Error('CHANNEL_PRIVATE: this channel is private');
-      },
-    } as unknown as ResolverClient;
-    const resolver = createEntityResolver(stub);
-    await expect(resolver('foo_bar')).rejects.toMatchObject({
-      name: UpstreamError.name,
-      code: 'private_channel',
-    });
-  });
-
-  it('maps unknown gramjs errors → UpstreamError generic', async () => {
-    const stub = {
-      getEntity: () => {
-        throw new Error('TIMEOUT');
-      },
-    } as unknown as ResolverClient;
-    const resolver = createEntityResolver(stub);
-    await expect(resolver('foo_bar')).rejects.toMatchObject({
-      name: UpstreamError.name,
-      code: 'upstream_unavailable',
-    });
   });
 });

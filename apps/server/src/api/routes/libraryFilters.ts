@@ -17,6 +17,7 @@ import {
   createLibraryFilterRequestSchema,
   filterRuleParamsSchemas,
   updateLibraryFilterRequestSchema,
+  type FilterMode,
   type LibraryFilterDto,
   type LibraryFilterListResponse,
 } from '@tg-feed/shared';
@@ -31,6 +32,7 @@ interface LibraryFilterRow {
   name: string;
   ruleType: LibraryFilterDto['ruleType'];
   params: Record<string, unknown>;
+  mode: FilterMode;
   createdAt: Date;
   usageCount: number;
 }
@@ -59,6 +61,7 @@ export function registerLibraryFilterRoutes(
         name: body.name,
         ruleType: body.ruleType,
         params: body.params,
+        ...(body.mode !== undefined ? { mode: body.mode } : {}),
       })
       .returning()
       .all();
@@ -69,6 +72,7 @@ export function registerLibraryFilterRoutes(
       name: row.name,
       ruleType: row.ruleType,
       params: row.params,
+      mode: row.mode,
       createdAt: row.createdAt,
       usageCount: 0,
     });
@@ -97,6 +101,7 @@ export function registerLibraryFilterRoutes(
       .set({
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.params !== undefined ? { params: validatedParams } : {}),
+        ...(body.mode !== undefined ? { mode: body.mode } : {}),
       })
       .where(eq(libraryFilters.id, id))
       .returning()
@@ -107,6 +112,7 @@ export function registerLibraryFilterRoutes(
       name: row.name,
       ruleType: row.ruleType,
       params: row.params,
+      mode: row.mode,
       createdAt: row.createdAt,
       usageCount: countUsage(db, id),
     });
@@ -135,6 +141,7 @@ function listLibraryFilters(db: Db): LibraryFilterRow[] {
       name: libraryFilters.name,
       ruleType: libraryFilters.ruleType,
       params: libraryFilters.params,
+      mode: libraryFilters.mode,
       createdAt: libraryFilters.createdAt,
       usageCount: count(subscriptionLibraryFilters.subscriptionId).as('usage_count'),
     })
@@ -151,6 +158,7 @@ function listLibraryFilters(db: Db): LibraryFilterRow[] {
     name: r.name,
     ruleType: r.ruleType,
     params: r.params,
+    mode: r.mode,
     createdAt: r.createdAt,
     usageCount: Number(r.usageCount ?? 0),
   }));
@@ -170,6 +178,7 @@ function toDto(row: LibraryFilterRow): LibraryFilterDto {
     name: row.name,
     ruleType: row.ruleType,
     params: row.params,
+    mode: row.mode,
     usageCount: row.usageCount,
     createdAt: row.createdAt.toISOString(),
   };

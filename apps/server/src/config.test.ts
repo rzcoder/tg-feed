@@ -29,16 +29,4 @@ describe('parseConfig', () => {
   it('rejects a SESSION_SECRET shorter than 32 chars', () => {
     expect(() => parseConfig({ SESSION_SECRET: 'short' })).toThrow(/SESSION_SECRET/);
   });
-
-  it('accepts a valid TG_SESSION_ENCRYPTION_KEY (64 hex chars)', () => {
-    const key = 'a'.repeat(64);
-    const cfg = parseConfig({ TG_SESSION_ENCRYPTION_KEY: key });
-    expect(cfg.TG_SESSION_ENCRYPTION_KEY).toBe(key);
-  });
-
-  it('rejects a malformed TG_SESSION_ENCRYPTION_KEY', () => {
-    expect(() => parseConfig({ TG_SESSION_ENCRYPTION_KEY: 'not-hex' })).toThrow(
-      /TG_SESSION_ENCRYPTION_KEY/,
-    );
-  });
 });

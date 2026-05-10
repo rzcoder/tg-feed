@@ -21,10 +21,12 @@ export const STREAM_EVENT_TYPES = [
   'forward.flood_wait',
   'forward.filtered',
   'subscription.changed',
+  'destination.changed',
 ] as const;
 export type StreamEventType = (typeof STREAM_EVENT_TYPES)[number];
 
 export type SubscriptionChangeKind = 'created' | 'updated' | 'deleted';
+export type DestinationChangeKind = 'created' | 'updated' | 'deleted';
 
 export type StreamEventInput =
   | {
@@ -68,6 +70,11 @@ export type StreamEventInput =
       type: 'subscription.changed';
       subscriptionId: number;
       change: SubscriptionChangeKind;
+    }
+  | {
+      type: 'destination.changed';
+      destinationId: number;
+      change: DestinationChangeKind;
     };
 
 export type StreamEvent = StreamEventInput & { occurredAt: string };

@@ -8,8 +8,12 @@ function makeSub(overrides: Partial<Subscription>): Subscription {
     sourceChatId: '-1001234567890',
     sourceTitle: 'channel',
     handle: null,
+    iconDataUrl: null,
     destinationId: 1,
     enabled: true,
+    forwardingRestrictedAt: null,
+    sourceAccessStatus: 'ok',
+    sourceAccessCheckedAt: null,
     createdAt: new Date(0),
     ...overrides,
   };

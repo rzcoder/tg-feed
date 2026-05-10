@@ -2,9 +2,12 @@ import {
   createDestinationRequestSchema,
   destinationDtoSchema,
   destinationListResponseSchema,
+  resolveDestinationRequestSchema,
+  resolveDestinationResponseSchema,
   type CreateDestinationRequest,
   type DestinationDto,
   type DestinationListResponse,
+  type ResolveDestinationResponse,
   type UpdateDestinationRequest,
 } from '@tg-feed/shared';
 import { apiFetch } from './client';
@@ -12,6 +15,15 @@ import { apiFetch } from './client';
 export async function listDestinations(): Promise<DestinationListResponse> {
   const res = await apiFetch<unknown>('/api/destinations');
   return destinationListResponseSchema.parse(res);
+}
+
+export async function resolveDestination(input: string): Promise<ResolveDestinationResponse> {
+  const body = resolveDestinationRequestSchema.parse({ input });
+  const res = await apiFetch<unknown, typeof body>('/api/destinations/resolve', {
+    method: 'POST',
+    body,
+  });
+  return resolveDestinationResponseSchema.parse(res);
 }
 
 export async function createDestination(body: CreateDestinationRequest): Promise<DestinationDto> {

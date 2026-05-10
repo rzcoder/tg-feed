@@ -76,6 +76,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'does-not-exist' as never,
           params: {} as never,
           label: null,
+          mode: 'include',
         },
       ],
       createDefaultRegistry(),
@@ -94,6 +95,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'text-contains',
           params: { value: '' } as never,
           label: null,
+          mode: 'include',
         },
       ],
       createDefaultRegistry(),
@@ -121,6 +123,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'text-regex',
           params: { value: 'foo', caseInsensitive: true } as never,
           label: null,
+          mode: 'include',
         },
       ],
       registry,
@@ -140,6 +143,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'text-contains',
           params: { value: 'rust', caseInsensitive: true } as never,
           label: null,
+          mode: 'include',
         },
         {
           id: 2,
@@ -147,6 +151,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'has-media',
           params: { required: true } as never,
           label: null,
+          mode: 'include',
         },
       ],
       registry,
@@ -167,6 +172,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'text-contains',
           params: { value: 'rust', caseInsensitive: true } as never,
           label: null,
+          mode: 'include',
         },
         {
           id: 2,
@@ -174,6 +180,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'min-length',
           params: { min: 100 } as never,
           label: null,
+          mode: 'include',
         },
       ],
       registry,
@@ -199,6 +206,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'text-contains',
           params: { value: 'rust', caseInsensitive: true } as never,
           label: null,
+          mode: 'include',
         },
         {
           id: 2,
@@ -206,6 +214,7 @@ describe('evaluateFilters (pure)', () => {
           ruleType: 'has-media',
           params: { required: true } as never,
           label: null,
+          mode: 'include',
         },
       ],
       registry,
@@ -213,6 +222,111 @@ describe('evaluateFilters (pure)', () => {
       logger,
     );
     expect(result).toEqual({ pass: true, reasons: [] });
+  });
+
+  describe('mode: exclude', () => {
+    it("exclude rule that matches → fail (inverse of include 'no match')", () => {
+      const result = evaluateFilters(
+        [
+          {
+            id: 1,
+            source: 'sub',
+            ruleType: 'text-contains',
+            params: { value: 'rust', caseInsensitive: true } as never,
+            label: null,
+            mode: 'exclude',
+          },
+        ],
+        createDefaultRegistry(),
+        ctx({ text: 'rust news' }),
+        logger,
+      );
+      expect(result.pass).toBe(false);
+      expect(result.reasons).toEqual(['exclude:text-contains: matched (exclude)']);
+    });
+
+    it("exclude rule that doesn't match → pass", () => {
+      const result = evaluateFilters(
+        [
+          {
+            id: 1,
+            source: 'sub',
+            ruleType: 'text-contains',
+            params: { value: 'rust', caseInsensitive: true } as never,
+            label: null,
+            mode: 'exclude',
+          },
+        ],
+        createDefaultRegistry(),
+        ctx({ text: 'no language match here' }),
+        logger,
+      );
+      expect(result).toEqual({ pass: true, reasons: [] });
+    });
+
+    it('mixed include + exclude in one set: include must match AND exclude must NOT match', () => {
+      const registry = createDefaultRegistry();
+      // include text-contains 'rust' + exclude has-media
+      // → forwards rust news that has NO media
+      const filters = [
+        {
+          id: 1,
+          source: 'sub' as const,
+          ruleType: 'text-contains' as const,
+          params: { value: 'rust', caseInsensitive: true } as never,
+          label: null,
+          mode: 'include' as const,
+        },
+        {
+          id: 2,
+          source: 'sub' as const,
+          ruleType: 'has-media' as const,
+          params: { required: true } as never,
+          label: null,
+          mode: 'exclude' as const,
+        },
+      ];
+
+      // text-only "rust news" → include passes, exclude doesn't match → both ok
+      expect(evaluateFilters(filters, registry, ctx({ text: 'rust news' }), logger).pass).toBe(
+        true,
+      );
+
+      // "rust news" with media → include passes, exclude matches → reject
+      const withMedia = evaluateFilters(
+        filters,
+        registry,
+        ctx({ text: 'rust news', hasMedia: true }),
+        logger,
+      );
+      expect(withMedia.pass).toBe(false);
+      expect(withMedia.reasons).toEqual(['exclude:has-media: matched (exclude)']);
+
+      // No "rust" → include fails regardless of media
+      expect(evaluateFilters(filters, registry, ctx({ text: 'no match' }), logger).pass).toBe(
+        false,
+      );
+    });
+
+    it('library exclude prefixes the reason with both library: and exclude: tags', () => {
+      const result = evaluateFilters(
+        [
+          {
+            id: 1,
+            source: 'lib',
+            ruleType: 'has-media',
+            params: { required: true } as never,
+            label: 'No media',
+            mode: 'exclude',
+          },
+        ],
+        createDefaultRegistry(),
+        ctx({ text: 'whatever', hasMedia: true }),
+        logger,
+      );
+      expect(result.pass).toBe(false);
+      expect(result.reasons).toEqual(['library:No media: exclude:has-media: matched (exclude)']);
+    });
   });
 });
 
@@ -479,6 +593,36 @@ describe('createFilterEvaluator (with DB)', () => {
       expect(filtered.reasons).toHaveLength(2);
       expect(filtered.reasons[0]).toMatch(/^library:No promo:/);
       expect(filtered.reasons[1]).toMatch(/^min-length:/);
+    });
+
+    it('exclude mode flows through DB → evaluator', () => {
+      // has-media in exclude mode = "block messages with media"
+      db.insert(subscriptionFilters)
+        .values({
+          subscriptionId: subId,
+          ruleType: 'has-media',
+          params: { required: true },
+          mode: 'exclude',
+        })
+        .run();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus: makeStubBus(),
+      });
+
+      // Text-only message — exclude rule does not match → pass.
+      expect(evaluator.evaluate(ctx({ text: 'just text' }), subId, ['10']).pass).toBe(true);
+      expect(db.select().from(forwardLog).all()).toHaveLength(0);
+
+      // Media message — exclude rule matches → reject + log row.
+      expect(
+        evaluator.evaluate(ctx({ text: 'photo caption', hasMedia: true }), subId, ['11']).pass,
+      ).toBe(false);
+      const rows = db.select().from(forwardLog).all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.error).toBe('exclude:has-media: matched (exclude)');
     });
 
     it('detached library filter does not apply', () => {

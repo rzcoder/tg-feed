@@ -1,6 +1,7 @@
-import { Pencil, Send, Trash } from 'lucide-react';
+import { Pencil, Trash } from 'lucide-react';
 import type { DestinationDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
+import { EntityIcon } from '@/components/domain/EntityIcon';
 
 export function DestRow({
   destination,
@@ -14,19 +15,23 @@ export function DestRow({
   const inUse = destination.usageCount > 0;
   return (
     <div className="flex items-center gap-3 px-4.5 py-3 bg-bg border-b border-border min-h-[60px]">
-      <span className="grid place-items-center w-[30px] h-[30px] rounded-[7px] bg-surface-2 border border-border text-text-2 flex-shrink-0">
-        <Send size={13} />
-      </span>
+      <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" />
       <div className="flex flex-col flex-1 min-w-0 gap-0.5">
         <div className="text-[14.5px] font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">
           {destination.name}
         </div>
-        <div className="flex items-center gap-2 text-[11.5px] text-text-muted">
+        <div className="flex items-center gap-2 text-[11.5px] text-text-muted min-w-0">
           <span className="font-mono text-[11px]">{destination.chatId}</span>
           <span className="text-text-faint">·</span>
           <span>
             {destination.usageCount} sub{destination.usageCount === 1 ? '' : 's'}
           </span>
+          {destination.note && (
+            <>
+              <span className="text-text-faint">·</span>
+              <span className="text-text-faint italic truncate">({destination.note})</span>
+            </>
+          )}
         </div>
       </div>
       <Button

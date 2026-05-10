@@ -1,17 +1,12 @@
 /**
- * gramjs `client.getEntity` adapter for the resolve endpoint.
+ * Input parsing + entity → DTO mapping shared by `chatResolver` and the
+ * invite resolver.
  *
- * The web UI's "Add subscription" flow accepts an `@username` or
- * `t.me/...` link and asks the server to look it up. This wraps gramjs in
- * a small interface so the API server can be unit-tested without a live
- * Telegram connection (tests inject a stub resolver).
- *
- * The resolver normalises the input, then maps gramjs error names to the
- * typed `AppError` hierarchy. Anything we can't classify is rethrown as a
- * generic `UpstreamError` (503) — never leak gramjs internals to clients.
+ * This module no longer wraps gramjs directly — `chatResolver.ts` does that,
+ * dispatching on the `parseInput` discriminator. The two helpers exported
+ * here are pure: tests don't need a Telegram stub to exercise them.
  */
-import type { TelegramClient } from 'telegram';
-import { NotFoundError, UpstreamError, ValidationError } from '../lib/errors.js';
+import { UpstreamError, ValidationError } from '../lib/errors.js';
 
 export interface ResolvedEntity {
   sourceChatId: string;
@@ -19,62 +14,49 @@ export interface ResolvedEntity {
   handle: string | null;
 }
 
-export type EntityResolver = (input: string) => Promise<ResolvedEntity>;
+/**
+ * Discriminated classification of a paste-the-source-here input. The web UI
+ * accepts any of: `@username`, `t.me/username`, `t.me/+HASH` private invite,
+ * `+HASH` raw invite, or a numeric chat id (`-100…` channels/supergroups
+ * or bare positive ids for users / basic groups).
+ */
+export type ParsedInput =
+  | { kind: 'handle'; value: string }
+  | { kind: 'invite'; hash: string }
+  | { kind: 'chatId'; value: string };
 
-export function normaliseHandle(input: string): string {
+const HANDLE_RE = /^[A-Za-z0-9_]{4,32}$/;
+const INVITE_HASH_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const CHAT_ID_RE = /^-?\d{6,}$/;
+
+export function parseInput(input: string): ParsedInput {
   let s = input.trim();
   if (!s) throw new ValidationError('input is required');
   // Strip URL prefix variants.
   s = s.replace(/^https?:\/\//i, '');
-  // t.me/foo, telegram.me/foo, telegram.dog/foo
   s = s.replace(/^(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\//i, '');
-  // Strip leading `@`.
-  s = s.replace(/^@+/, '');
-  // Strip trailing path / query.
+  // Strip trailing path / query (e.g. `t.me/foo/123`, `t.me/foo?x=1`). We do
+  // this before classifying so a paste like `t.me/+HASH/123` still resolves.
   s = s.replace(/[/?#].*$/, '');
   if (!s) throw new ValidationError('input is required');
-  if (!/^[A-Za-z0-9_]{4,32}$/.test(s)) {
-    throw new ValidationError('expected a Telegram username (4–32 letters / digits / underscores)');
-  }
-  return s;
-}
 
-const KNOWN_NOT_FOUND = new Set(['USERNAME_NOT_OCCUPIED', 'USERNAME_INVALID']);
-const KNOWN_PRIVATE = new Set(['CHANNEL_PRIVATE', 'CHANNEL_INVALID']);
-
-interface GramJsErrorLike {
-  errorMessage?: string;
-  message?: string;
-  code?: number;
-}
-
-function classifyGramJsError(err: unknown, handle: string): never {
-  const e = err as GramJsErrorLike;
-  const msg = (e?.errorMessage ?? e?.message ?? '').toUpperCase();
-  for (const code of KNOWN_NOT_FOUND) {
-    if (msg.includes(code)) {
-      throw new NotFoundError(`channel @${handle}`);
+  if (s.startsWith('+')) {
+    const hash = s.slice(1);
+    if (!INVITE_HASH_RE.test(hash)) {
+      throw new ValidationError('expected a Telegram invite hash after `+`');
     }
+    return { kind: 'invite', hash };
   }
-  for (const code of KNOWN_PRIVATE) {
-    if (msg.includes(code)) {
-      throw new UpstreamError(`channel @${handle} is private or invalid`, 'private_channel');
-    }
-  }
-  throw new UpstreamError(`Telegram resolve failed for @${handle}`);
-}
 
-export function createEntityResolver(client: TelegramClient): EntityResolver {
-  return async (input) => {
-    const handle = normaliseHandle(input);
-    let entity: unknown;
-    try {
-      entity = await client.getEntity(handle);
-    } catch (err) {
-      classifyGramJsError(err, handle);
-    }
-    return entityToResolved(entity, handle);
-  };
+  if (CHAT_ID_RE.test(s)) {
+    return { kind: 'chatId', value: s };
+  }
+
+  const handle = s.replace(/^@+/, '');
+  if (!HANDLE_RE.test(handle)) {
+    throw new ValidationError('expected a Telegram username, invite link, or numeric chat id');
+  }
+  return { kind: 'handle', value: handle };
 }
 
 interface MaybeEntity {

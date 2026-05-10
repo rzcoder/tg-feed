@@ -2,7 +2,10 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StreamEvent, SubscriptionDto } from '@tg-feed/shared';
 import { subscriptionFilters, subscriptions } from '../../db/schema.js';
-import type { EntityResolver } from '../../tg/entityResolver.js';
+import type { ChatResolver } from '../../tg/chatResolver.js';
+import type { ImportInviteFn } from '../../tg/inviteResolver.js';
+import type { JoinChannelFn } from '../../tg/joinChannel.js';
+import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import { NotFoundError, UpstreamError, ValidationError } from '../../lib/errors.js';
 import { buildTestApp, seedDestination, type TestApp } from '../testing.js';
 
@@ -105,18 +108,17 @@ describe('subscription routes', () => {
     expect(body.enabled).toBe(false);
   });
 
-  it('POST /api/subscriptions returns 400 for missing destinationId', async () => {
+  it('POST /api/subscriptions creates a detached subscription when destinationId is omitted', async () => {
     const res = await testApp.app.inject({
       method: 'POST',
       url: '/api/subscriptions',
       headers: { cookie },
       payload: { sourceChatId: 's', sourceTitle: 'X' },
     });
-    expect(res.statusCode).toBe(400);
-    const body = res.json() as { error: { code: string; issues: unknown[] } };
-    expect(body.error.code).toBe('validation_error');
-    expect(body.error.issues.length).toBeGreaterThan(0);
-    expect(busEvents).toHaveLength(0);
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { destinationId: number | null };
+    expect(body.destinationId).toBeNull();
+    expect(busEvents).toHaveLength(1);
   });
 
   it('POST /api/subscriptions returns 400 when destination does not exist', async () => {
@@ -259,6 +261,69 @@ describe('subscription routes', () => {
     expect(busEvents).toHaveLength(0);
   });
 
+  it('POST /api/subscriptions invokes joinChannel and stores ok on success', async () => {
+    const joinChannel = vi.fn<JoinChannelFn>().mockResolvedValue('ok');
+    await testApp.close();
+    testApp = await buildTestApp({ joinChannel });
+    cookie = await testApp.loginAndGetCookie();
+    const localDest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: {
+        sourceChatId: '-1001234567890',
+        sourceTitle: 'Public Channel',
+        destinationId: localDest,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as SubscriptionDto;
+    expect(body.sourceAccessStatus).toBe('ok');
+    expect(body.sourceAccessCheckedAt).not.toBeNull();
+    expect(joinChannel).toHaveBeenCalledWith('-1001234567890');
+  });
+
+  it('POST /api/subscriptions stores no_access when joinChannel rejects, still returns 201', async () => {
+    const joinChannel = vi.fn<JoinChannelFn>().mockResolvedValue('no_access');
+    await testApp.close();
+    testApp = await buildTestApp({ joinChannel });
+    cookie = await testApp.loginAndGetCookie();
+    const localDest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: {
+        sourceChatId: '-1009998887776',
+        sourceTitle: 'Private Channel',
+        destinationId: localDest,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as SubscriptionDto;
+    expect(body.sourceAccessStatus).toBe('no_access');
+    expect(body.sourceAccessCheckedAt).not.toBeNull();
+  });
+
+  it('POST /api/subscriptions defaults sourceAccessStatus to ok when joinChannel is not configured', async () => {
+    // Default testApp has no joinChannel — created in the outer beforeEach.
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: {
+        sourceChatId: '-1001234567890',
+        sourceTitle: 'Channel',
+        destinationId: destId,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as SubscriptionDto;
+    expect(body.sourceAccessStatus).toBe('ok');
+    expect(body.sourceAccessCheckedAt).toBeNull();
+  });
+
   it.each([
     ['GET', '/api/subscriptions'],
     ['POST', '/api/subscriptions'],
@@ -393,12 +458,14 @@ describe('POST /api/subscriptions/resolve', () => {
   });
 
   it('forwards normalised input to the resolver and returns the response shape', async () => {
-    const resolver = vi.fn<EntityResolver>().mockResolvedValue({
-      sourceChatId: '-1001234567890',
-      sourceTitle: 'Anthropic',
+    const resolver = vi.fn<ChatResolver>().mockResolvedValue({
+      chatId: '-1001234567890',
+      title: 'Anthropic',
       handle: '@anthropic_ai',
+      inviteHash: null,
+      alreadyMember: true,
     });
-    const testApp = await buildTestApp({ entityResolver: resolver });
+    const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();
     const res = await testApp.app.inject({
       method: 'POST',
@@ -411,14 +478,43 @@ describe('POST /api/subscriptions/resolve', () => {
       sourceChatId: '-1001234567890',
       sourceTitle: 'Anthropic',
       handle: '@anthropic_ai',
+      inviteHash: null,
+      alreadyMember: true,
     });
     expect(resolver).toHaveBeenCalledWith('https://t.me/anthropic_ai');
     await testApp.close();
   });
 
+  it('returns inviteHash and null sourceChatId for not-yet-joined private invites', async () => {
+    const resolver = vi.fn<ChatResolver>().mockResolvedValue({
+      chatId: null,
+      title: 'Secret Channel',
+      handle: null,
+      inviteHash: 'LtdmkRfh24oxZjYy',
+      alreadyMember: false,
+    });
+    const testApp = await buildTestApp({ chatResolver: resolver });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions/resolve',
+      headers: { cookie },
+      payload: { input: 'https://t.me/+LtdmkRfh24oxZjYy' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      sourceChatId: null,
+      sourceTitle: 'Secret Channel',
+      handle: null,
+      inviteHash: 'LtdmkRfh24oxZjYy',
+      alreadyMember: false,
+    });
+    await testApp.close();
+  });
+
   it('maps NotFoundError → 404 unknown_channel', async () => {
-    const resolver = vi.fn<EntityResolver>().mockRejectedValue(new NotFoundError('channel @x'));
-    const testApp = await buildTestApp({ entityResolver: resolver });
+    const resolver = vi.fn<ChatResolver>().mockRejectedValue(new NotFoundError('channel @x'));
+    const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();
     const res = await testApp.app.inject({
       method: 'POST',
@@ -433,9 +529,9 @@ describe('POST /api/subscriptions/resolve', () => {
 
   it('maps UpstreamError → 503 with the right code', async () => {
     const resolver = vi
-      .fn<EntityResolver>()
+      .fn<ChatResolver>()
       .mockRejectedValue(new UpstreamError('private', 'private_channel'));
-    const testApp = await buildTestApp({ entityResolver: resolver });
+    const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();
     const res = await testApp.app.inject({
       method: 'POST',
@@ -450,9 +546,9 @@ describe('POST /api/subscriptions/resolve', () => {
 
   it('maps ValidationError → 400 (e.g. malformed input)', async () => {
     const resolver = vi
-      .fn<EntityResolver>()
+      .fn<ChatResolver>()
       .mockRejectedValue(new ValidationError('expected handle'));
-    const testApp = await buildTestApp({ entityResolver: resolver });
+    const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();
     const res = await testApp.app.inject({
       method: 'POST',
@@ -462,6 +558,134 @@ describe('POST /api/subscriptions/resolve', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json()).toMatchObject({ error: { code: 'validation_error' } });
+    await testApp.close();
+  });
+});
+
+describe('POST /api/subscriptions with inviteHash', () => {
+  it('joins via importInvite and inserts using the returned chatId', async () => {
+    const importInvite = vi.fn<ImportInviteFn>().mockResolvedValue({
+      status: 'ok',
+      chatId: '-1001234567890',
+      title: 'Joined Channel',
+    });
+    const joinChannel = vi.fn<JoinChannelFn>().mockResolvedValue('ok');
+    const testApp = await buildTestApp({ importInvite, joinChannel });
+    const cookie = await testApp.loginAndGetCookie();
+    const localDest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: {
+        inviteHash: 'LtdmkRfh24oxZjYy',
+        sourceTitle: 'Joined Channel',
+        destinationId: localDest,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as SubscriptionDto;
+    expect(body.sourceChatId).toBe('-1001234567890');
+    expect(body.sourceAccessStatus).toBe('ok');
+    expect(body.sourceAccessCheckedAt).not.toBeNull();
+    expect(importInvite).toHaveBeenCalledWith('LtdmkRfh24oxZjYy');
+    // joinChannel must NOT be called when importInvite already joined.
+    expect(joinChannel).not.toHaveBeenCalled();
+    await testApp.close();
+  });
+
+  it('returns 503 invite_join_failed when importInvite reports no_access', async () => {
+    const importInvite = vi.fn<ImportInviteFn>().mockResolvedValue({
+      status: 'no_access',
+      chatId: null,
+      title: null,
+    });
+    const testApp = await buildTestApp({ importInvite });
+    const cookie = await testApp.loginAndGetCookie();
+    const localDest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: {
+        inviteHash: 'LtdmkRfh24oxZjYy',
+        sourceTitle: 'X',
+        destinationId: localDest,
+      },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: { code: 'invite_join_failed' } });
+    expect(testApp.db.select().from(subscriptions).all()).toHaveLength(0);
+    await testApp.close();
+  });
+
+  it('rejects body with both sourceChatId and inviteHash', async () => {
+    const testApp = await buildTestApp();
+    const cookie = await testApp.loginAndGetCookie();
+    const localDest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: {
+        sourceChatId: '-1001234567890',
+        inviteHash: 'LtdmkRfh24oxZjYy',
+        sourceTitle: 'X',
+        destinationId: localDest,
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    await testApp.close();
+  });
+
+  it('rejects body with neither sourceChatId nor inviteHash', async () => {
+    const testApp = await buildTestApp();
+    const cookie = await testApp.loginAndGetCookie();
+    const localDest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: { sourceTitle: 'X', destinationId: localDest },
+    });
+    expect(res.statusCode).toBe(400);
+    await testApp.close();
+  });
+});
+
+describe('POST /api/subscriptions icon stamping', () => {
+  const dataUrl = 'data:image/jpeg;base64,/9j/4AAQ==';
+
+  it('stamps the iconDataUrl returned by fetchProfilePhoto', async () => {
+    const fetchProfilePhoto = vi.fn<ProfilePhotoFetcher>().mockResolvedValue(dataUrl);
+    const testApp = await buildTestApp({ fetchProfilePhoto });
+    const cookie = await testApp.loginAndGetCookie();
+    const dest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: { sourceChatId: '-1001234567890', sourceTitle: 'Anthropic', destinationId: dest },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as SubscriptionDto).iconDataUrl).toBe(dataUrl);
+    expect(fetchProfilePhoto).toHaveBeenCalledWith('-1001234567890');
+    await testApp.close();
+  });
+
+  it('leaves iconDataUrl null when fetchProfilePhoto returns null', async () => {
+    const fetchProfilePhoto = vi.fn<ProfilePhotoFetcher>().mockResolvedValue(null);
+    const testApp = await buildTestApp({ fetchProfilePhoto });
+    const cookie = await testApp.loginAndGetCookie();
+    const dest = seedDestination(testApp.db, { name: 'd', chatId: '-1009999999999' });
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/subscriptions',
+      headers: { cookie },
+      payload: { sourceChatId: '-1001234567890', sourceTitle: 'Anthropic', destinationId: dest },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as SubscriptionDto).iconDataUrl).toBeNull();
     await testApp.close();
   });
 });

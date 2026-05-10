@@ -235,10 +235,11 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
   pre-built in Ch 2 with `'flood_wait'` baked in, so no schema change needed.
   No retry cap — Telegram bounds `seconds` itself, and personal use doesn't
   warrant a circuit breaker.
-- **`DESTINATION_CHAT_ID` env still unused.** Subscriptions carry their own
-  `destinationChatId` (notNull) so the env is dead weight for now. Leave it in
-  `.env.example` and `config.ts` as a future default for the Subscriptions UI
-  add-flow (Ch 10) — easier than re-introducing it later.
+- **`DESTINATION_CHAT_ID` env removed.** Subscriptions carry their own
+  `destinationChatId` (notNull) and the Subscriptions UI add-flow (Ch 10)
+  picks from the `destinations` table — the env knob never had a consumer
+  and was deleted along with `TG_SESSION_ENCRYPTION_KEY` and the unused
+  `tg_session` table (migration 0005).
 - **Cancellable sleep + AbortController.** Worker sleeps (both throttle and
   flood-wait) take an `AbortSignal`. `pipeline.stop()` aborts; sleeps resolve
   immediately, the loop checks `signal.aborted` after every wait, then exits.

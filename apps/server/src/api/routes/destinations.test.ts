@@ -1,6 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DestinationDto } from '@tg-feed/shared';
 import { destinations, subscriptions } from '../../db/schema.js';
+import { NotFoundError } from '../../lib/errors.js';
+import type { ChatResolver } from '../../tg/chatResolver.js';
+import type { ImportInviteFn } from '../../tg/inviteResolver.js';
+import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import { buildTestApp, type TestApp } from '../testing.js';
 
 describe('destination routes', () => {
@@ -39,6 +43,7 @@ describe('destination routes', () => {
       chatId: '-1009374102931',
       note: 'primary',
       usageCount: 0,
+      iconDataUrl: null,
     });
     expect(typeof body.createdAt).toBe('string');
   });
@@ -185,5 +190,209 @@ describe('destination routes', () => {
       ? testApp.app.inject({ method: m, url, payload: {} })
       : testApp.app.inject({ method: m, url }));
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe('POST /api/destinations/resolve', () => {
+  it('returns 503 telegram_unavailable when no resolver configured', async () => {
+    const testApp = await buildTestApp();
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations/resolve',
+      headers: { cookie },
+      payload: { input: 'foo' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: { code: 'telegram_unavailable' } });
+    await testApp.close();
+  });
+
+  it('returns the resolver response for a public handle', async () => {
+    const resolver = vi.fn<ChatResolver>().mockResolvedValue({
+      chatId: '-1001234567890',
+      title: 'Anthropic',
+      handle: '@anthropic_ai',
+      inviteHash: null,
+      alreadyMember: true,
+    });
+    const testApp = await buildTestApp({ chatResolver: resolver });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations/resolve',
+      headers: { cookie },
+      payload: { input: '@anthropic_ai' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      chatId: '-1001234567890',
+      title: 'Anthropic',
+      handle: '@anthropic_ai',
+      inviteHash: null,
+      alreadyMember: true,
+    });
+    await testApp.close();
+  });
+
+  it('returns null chatId + the invite hash for a not-yet-joined invite', async () => {
+    const resolver = vi.fn<ChatResolver>().mockResolvedValue({
+      chatId: null,
+      title: 'Secret',
+      handle: null,
+      inviteHash: 'LtdmkRfh24oxZjYy',
+      alreadyMember: false,
+    });
+    const testApp = await buildTestApp({ chatResolver: resolver });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations/resolve',
+      headers: { cookie },
+      payload: { input: 'https://t.me/+LtdmkRfh24oxZjYy' },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { chatId: string | null; inviteHash: string | null };
+    expect(body.chatId).toBeNull();
+    expect(body.inviteHash).toBe('LtdmkRfh24oxZjYy');
+    await testApp.close();
+  });
+
+  it('maps NotFoundError → 404', async () => {
+    const resolver = vi.fn<ChatResolver>().mockRejectedValue(new NotFoundError('invite link'));
+    const testApp = await buildTestApp({ chatResolver: resolver });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations/resolve',
+      headers: { cookie },
+      payload: { input: '+expired' },
+    });
+    expect(res.statusCode).toBe(404);
+    await testApp.close();
+  });
+});
+
+describe('POST /api/destinations with inviteHash', () => {
+  it('joins via importInvite and inserts using the returned chatId', async () => {
+    const importInvite = vi.fn<ImportInviteFn>().mockResolvedValue({
+      status: 'ok',
+      chatId: '-1001234567890',
+      title: 'Joined',
+    });
+    const testApp = await buildTestApp({ importInvite });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'ops', inviteHash: 'LtdmkRfh24oxZjYy', note: 'private' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as DestinationDto;
+    expect(body.chatId).toBe('-1001234567890');
+    expect(body.accessStatus).toBe('ok');
+    expect(body.accessCheckedAt).not.toBeNull();
+    expect(importInvite).toHaveBeenCalledWith('LtdmkRfh24oxZjYy');
+    await testApp.close();
+  });
+
+  it('returns 503 invite_join_failed when importInvite reports no_access', async () => {
+    const importInvite = vi.fn<ImportInviteFn>().mockResolvedValue({
+      status: 'no_access',
+      chatId: null,
+      title: null,
+    });
+    const testApp = await buildTestApp({ importInvite });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'ops', inviteHash: 'LtdmkRfh24oxZjYy' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: { code: 'invite_join_failed' } });
+    expect(testApp.db.select().from(destinations).all()).toHaveLength(0);
+    await testApp.close();
+  });
+
+  it('returns 503 telegram_unavailable when inviteHash arrives with no importInvite configured', async () => {
+    const testApp = await buildTestApp();
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'ops', inviteHash: 'LtdmkRfh24oxZjYy' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ error: { code: 'telegram_unavailable' } });
+    await testApp.close();
+  });
+
+  it('rejects body with both chatId and inviteHash', async () => {
+    const testApp = await buildTestApp();
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: {
+        name: 'ops',
+        chatId: '-1001234567890',
+        inviteHash: 'LtdmkRfh24oxZjYy',
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    await testApp.close();
+  });
+
+  it('rejects body with neither chatId nor inviteHash', async () => {
+    const testApp = await buildTestApp();
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'ops' },
+    });
+    expect(res.statusCode).toBe(400);
+    await testApp.close();
+  });
+});
+
+describe('POST /api/destinations icon stamping', () => {
+  const dataUrl = 'data:image/jpeg;base64,/9j/4AAQ==';
+
+  it('stamps the iconDataUrl returned by fetchProfilePhoto', async () => {
+    const fetchProfilePhoto = vi.fn<ProfilePhotoFetcher>().mockResolvedValue(dataUrl);
+    const testApp = await buildTestApp({ fetchProfilePhoto });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'ops', chatId: '-1009374102931' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as DestinationDto).iconDataUrl).toBe(dataUrl);
+    expect(fetchProfilePhoto).toHaveBeenCalledWith('-1009374102931');
+    await testApp.close();
+  });
+
+  it('leaves iconDataUrl null when fetchProfilePhoto returns null (no photo / failure)', async () => {
+    const fetchProfilePhoto = vi.fn<ProfilePhotoFetcher>().mockResolvedValue(null);
+    const testApp = await buildTestApp({ fetchProfilePhoto });
+    const cookie = await testApp.loginAndGetCookie();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'ops', chatId: '-1009374102931' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as DestinationDto).iconDataUrl).toBeNull();
+    await testApp.close();
   });
 });

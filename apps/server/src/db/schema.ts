@@ -12,9 +12,11 @@
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, index, check, primaryKey } from 'drizzle-orm/sqlite-core';
 import {
+  FILTER_MODES,
   FILTER_RULE_TYPES,
   FORWARD_LOG_STATUSES,
   type AnyFilterRuleParams,
+  type FilterMode,
   type FilterRuleType,
   type ForwardLogStatus,
 } from '@tg-feed/shared';
@@ -30,6 +32,26 @@ export const destinations = sqliteTable('destinations', {
   name: text('name').notNull(),
   chatId: text('chat_id').notNull(),
   note: text('note'),
+  /**
+   * Channel/chat profile photo as a `data:image/jpeg;base64,...` URL, or
+   * NULL when we haven't fetched one yet (the trigger for the access
+   * monitor's lazy backfill). Populated on create when Telegram is
+   * configured and refreshed by the access monitor on the periodic sweep
+   * for rows that are still null.
+   */
+  iconDataUrl: text('icon_data_url'),
+  /**
+   * Whether the userbot can currently see/post to this destination. Written
+   * by the access monitor (`apps/server/src/tg/accessMonitor.ts`) on the
+   * periodic sweep. Default 'ok' so existing rows aren't surfaced as broken
+   * before the first sweep runs.
+   */
+  accessStatus: text('access_status', { enum: ['ok', 'no_access'] })
+    .notNull()
+    .default('ok')
+    .$type<'ok' | 'no_access'>(),
+  /** Timestamp of the last access check; null until the first sweep runs. */
+  accessCheckedAt: integer('access_checked_at', { mode: 'timestamp_ms' }),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -47,13 +69,43 @@ export const subscriptions = sqliteTable(
      */
     handle: text('handle'),
     /**
-     * FK → destinations. ON DELETE RESTRICT — server pre-checks usage and
-     * returns ConflictError before delete; the FK is belt-and-suspenders.
+     * Source channel profile photo as a `data:image/jpeg;base64,...` URL,
+     * or NULL when we haven't fetched one yet. Same lazy-backfill semantics
+     * as `destinations.iconDataUrl` — populated on create and refreshed by
+     * the access monitor for rows that are still null.
      */
-    destinationId: integer('destination_id')
-      .notNull()
-      .references(() => destinations.id, { onDelete: 'restrict' }),
+    iconDataUrl: text('icon_data_url'),
+    /**
+     * FK → destinations. Nullable: a subscription can exist without a
+     * destination (created via import where the destination is missing, or
+     * detached by the user). The forwarder skips such rows. ON DELETE SET
+     * NULL so deleting a destination demotes its subscriptions to detached
+     * rather than blocking the delete.
+     */
+    destinationId: integer('destination_id').references(() => destinations.id, {
+      onDelete: 'set null',
+    }),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * Timestamp of the last `CHAT_FORWARDS_RESTRICTED` from this source.
+     * Set by the forwarder when Telegram refuses to forward (the channel
+     * has "Restrict Saving Content" enabled). Cleared on the next
+     * successful forward. Surfaced in the API as `forwardingRestrictedAt`
+     * so the UI can render a "noforwards" badge on the subscription.
+     */
+    forwardingRestrictedAt: integer('forwarding_restricted_at', { mode: 'timestamp_ms' }),
+    /**
+     * Whether the userbot can currently read messages from this source
+     * channel. Written on subscription create (after `channels.JoinChannel`)
+     * and on every access-monitor sweep. Default 'ok' so existing rows
+     * aren't surfaced as broken before the first sweep runs.
+     */
+    sourceAccessStatus: text('source_access_status', { enum: ['ok', 'no_access'] })
+      .notNull()
+      .default('ok')
+      .$type<'ok' | 'no_access'>(),
+    /** Timestamp of the last access check; null until the first sweep runs. */
+    sourceAccessCheckedAt: integer('source_access_checked_at', { mode: 'timestamp_ms' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -75,9 +127,20 @@ export const subscriptionFilters = sqliteTable(
     ruleType: text('rule_type').notNull().$type<FilterRuleType>(),
     params: text('params', { mode: 'json' }).$type<AnyFilterRuleParams>().notNull(),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    /**
+     * Per-filter mode (Ch 14). 'include' is the legacy default and matches
+     * the original AND-pass semantics. 'exclude' inverts the rule for that
+     * one row — the filter rejects when its rule matches. SQL CHECK keeps
+     * hand-written rows honest, mirroring the `forward_log.status` precedent.
+     */
+    mode: text('mode').notNull().default('include').$type<FilterMode>(),
   },
   (t) => ({
     bySubscription: index('idx_subscription_filters_sub').on(t.subscriptionId),
+    modeCheck: check(
+      'subscription_filters_mode_check',
+      sql.raw(`mode IN (${FILTER_MODES.map((m) => `'${m}'`).join(', ')})`),
+    ),
   }),
 );
 
@@ -96,6 +159,8 @@ export const libraryFilters = sqliteTable(
     name: text('name').notNull(),
     ruleType: text('rule_type').notNull().$type<FilterRuleType>(),
     params: text('params', { mode: 'json' }).$type<AnyFilterRuleParams>().notNull(),
+    /** Same semantics as `subscription_filters.mode`. */
+    mode: text('mode').notNull().default('include').$type<FilterMode>(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .$defaultFn(() => new Date()),
@@ -104,6 +169,10 @@ export const libraryFilters = sqliteTable(
     ruleTypeCheck: check(
       'library_filters_rule_type_check',
       sql.raw(`rule_type IN (${FILTER_RULE_TYPES.map((r) => `'${r}'`).join(', ')})`),
+    ),
+    modeCheck: check(
+      'library_filters_mode_check',
+      sql.raw(`mode IN (${FILTER_MODES.map((m) => `'${m}'`).join(', ')})`),
     ),
   }),
 );
@@ -138,6 +207,40 @@ export const appSettings = sqliteTable('app_settings', {
   value: text('value', { mode: 'json' }).$type<unknown>().notNull(),
 });
 
+/**
+ * Single-row table for the Telegram session signed in via the Settings page.
+ * Convention: always upserted at id=1 — the table is logically a singleton
+ * but uses a normal PK so `onConflictDoUpdate` works without an INSERT/UPDATE
+ * branch.
+ *
+ * `encrypted_session_string` is `base64(iv ‖ tag ‖ ct)` of the raw gramjs
+ * `StringSession.save()` value, encrypted with `TG_SESSION_ENCRYPTION_KEY`.
+ * `key_fingerprint` is the first 16 hex chars of `sha256(key)` so an
+ * exported row can be matched against the importing host's key without
+ * exposing either key.
+ *
+ * Metadata fields (`phone_number`, `display_name`, `username`,
+ * `telegram_user_id`) come from `getMe()` after a successful sign-in. They
+ * are nullable because the raw-paste flow may produce a session whose
+ * `getMe` returns partial data, and because future schema bumps may add
+ * fields.
+ */
+export const telegramAccount = sqliteTable('telegram_account', {
+  id: integer('id').primaryKey(),
+  encryptedSessionString: text('encrypted_session_string').notNull(),
+  keyFingerprint: text('key_fingerprint').notNull(),
+  phoneNumber: text('phone_number'),
+  displayName: text('display_name'),
+  username: text('username'),
+  telegramUserId: text('telegram_user_id'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const forwardLog = sqliteTable(
   'forward_log',
   {
@@ -163,11 +266,6 @@ export const forwardLog = sqliteTable(
   }),
 );
 
-export const tgSession = sqliteTable('tg_session', {
-  key: text('key').primaryKey(),
-  encryptedString: text('encrypted_string').notNull(),
-});
-
 export type Destination = typeof destinations.$inferSelect;
 export type NewDestination = typeof destinations.$inferInsert;
 
@@ -186,8 +284,8 @@ export type NewSubscriptionLibraryFilter = typeof subscriptionLibraryFilters.$in
 export type AppSetting = typeof appSettings.$inferSelect;
 export type NewAppSetting = typeof appSettings.$inferInsert;
 
+export type TelegramAccount = typeof telegramAccount.$inferSelect;
+export type NewTelegramAccount = typeof telegramAccount.$inferInsert;
+
 export type ForwardLogEntry = typeof forwardLog.$inferSelect;
 export type NewForwardLogEntry = typeof forwardLog.$inferInsert;
-
-export type TgSession = typeof tgSession.$inferSelect;
-export type NewTgSession = typeof tgSession.$inferInsert;

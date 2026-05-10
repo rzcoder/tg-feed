@@ -61,14 +61,26 @@ export function ActivityPage() {
     });
   }, [forwardLog.data]);
 
+  // Read sub/dest maps via refs inside the prepend effect — including them
+  // in the dep array would re-run the effect (and re-prepend the same SSE
+  // event) every time `subscription.changed` invalidates the queries and
+  // produces a new Map reference. Backfill enrichment is handled by the
+  // separate effect below.
+  const subByIdRef = useRef(subById);
+  const destByChatIdRef = useRef(destByChatId);
+  useEffect(() => {
+    subByIdRef.current = subById;
+    destByChatIdRef.current = destByChatId;
+  });
+
   // Prepend new SSE events.
   useEffect(() => {
     if (paused) return;
     if (!stream.lastEvent) return;
-    const built = fromStreamEvent(stream.lastEvent, subById, destByChatId);
+    const built = fromStreamEvent(stream.lastEvent, subByIdRef.current, destByChatIdRef.current);
     if (!built) return;
     setEvents((prev) => [built, ...prev].slice(0, MAX_EVENTS));
-  }, [stream.lastEvent, paused, subById, destByChatId]);
+  }, [stream.lastEvent, paused]);
 
   // Backfill events constructed before subs/dests loaded. Returns the same
   // array reference when nothing needs enrichment, so ActivityRow rows keep
@@ -76,7 +88,9 @@ export function ActivityPage() {
   useEffect(() => {
     setEvents((prev) => {
       const needsEnrich = prev.some(
-        (e) => e.subscriptionId !== null && e.subscriptionTitle === null,
+        (e) =>
+          e.subscriptionId !== null &&
+          (e.subscriptionTitle === null || e.sourceHandle === null || e.destinationLabel === null),
       );
       if (!needsEnrich) return prev;
       return prev.map((e) => enrichEvent(e, subById, destByChatId));
@@ -172,19 +186,20 @@ function enrichEvent(
   subs: Map<number, SubscriptionDto>,
   _dests: Map<string, DestinationDto>,
 ): ActivityEvent {
-  let next = event;
-  if (event.subscriptionId !== null && event.subscriptionTitle === null) {
-    const sub = subs.get(event.subscriptionId);
-    if (sub) {
-      next = {
-        ...next,
-        subscriptionTitle: sub.sourceTitle,
-        sourceHandle: next.sourceHandle ?? sub.handle ?? sub.sourceChatId,
-        destinationLabel: next.destinationLabel ?? sub.destinationName,
-      };
-    }
+  if (event.subscriptionId === null) return event;
+  const sub = subs.get(event.subscriptionId);
+  if (!sub) return event;
+  const subscriptionTitle = event.subscriptionTitle ?? sub.sourceTitle;
+  const sourceHandle = event.sourceHandle ?? sub.handle ?? sub.sourceChatId;
+  const destinationLabel = event.destinationLabel ?? sub.destinationName;
+  if (
+    subscriptionTitle === event.subscriptionTitle &&
+    sourceHandle === event.sourceHandle &&
+    destinationLabel === event.destinationLabel
+  ) {
+    return event;
   }
-  return next;
+  return { ...event, subscriptionTitle, sourceHandle, destinationLabel };
 }
 
 function fromForwardLogEntry(row: ForwardLogEntryDto): ActivityEvent {
@@ -220,7 +235,11 @@ function fromStreamEvent(
   dests: Map<string, DestinationDto>,
 ): ActivityEvent | null {
   const occurredAt = new Date(event.occurredAt).getTime();
-  const sub = subs.get(event.subscriptionId);
+  // `destination.changed` events don't carry a subscription id — the
+  // narrowed switch below filters them out, but the lookup needs a guard
+  // for the type checker.
+  const subscriptionId = 'subscriptionId' in event ? event.subscriptionId : undefined;
+  const sub = subscriptionId !== undefined ? subs.get(subscriptionId) : undefined;
   const subscriptionTitle = sub?.sourceTitle ?? null;
   const sourceHandle = sub?.handle ?? sub?.sourceChatId ?? null;
   const sourceMessageId = 'sourceMessageIds' in event ? (event.sourceMessageIds[0] ?? '?') : '?';
@@ -271,9 +290,10 @@ function fromStreamEvent(
     }
     case 'forward.filtered': {
       // forward.filtered doesn't carry destinationChatId — look it up from
-      // subscription instead.
+      // subscription instead. `destinationChatId` may be null when the
+      // subscription has been detached.
       const destLabel =
-        sub && dests.get(sub.destinationChatId)?.name
+        sub && sub.destinationChatId && dests.get(sub.destinationChatId)?.name
           ? dests.get(sub.destinationChatId)!.name
           : (sub?.destinationName ?? null);
       return {

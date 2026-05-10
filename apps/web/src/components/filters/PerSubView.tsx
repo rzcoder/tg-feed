@@ -121,7 +121,13 @@ export function PerSubView({
             {attachedLibrary.map((f) => (
               <FilterRow
                 key={`lib-${f.id}`}
-                filter={{ id: f.id, ruleType: f.ruleType, params: f.params, name: f.name }}
+                filter={{
+                  id: f.id,
+                  ruleType: f.ruleType,
+                  params: f.params,
+                  name: f.name,
+                  mode: f.mode,
+                }}
                 library
                 onDelete={() =>
                   detachLibMut.mutate(
@@ -143,6 +149,7 @@ export function PerSubView({
                   ruleType: f.ruleType,
                   params: f.params,
                   enabled: f.enabled,
+                  mode: f.mode,
                 }}
                 onToggle={() =>
                   updateMut.mutate(

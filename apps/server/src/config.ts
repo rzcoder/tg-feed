@@ -23,17 +23,22 @@ const envSchema = z.object({
   TG_API_ID: z.coerce.number().int().positive().optional(),
   TG_API_HASH: z.string().min(1).optional(),
   TG_SESSION_STRING: z.string().min(1).optional(),
+  // Base64-encoded 32 random bytes. When set, the settings page can store a
+  // signed-in Telegram account in the DB (encrypted at rest with this key)
+  // and the app prefers that account over `TG_SESSION_STRING`. When unset,
+  // the app falls back to env-only and refuses to write account rows. The
+  // key fingerprint travels in exports so an import on a host with a
+  // different key skips the encrypted blob with a clear warning. Generate:
+  //   node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
   TG_SESSION_ENCRYPTION_KEY: z
     .string()
-    .regex(/^[0-9a-f]{64}$/i, 'expected 32 random bytes as 64 hex chars')
+    .regex(/^[A-Za-z0-9+/=]+$/, 'expected base64')
+    .refine((s) => Buffer.from(s, 'base64').length === 32, 'must decode to 32 bytes')
     .optional(),
 
   // --- Web auth (Chapter 7) ---
   WEB_PASSWORD: z.string().min(1).optional(),
   SESSION_SECRET: z.string().min(32).optional(),
-
-  // --- Forwarding (Chapter 4) ---
-  DESTINATION_CHAT_ID: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;

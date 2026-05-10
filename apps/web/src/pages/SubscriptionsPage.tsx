@@ -57,7 +57,12 @@ export function SubscriptionsPage() {
     } else {
       createMut.mutate(
         {
-          sourceChatId: data.sourceChatId,
+          // Exactly one of sourceChatId / inviteHash is set — the schema
+          // refines this server-side; on the wire we send only the
+          // populated half.
+          ...(data.inviteHash
+            ? { inviteHash: data.inviteHash }
+            : { sourceChatId: data.sourceChatId! }),
           sourceTitle: data.sourceTitle,
           ...(data.handle !== null ? { handle: data.handle } : {}),
           destinationId: data.destinationId,

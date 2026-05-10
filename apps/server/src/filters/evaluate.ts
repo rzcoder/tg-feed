@@ -31,7 +31,7 @@ import type { EventBus } from '../events/bus.js';
 import type { Logger } from '../lib/logger.js';
 import type { FilterRegistry } from './registry.js';
 import type { MessageContext } from './types.js';
-import type { AnyFilterRuleParams, FilterRuleType } from '@tg-feed/shared';
+import type { AnyFilterRuleParams, FilterMode, FilterRuleType } from '@tg-feed/shared';
 
 export interface FilterEvaluator {
   evaluate(
@@ -55,7 +55,9 @@ interface PureEvaluation {
 
 /**
  * Row shape consumed by the pure evaluator. `source` distinguishes per-sub
- * vs library; `label` is the library filter name (null for per-sub).
+ * vs library; `label` is the library filter name (null for per-sub). `mode`
+ * inverts the rule for that one row when set to `'exclude'` — the filter
+ * rejects when its rule matches instead of when it doesn't.
  */
 export interface EvaluatorRow {
   id: number;
@@ -63,6 +65,7 @@ export interface EvaluatorRow {
   ruleType: FilterRuleType;
   params: AnyFilterRuleParams;
   label: string | null;
+  mode: FilterMode;
 }
 
 export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEvaluator {
@@ -128,6 +131,7 @@ export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[
       id: subscriptionFilters.id,
       ruleType: subscriptionFilters.ruleType,
       params: subscriptionFilters.params,
+      mode: subscriptionFilters.mode,
     })
     .from(subscriptionFilters)
     .where(
@@ -145,6 +149,7 @@ export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[
       ruleType: libraryFilters.ruleType,
       params: libraryFilters.params,
       name: libraryFilters.name,
+      mode: libraryFilters.mode,
     })
     .from(libraryFilters)
     .innerJoin(
@@ -162,6 +167,7 @@ export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[
       ruleType: r.ruleType,
       params: r.params,
       label: r.name,
+      mode: r.mode,
     })),
     ...subRows.map((r) => ({
       id: r.id,
@@ -169,6 +175,7 @@ export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[
       ruleType: r.ruleType,
       params: r.params,
       label: null,
+      mode: r.mode,
     })),
   ];
   return merged;
@@ -221,12 +228,18 @@ export function evaluateFilters(
       continue;
     }
 
-    if (!evaluation.pass) {
-      const reason = evaluation.reason ?? 'no match';
+    // include: row fails when the rule did NOT match; exclude inverts that —
+    // the row fails when the rule DID match. Either way, a failing row
+    // contributes a reason and the message is rejected (AND-combined).
+    const blocks = row.mode === 'exclude' ? evaluation.pass : !evaluation.pass;
+    if (blocks) {
+      const reason =
+        row.mode === 'exclude' ? 'matched (exclude)' : (evaluation.reason ?? 'no match');
+      const ruleLabel = row.mode === 'exclude' ? `exclude:${row.ruleType}` : row.ruleType;
       const formatted =
         row.source === 'lib' && row.label !== null
-          ? `library:${row.label}: ${row.ruleType}: ${reason}`
-          : `${row.ruleType}: ${reason}`;
+          ? `library:${row.label}: ${ruleLabel}: ${reason}`
+          : `${ruleLabel}: ${reason}`;
       reasons.push(formatted);
     }
   }

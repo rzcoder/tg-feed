@@ -13,6 +13,7 @@ import { ChevronLeft } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import {
   filterRuleParamsSchemas,
+  type FilterMode,
   type FilterRuleType,
   type LibraryFilterDto,
   type SubscriptionFilterDto,
@@ -32,6 +33,7 @@ export type FilterSheetKind = 'sub' | 'library';
 export interface FilterSheetSubmit {
   ruleType: FilterRuleType;
   params: Record<string, unknown>;
+  mode: FilterMode;
   /** Name only set when kind='library'. */
   name?: string;
 }
@@ -73,6 +75,9 @@ export function FilterSheet({
   const [step, setStep] = useState<1 | 2>(1);
   const [type, setType] = useState<FilterRuleType | null>(null);
   const [params, setParams] = useState<Record<string, unknown>>({});
+  // `mode` is taken by the add/edit prop on this component — disambiguate
+  // the include/exclude state as `filterMode`.
+  const [filterMode, setFilterMode] = useState<FilterMode>('include');
   const [name, setName] = useState('');
 
   useEffect(() => {
@@ -81,12 +86,14 @@ export function FilterSheet({
       setStep(2);
       setType(initial.ruleType);
       setParams({ ...initial.params });
+      setFilterMode(initial.mode);
       const initialName = (initial as LibraryFilterDto).name ?? '';
       setName(initialName);
     } else {
       setStep(1);
       setType(null);
       setParams({});
+      setFilterMode('include');
       setName('');
     }
   }, [open, isEdit, initial]);
@@ -94,6 +101,7 @@ export function FilterSheet({
   const onPickType = (t: FilterRuleType) => {
     setType(t);
     setParams({ ...DEFAULTS[t] });
+    setFilterMode('include');
     setStep(2);
   };
 
@@ -113,6 +121,7 @@ export function FilterSheet({
     onSubmit({
       ruleType: type,
       params: validated as Record<string, unknown>,
+      mode: filterMode,
       ...(isLibrary ? { name: name.trim() } : {}),
     });
   };
@@ -169,6 +178,8 @@ export function FilterSheet({
             type={type}
             params={params}
             setParams={setParams}
+            mode={filterMode}
+            setMode={setFilterMode}
             showName={isLibrary}
             name={name}
             setName={setName}
