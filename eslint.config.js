@@ -30,13 +30,21 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       '@typescript-eslint/consistent-type-imports': 'warn',
-      'no-console': 'off',
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
     },
   },
   {
     files: ['apps/web/**/*.{ts,tsx}'],
     languageOptions: {
       globals: { ...globals.browser },
+    },
+  },
+  {
+    // CLI scripts use stdout as their UX channel; the no-console rule
+    // shouldn't fight that.
+    files: ['apps/server/scripts/**/*.ts', 'apps/server/src/db/migrate.ts'],
+    rules: {
+      'no-console': 'off',
     },
   },
   prettier,

@@ -24,7 +24,9 @@ import { UnauthorizedError } from '../lib/errors.js';
 
 export const SESSION_COOKIE_NAME = 'tg_feed_session';
 export const SESSION_COOKIE_VALUE = '1';
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
+// 7 days — short enough to limit damage from a leaked cookie, long enough
+// that a single-user operator isn't re-authing daily.
+const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 export interface WebAuth {
   password: string;
@@ -56,7 +58,7 @@ export function verifyPassword(plain: string, expected: string): boolean {
 export function signedCookieOptions(isProd: boolean): CookieSerializeOptions {
   return {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
     secure: isProd,
     signed: true,
     path: '/',
@@ -67,7 +69,7 @@ export function signedCookieOptions(isProd: boolean): CookieSerializeOptions {
 export function clearedCookieOptions(isProd: boolean): CookieSerializeOptions {
   return {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
     secure: isProd,
     path: '/',
   };

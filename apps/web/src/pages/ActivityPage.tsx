@@ -1,0 +1,294 @@
+/**
+ * Activity feed — hydrate from forward-log, prepend live SSE events.
+ *
+ * Hydration: `useForwardLog({ limit: 50 })` runs once on mount and seeds
+ * the in-memory list. SSE events arrive via `useActivityStream` and get
+ * prepended (capped at 200 entries to bound memory).
+ *
+ * Enrichment: SSE payloads carry IDs only. We look up subscription title,
+ * source handle, and destination name from the cached `useSubscriptions`
+ * and `useDestinations` queries. Hydrated rows already have
+ * `subscriptionTitle` joined server-side via LEFT JOIN.
+ *
+ * Pause: stops appending new events to the list (the EventSource stays
+ * open). Scroll lock + jump-to-live: when the user has scrolled away from
+ * the top, prepends don't yank — show a button to jump back.
+ */
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, Activity as ActivityIcon, Pause, Play } from 'lucide-react';
+import type {
+  DestinationDto,
+  ForwardLogEntryDto,
+  ForwardLogStatus,
+  StreamEvent,
+  SubscriptionDto,
+} from '@tg-feed/shared';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { ConnectionPill } from '@/components/domain/ConnectionPill';
+import { ActivityRow, type ActivityEvent } from '@/components/domain/ActivityRow';
+import { EmptyState } from '@/components/domain/EmptyState';
+import { useActivityStream } from '@/hooks/useActivityStream';
+import { useDestinations } from '@/hooks/useDestinations';
+import { useForwardLog } from '@/hooks/useForwardLog';
+import { useSubscriptions } from '@/hooks/useSubscriptions';
+
+const MAX_EVENTS = 200;
+
+export function ActivityPage() {
+  const subs = useSubscriptions();
+  const dests = useDestinations();
+  const forwardLog = useForwardLog({ limit: 50 });
+
+  const [paused, setPaused] = useState(false);
+  const stream = useActivityStream();
+
+  const subById = useMemo(() => buildSubMap(subs.data ?? []), [subs.data]);
+  const destByChatId = useMemo(() => buildDestMap(dests.data ?? []), [dests.data]);
+
+  const [events, setEvents] = useState<ActivityEvent[]>([]);
+
+  // Hydrate from forward-log on first load. Re-runs only if the data ref
+  // changes (TanStack Query memoizes the same shape across refetches).
+  useEffect(() => {
+    if (!forwardLog.data) return;
+    setEvents((prev) => {
+      // Don't clobber live events accumulated since mount.
+      const liveIds = new Set(prev.filter((e) => e.id.startsWith('live:')).map((e) => e.id));
+      const hydrated = forwardLog.data.items.map((row) => fromForwardLogEntry(row));
+      const live = prev.filter((e) => liveIds.has(e.id));
+      return [...live, ...hydrated].slice(0, MAX_EVENTS);
+    });
+  }, [forwardLog.data]);
+
+  // Prepend new SSE events.
+  useEffect(() => {
+    if (paused) return;
+    if (!stream.lastEvent) return;
+    const built = fromStreamEvent(stream.lastEvent, subById, destByChatId);
+    if (!built) return;
+    setEvents((prev) => [built, ...prev].slice(0, MAX_EVENTS));
+  }, [stream.lastEvent, paused, subById, destByChatId]);
+
+  // Backfill events constructed before subs/dests loaded. Returns the same
+  // array reference when nothing needs enrichment, so ActivityRow rows keep
+  // referential equality and don't re-render.
+  useEffect(() => {
+    setEvents((prev) => {
+      const needsEnrich = prev.some(
+        (e) => e.subscriptionId !== null && e.subscriptionTitle === null,
+      );
+      if (!needsEnrich) return prev;
+      return prev.map((e) => enrichEvent(e, subById, destByChatId));
+    });
+  }, [subById, destByChatId]);
+
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollLocked, setScrollLocked] = useState(false);
+  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    setScrollLocked(e.currentTarget.scrollTop > 30);
+  };
+
+  // Auto-scroll to top on prepend unless the user has scrolled away.
+  useEffect(() => {
+    if (scrollLocked) return;
+    if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
+  }, [events.length, scrollLocked]);
+
+  const connectionState = paused ? 'down' : stream.state;
+  const isLoading = forwardLog.isPending;
+
+  return (
+    <div className="flex flex-col flex-1 min-h-0 relative">
+      <div className="flex items-center justify-between gap-2.5 px-4.5 py-3 border-b border-border bg-bg">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[18px] font-semibold tracking-tight">Activity</span>
+          <span className="text-[12.5px] text-text-muted">{events.length}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <ConnectionPill state={connectionState} />
+          <Button
+            variant="secondary"
+            size="icon-sm"
+            onClick={() => setPaused((p) => !p)}
+            aria-label={paused ? 'Resume stream' : 'Pause stream'}
+          >
+            {paused ? <Play size={14} /> : <Pause size={14} />}
+          </Button>
+        </div>
+      </div>
+
+      <div ref={scrollerRef} className="scroll flex-1 min-h-0 relative" onScroll={onScroll}>
+        {isLoading ? (
+          <div className="grid place-items-center py-12 text-text-muted">
+            <Spinner />
+          </div>
+        ) : events.length === 0 ? (
+          <EmptyState
+            icon={
+              <ActivityIcon
+                size={22}
+                className="animate-spin"
+                style={{ animationDuration: '2.4s' }}
+              />
+            }
+            title="Waiting for activity…"
+            body={
+              paused
+                ? 'Stream is paused. Resume to receive new events.'
+                : "When events arrive, they'll show up here."
+            }
+          />
+        ) : (
+          events.map((e) => <ActivityRow key={e.id} event={e} />)
+        )}
+      </div>
+
+      {scrollLocked && events.length > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
+          }}
+          className="absolute top-16 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent text-accent-fg text-[12px] font-semibold shadow"
+        >
+          <ArrowDown size={13} strokeWidth={2.5} /> Jump to live
+        </button>
+      )}
+    </div>
+  );
+}
+
+function buildSubMap(subs: SubscriptionDto[]): Map<number, SubscriptionDto> {
+  return new Map(subs.map((s) => [s.id, s]));
+}
+
+function buildDestMap(dests: DestinationDto[]): Map<string, DestinationDto> {
+  return new Map(dests.map((d) => [d.chatId, d]));
+}
+
+function enrichEvent(
+  event: ActivityEvent,
+  subs: Map<number, SubscriptionDto>,
+  _dests: Map<string, DestinationDto>,
+): ActivityEvent {
+  let next = event;
+  if (event.subscriptionId !== null && event.subscriptionTitle === null) {
+    const sub = subs.get(event.subscriptionId);
+    if (sub) {
+      next = {
+        ...next,
+        subscriptionTitle: sub.sourceTitle,
+        sourceHandle: next.sourceHandle ?? sub.handle ?? sub.sourceChatId,
+        destinationLabel: next.destinationLabel ?? sub.destinationName,
+      };
+    }
+  }
+  return next;
+}
+
+function fromForwardLogEntry(row: ForwardLogEntryDto): ActivityEvent {
+  // Build optional fields conditionally — under exactOptionalPropertyTypes,
+  // `{ seconds: undefined }` no longer satisfies `seconds?: number`.
+  const floodWaitSeconds =
+    row.status === 'flood_wait' ? parseFloodWaitSeconds(row.error) : undefined;
+  return {
+    id: `db:${row.id}`,
+    kind: row.status,
+    subscriptionId: row.subscriptionId,
+    subscriptionTitle: row.subscriptionTitle,
+    // Hydrated rows don't carry handle/dest name directly — `enrichEvent`
+    // fills these from subscriptions/destinations on render.
+    sourceHandle: null,
+    destinationLabel: null,
+    occurredAt: new Date(row.createdAt).getTime(),
+    ...(row.status === 'filtered' && row.error ? { reasons: row.error.split('; ') } : {}),
+    ...(row.status === 'failed' ? { error: row.error } : {}),
+    ...(floodWaitSeconds !== undefined ? { seconds: floodWaitSeconds } : {}),
+  };
+}
+
+function parseFloodWaitSeconds(error: string | null): number | undefined {
+  if (!error) return undefined;
+  const m = error.match(/flood_wait (\d+)s/);
+  return m ? Number(m[1]) : undefined;
+}
+
+function fromStreamEvent(
+  event: StreamEvent,
+  subs: Map<number, SubscriptionDto>,
+  dests: Map<string, DestinationDto>,
+): ActivityEvent | null {
+  const occurredAt = new Date(event.occurredAt).getTime();
+  const sub = subs.get(event.subscriptionId);
+  const subscriptionTitle = sub?.sourceTitle ?? null;
+  const sourceHandle = sub?.handle ?? sub?.sourceChatId ?? null;
+  const sourceMessageId = 'sourceMessageIds' in event ? (event.sourceMessageIds[0] ?? '?') : '?';
+
+  switch (event.type) {
+    case 'forward.completed': {
+      const destLabel = dests.get(event.destinationChatId)?.name ?? event.destinationChatId;
+      const id = `live:${event.subscriptionId}:${sourceMessageId}:completed`;
+      return {
+        id,
+        kind: 'sent' satisfies ForwardLogStatus,
+        subscriptionId: event.subscriptionId,
+        subscriptionTitle,
+        sourceHandle,
+        destinationLabel: destLabel,
+        occurredAt,
+        destMessageCount: event.destMessageIds.length,
+        isNew: true,
+      };
+    }
+    case 'forward.failed': {
+      const destLabel = dests.get(event.destinationChatId)?.name ?? event.destinationChatId;
+      return {
+        id: `live:${event.subscriptionId}:${sourceMessageId}:failed`,
+        kind: 'failed',
+        subscriptionId: event.subscriptionId,
+        subscriptionTitle,
+        sourceHandle,
+        destinationLabel: destLabel,
+        occurredAt,
+        error: event.error,
+        isNew: true,
+      };
+    }
+    case 'forward.flood_wait': {
+      const destLabel = dests.get(event.destinationChatId)?.name ?? event.destinationChatId;
+      return {
+        id: `live:${event.subscriptionId}:${sourceMessageId}:flood`,
+        kind: 'flood_wait',
+        subscriptionId: event.subscriptionId,
+        subscriptionTitle,
+        sourceHandle,
+        destinationLabel: destLabel,
+        occurredAt,
+        seconds: event.seconds,
+        isNew: true,
+      };
+    }
+    case 'forward.filtered': {
+      // forward.filtered doesn't carry destinationChatId — look it up from
+      // subscription instead.
+      const destLabel =
+        sub && dests.get(sub.destinationChatId)?.name
+          ? dests.get(sub.destinationChatId)!.name
+          : (sub?.destinationName ?? null);
+      return {
+        id: `live:${event.subscriptionId}:${sourceMessageId}:filtered`,
+        kind: 'filtered',
+        subscriptionId: event.subscriptionId,
+        subscriptionTitle,
+        sourceHandle,
+        destinationLabel: destLabel,
+        occurredAt,
+        reasons: event.reasons,
+        isNew: true,
+      };
+    }
+    default:
+      return null;
+  }
+}

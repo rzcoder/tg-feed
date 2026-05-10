@@ -31,10 +31,7 @@ import type { Db } from '../../db/client.js';
 import { subscriptionFilters, subscriptions, type SubscriptionFilter } from '../../db/schema.js';
 import type { FilterRegistry } from '../../filters/registry.js';
 import { NotFoundError, ValidationError } from '../../lib/errors.js';
-
-const subscriptionIdParamsSchema = z.object({
-  id: z.coerce.number().int().positive(),
-});
+import { idParamsSchema } from './_params.js';
 
 const filterIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
@@ -58,7 +55,7 @@ export function registerFilterRoutes(app: FastifyInstance, deps: RegisterFilterD
   });
 
   app.get('/subscriptions/:id/filters', async (request) => {
-    const { id } = subscriptionIdParamsSchema.parse(request.params);
+    const { id } = idParamsSchema.parse(request.params);
     requireSubscription(db, id);
     const rows = db
       .select()
@@ -71,7 +68,7 @@ export function registerFilterRoutes(app: FastifyInstance, deps: RegisterFilterD
   });
 
   app.post('/subscriptions/:id/filters', async (request, reply) => {
-    const { id } = subscriptionIdParamsSchema.parse(request.params);
+    const { id } = idParamsSchema.parse(request.params);
     requireSubscription(db, id);
     const body = createSubscriptionFilterRequestSchema.parse(request.body);
     const inserted = db

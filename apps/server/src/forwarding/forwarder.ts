@@ -55,9 +55,29 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         fromPeer: job.sourceChatId,
       });
       const destMessageIds = sent.map((m) => m.id.toString());
-      job.sourceMessageIds.forEach((sourceId, i) => {
-        writeLog(db, job, sourceId, 'sent', destMessageIds[i] ?? null, null);
-      });
+      if (destMessageIds.length !== job.sourceMessageIds.length) {
+        // Telegram normally returns one id per forwarded message; a mismatch
+        // means the upstream silently dropped some. The tail will be logged
+        // as `sent` with destMessageId=NULL — flag it so it's investigable.
+        logger.warn(
+          {
+            subscriptionId: job.subscriptionId,
+            sourceCount: job.sourceMessageIds.length,
+            destCount: destMessageIds.length,
+          },
+          'forward returned fewer dest ids than source ids',
+        );
+      }
+      writeLogs(
+        db,
+        job,
+        job.sourceMessageIds.map((sourceId, i) => ({
+          sourceMessageId: sourceId,
+          destMessageId: destMessageIds[i] ?? null,
+        })),
+        'sent',
+        null,
+      );
       logger.info(
         {
           subscriptionId: job.subscriptionId,
@@ -80,9 +100,16 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
     } catch (err) {
       if (isFloodWaitError(err)) {
         const errorText = `flood_wait ${err.seconds}s`;
-        job.sourceMessageIds.forEach((sourceId) => {
-          writeLog(db, job, sourceId, 'flood_wait', null, errorText);
-        });
+        writeLogs(
+          db,
+          job,
+          job.sourceMessageIds.map((sourceId) => ({
+            sourceMessageId: sourceId,
+            destMessageId: null,
+          })),
+          'flood_wait',
+          errorText,
+        );
         logger.warn(
           {
             subscriptionId: job.subscriptionId,
@@ -103,9 +130,16 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         return { status: 'flood_wait', seconds: err.seconds };
       }
       const errorMessage = err instanceof Error ? err.message : String(err);
-      job.sourceMessageIds.forEach((sourceId) => {
-        writeLog(db, job, sourceId, 'failed', null, errorMessage);
-      });
+      writeLogs(
+        db,
+        job,
+        job.sourceMessageIds.map((sourceId) => ({
+          sourceMessageId: sourceId,
+          destMessageId: null,
+        })),
+        'failed',
+        errorMessage,
+      );
       logger.error(
         {
           subscriptionId: job.subscriptionId,
@@ -128,21 +162,23 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
   };
 }
 
-function writeLog(
+function writeLogs(
   db: Db,
   job: ForwardJob,
-  sourceMessageId: string,
+  rows: ReadonlyArray<{ sourceMessageId: string; destMessageId: string | null }>,
   status: ForwardLogStatus,
-  destMessageId: string | null,
   error: string | null,
 ): void {
+  if (rows.length === 0) return;
   db.insert(forwardLog)
-    .values({
-      subscriptionId: job.subscriptionId,
-      sourceMessageId,
-      destMessageId,
-      status,
-      error,
-    })
+    .values(
+      rows.map((r) => ({
+        subscriptionId: job.subscriptionId,
+        sourceMessageId: r.sourceMessageId,
+        destMessageId: r.destMessageId,
+        status,
+        error,
+      })),
+    )
     .run();
 }

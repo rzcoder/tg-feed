@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FILTER_RULE_TYPES } from '@tg-feed/shared';
 import { subscriptionFilters, subscriptions, type Subscription } from '../../db/schema.js';
-import { buildTestApp, type TestApp } from '../testing.js';
+import { buildTestApp, seedDestination, type TestApp } from '../testing.js';
 
 interface FilterDtoLike {
   id: number;
@@ -15,7 +15,7 @@ interface FilterDtoLike {
 function seedSubscription(testApp: TestApp): Subscription {
   const inserted = testApp.db
     .insert(subscriptions)
-    .values({ sourceChatId: 'a', sourceTitle: 'A', destinationChatId: 'd' })
+    .values({ sourceChatId: 'a', sourceTitle: 'A', destinationId: seedDestination(testApp.db) })
     .returning()
     .all();
   return inserted[0]!;
@@ -200,7 +200,11 @@ describe('subscription filter routes', () => {
   it('PATCH filter returns 404 when filter belongs to a different subscription', async () => {
     const otherSub = testApp.db
       .insert(subscriptions)
-      .values({ sourceChatId: 'b', sourceTitle: 'B', destinationChatId: 'd' })
+      .values({
+        sourceChatId: 'b',
+        sourceTitle: 'B',
+        destinationId: seedDestination(testApp.db, { name: 'b-dest', chatId: '-1008888888888' }),
+      })
       .returning()
       .all()[0]!;
     const filter = testApp.db
@@ -271,7 +275,11 @@ describe('subscription filter routes', () => {
   it('DELETE filter returns 404 for cross-sub access', async () => {
     const otherSub = testApp.db
       .insert(subscriptions)
-      .values({ sourceChatId: 'b', sourceTitle: 'B', destinationChatId: 'd' })
+      .values({
+        sourceChatId: 'b',
+        sourceTitle: 'B',
+        destinationId: seedDestination(testApp.db, { name: 'b-dest', chatId: '-1008888888888' }),
+      })
       .returning()
       .all()[0]!;
     const filter = testApp.db

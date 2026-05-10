@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { StreamEventInput } from '@tg-feed/shared';
 import type { Db } from '../db/client.js';
-import { forwardLog, subscriptionFilters, subscriptions } from '../db/schema.js';
+import {
+  destinations,
+  forwardLog,
+  libraryFilters,
+  subscriptionFilters,
+  subscriptionLibraryFilters,
+  subscriptions,
+} from '../db/schema.js';
 import { createTestDb } from '../db/testing.js';
 import type { EventBus } from '../events/bus.js';
 import { createLogger } from '../lib/logger.js';
@@ -37,9 +44,14 @@ function makeStubBus(): StubBus {
 }
 
 function seedSubscription(db: Db): number {
+  const [d] = db
+    .insert(destinations)
+    .values({ name: 'd', chatId: '-1009999999999' })
+    .returning({ id: destinations.id })
+    .all();
   const [row] = db
     .insert(subscriptions)
-    .values({ sourceChatId: 'src', sourceTitle: 't', destinationChatId: 'dst' })
+    .values({ sourceChatId: 'src', sourceTitle: 't', destinationId: d!.id })
     .returning()
     .all();
   return row!.id;
@@ -60,10 +72,10 @@ describe('evaluateFilters (pure)', () => {
       [
         {
           id: 1,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'does-not-exist' as never,
           params: {} as never,
-          enabled: true,
+          label: null,
         },
       ],
       createDefaultRegistry(),
@@ -78,10 +90,10 @@ describe('evaluateFilters (pure)', () => {
       [
         {
           id: 1,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'text-contains',
           params: { value: '' } as never,
-          enabled: true,
+          label: null,
         },
       ],
       createDefaultRegistry(),
@@ -105,10 +117,10 @@ describe('evaluateFilters (pure)', () => {
       [
         {
           id: 1,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'text-regex',
           params: { value: 'foo', caseInsensitive: true } as never,
-          enabled: true,
+          label: null,
         },
       ],
       registry,
@@ -124,17 +136,17 @@ describe('evaluateFilters (pure)', () => {
       [
         {
           id: 1,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'text-contains',
           params: { value: 'rust', caseInsensitive: true } as never,
-          enabled: true,
+          label: null,
         },
         {
           id: 2,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'has-media',
           params: { required: true } as never,
-          enabled: true,
+          label: null,
         },
       ],
       registry,
@@ -151,17 +163,17 @@ describe('evaluateFilters (pure)', () => {
       [
         {
           id: 1,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'text-contains',
           params: { value: 'rust', caseInsensitive: true } as never,
-          enabled: true,
+          label: null,
         },
         {
           id: 2,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'min-length',
           params: { min: 100 } as never,
-          enabled: true,
+          label: null,
         },
       ],
       registry,
@@ -183,17 +195,17 @@ describe('evaluateFilters (pure)', () => {
       [
         {
           id: 1,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'text-contains',
           params: { value: 'rust', caseInsensitive: true } as never,
-          enabled: true,
+          label: null,
         },
         {
           id: 2,
-          subscriptionId: 1,
+          source: 'sub',
           ruleType: 'has-media',
           params: { required: true } as never,
-          enabled: true,
+          label: null,
         },
       ],
       registry,
@@ -398,6 +410,96 @@ describe('createFilterEvaluator (with DB)', () => {
       });
 
       evaluator.evaluate(ctx({ text: 'anything' }), subId, ['10']);
+      expect(bus.emitted).toHaveLength(0);
+    });
+  });
+
+  describe('library filters integration', () => {
+    function attachLibrary(
+      db: Db,
+      subId: number,
+      name: string,
+      ruleType: string,
+      params: object,
+    ): number {
+      const [row] = db
+        .insert(libraryFilters)
+        .values({ name, ruleType: ruleType as never, params: params as never })
+        .returning({ id: libraryFilters.id })
+        .all();
+      db.insert(subscriptionLibraryFilters)
+        .values({ subscriptionId: subId, libraryFilterId: row!.id })
+        .run();
+      return row!.id;
+    }
+
+    it('library rule failure emits library: prefix in reasons', () => {
+      attachLibrary(db, subId, 'No #реклама', 'text-excludes', {
+        value: '#реклама',
+        caseInsensitive: true,
+      });
+      const bus = makeStubBus();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus,
+      });
+
+      evaluator.evaluate(ctx({ text: 'check out our deals #реклама' }), subId, ['10']);
+      expect(bus.emitted).toHaveLength(1);
+      const filtered = bus.emitted[0] as Extract<StreamEventInput, { type: 'forward.filtered' }>;
+      expect(filtered.reasons).toHaveLength(1);
+      expect(filtered.reasons[0]).toMatch(/^library:No #реклама: text-excludes: /);
+    });
+
+    it('library + per-sub filters AND together — library reasons before per-sub', () => {
+      attachLibrary(db, subId, 'No promo', 'text-excludes', {
+        value: '#promo',
+        caseInsensitive: true,
+      });
+      db.insert(subscriptionFilters)
+        .values({
+          subscriptionId: subId,
+          ruleType: 'min-length',
+          params: { min: 100 },
+        })
+        .run();
+
+      const bus = makeStubBus();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus,
+      });
+      evaluator.evaluate(ctx({ text: '#promo short' }), subId, ['10']);
+
+      const filtered = bus.emitted[0] as Extract<StreamEventInput, { type: 'forward.filtered' }>;
+      expect(filtered.reasons).toHaveLength(2);
+      expect(filtered.reasons[0]).toMatch(/^library:No promo:/);
+      expect(filtered.reasons[1]).toMatch(/^min-length:/);
+    });
+
+    it('detached library filter does not apply', () => {
+      const libId = attachLibrary(db, subId, 'No promo', 'text-excludes', {
+        value: '#promo',
+        caseInsensitive: true,
+      });
+      // Detach
+      db.delete(subscriptionLibraryFilters)
+        .where(eq(subscriptionLibraryFilters.libraryFilterId, libId))
+        .run();
+
+      const bus = makeStubBus();
+      const evaluator = createFilterEvaluator({
+        db,
+        registry: createDefaultRegistry(),
+        logger,
+        bus,
+      });
+      const result = evaluator.evaluate(ctx({ text: '#promo deal' }), subId, ['10']);
+      expect(result.pass).toBe(true);
       expect(bus.emitted).toHaveLength(0);
     });
   });

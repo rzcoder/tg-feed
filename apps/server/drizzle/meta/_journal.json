@@ -8,6 +8,27 @@
       "when": 1778319562418,
       "tag": "0000_concerned_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1778400000000,
+      "tag": "0001_destinations",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778500000000,
+      "tag": "0002_library_filters",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778600000000,
+      "tag": "0003_subscriptions_source_chat_id_index",
+      "breakpoints": true
     }
   ]
 }

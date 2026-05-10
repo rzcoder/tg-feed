@@ -32,9 +32,16 @@ export const textExcludesParamsSchema = z.object({
 });
 export type TextExcludesParams = z.infer<typeof textExcludesParamsSchema>;
 
+// RE2 supports g/i/m/s/u/y but NOT v (no Unicode-set escapes). Reject any
+// other character so a typo doesn't fail open at evaluation time.
+const RE2_FLAGS_PATTERN = /^[gimsuy]*$/;
+
 export const textRegexParamsSchema = z.object({
-  pattern: z.string().min(1),
-  flags: z.string().default(''),
+  pattern: z.string().min(1).max(500),
+  flags: z
+    .string()
+    .default('')
+    .refine((f) => RE2_FLAGS_PATTERN.test(f), 'invalid regex flags'),
 });
 export type TextRegexParams = z.infer<typeof textRegexParamsSchema>;
 

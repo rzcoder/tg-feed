@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { forwardLog, subscriptions, type Subscription } from '../../db/schema.js';
-import { buildTestApp, type TestApp } from '../testing.js';
+import { buildTestApp, seedDestination, type TestApp } from '../testing.js';
 
 interface ForwardLogEntryDtoLike {
   id: number;
@@ -16,7 +16,7 @@ interface ForwardLogEntryDtoLike {
 function seedSub(testApp: TestApp, title = 'A'): Subscription {
   return testApp.db
     .insert(subscriptions)
-    .values({ sourceChatId: 'a', sourceTitle: title, destinationChatId: 'd' })
+    .values({ sourceChatId: 'a', sourceTitle: title, destinationId: seedDestination(testApp.db) })
     .returning()
     .all()[0]!;
 }

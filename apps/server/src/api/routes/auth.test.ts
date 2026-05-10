@@ -50,6 +50,31 @@ describe('POST /api/auth/login', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  it('rate-limits brute-force attempts and eventually returns 429', async () => {
+    // Limit is 10/15min per IP. Send 11 wrong-password requests in a tight
+    // loop; the 11th must be rejected by the rate-limit plugin.
+    let lastStatus = 0;
+    for (let i = 0; i < 11; i++) {
+      const res = await testApp.app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { password: 'wrong' },
+      });
+      lastStatus = res.statusCode;
+    }
+    expect(lastStatus).toBe(429);
+  });
+
+  it('emits standard security headers from @fastify/helmet', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { password: TEST_PASSWORD },
+    });
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBeDefined();
+  });
 });
 
 describe('GET /api/me', () => {

@@ -20,7 +20,15 @@ export interface TestDbHandle {
 
 export function createTestDb(): TestDbHandle {
   const handle: DbHandle = createDb(':memory:');
-  migrate(handle.db, { migrationsFolder });
+  // Mirror migrate.ts — disable FKs around migrate() so table-recreation
+  // migrations (column drops, FK changes) don't trigger CASCADE/SET NULL
+  // on rename.
+  handle.sqlite.pragma('foreign_keys = OFF');
+  try {
+    migrate(handle.db, { migrationsFolder });
+  } finally {
+    handle.sqlite.pragma('foreign_keys = ON');
+  }
   return {
     db: handle.db,
     close: () => handle.sqlite.close(),

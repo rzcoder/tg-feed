@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { StreamEventInput } from '@tg-feed/shared';
 import { createTestDb, type TestDbHandle } from '../db/testing.js';
-import { forwardLog, subscriptions, type Subscription } from '../db/schema.js';
+import { destinations, forwardLog, subscriptions, type Subscription } from '../db/schema.js';
 import type { EventBus } from '../events/bus.js';
 import { createLogger } from '../lib/logger.js';
 import { createForwarder, type ForwarderClient } from './forwarder.js';
@@ -30,12 +30,17 @@ function makeStubBus(): StubBus {
 }
 
 function seedSubscription(handle: TestDbHandle): Subscription {
+  const [d] = handle.db
+    .insert(destinations)
+    .values({ name: 'd', chatId: '-100DEST' })
+    .returning({ id: destinations.id })
+    .all();
   const [row] = handle.db
     .insert(subscriptions)
     .values({
       sourceChatId: '-100SOURCE',
       sourceTitle: 'src',
-      destinationChatId: '-100DEST',
+      destinationId: d!.id,
     })
     .returning()
     .all();
@@ -46,7 +51,7 @@ function makeJob(sub: Subscription, sourceMessageIds: string[] = ['42']): Forwar
   return {
     subscriptionId: sub.id,
     sourceChatId: sub.sourceChatId,
-    destinationChatId: sub.destinationChatId,
+    destinationChatId: '-100DEST',
     sourceMessageIds,
   };
 }

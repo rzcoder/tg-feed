@@ -48,6 +48,18 @@ export function makeErrorHandler(logger: Logger): ApiErrorHandler {
       return;
     }
 
+    // Fastify built-in errors (rate-limit, body too large, malformed JSON,
+    // etc.) carry an HTTP statusCode + a stable code. Pass 4xx through with
+    // their own message — they're already client-safe. 5xx still gets the
+    // generic 500 path below to avoid leaking internals.
+    if (typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
+      const body: ErrorResponse = {
+        error: { code: err.code ?? 'client_error', message: err.message },
+      };
+      reply.status(err.statusCode).send(body);
+      return;
+    }
+
     logger.error({ err, url: request.url }, 'unhandled error in API request');
     const body: ErrorResponse = {
       error: { code: 'internal', message: 'internal server error' },

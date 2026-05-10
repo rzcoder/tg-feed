@@ -1,0 +1,144 @@
+import { useEffect, useState } from 'react';
+import { AlertTriangle, ArrowRight } from 'lucide-react';
+import type { ForwardLogStatus } from '@tg-feed/shared';
+import { cn } from '@/lib/cn';
+import { formatAbsoluteTime, formatRelative } from '@/lib/formatRelative';
+import { StatusBadge } from './StatusBadge';
+
+export interface ActivityEvent {
+  /** Stable id for keying — DB row id (`db:<id>`) or live event composite (`live:<sub>:<msg>:<type>`). */
+  id: string;
+  kind: ForwardLogStatus;
+  subscriptionId: number | null;
+  subscriptionTitle: string | null;
+  sourceHandle: string | null;
+  destinationLabel: string | null;
+  /** Receive time (ms epoch) — used to compute relative `ago`. */
+  occurredAt: number;
+  reasons?: string[];
+  /** FloodWait seconds, when status='flood_wait'. */
+  seconds?: number;
+  /** Error string when status='failed'. */
+  error?: string | null;
+  /** Album: number of messages forwarded (>1 = album). */
+  destMessageCount?: number;
+  /** Set true on a freshly-arrived live event for the flash animation. */
+  isNew?: boolean;
+}
+
+interface ActivityRowProps {
+  event: ActivityEvent;
+}
+
+export function ActivityRow({ event }: ActivityRowProps) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(t);
+  }, []);
+  const ageSec = Math.max(0, (now - event.occurredAt) / 1000);
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-1.5 px-4.5 py-3 border-b border-border bg-bg',
+        event.isNew && 'animate-flash-in',
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <StatusBadge kind={event.kind} />
+          <span className="text-[12.5px] font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis flex-1">
+            {event.subscriptionTitle ?? `sub #${event.subscriptionId ?? '?'}`}
+          </span>
+        </div>
+        <RelativeTime ageSec={ageSec} />
+      </div>
+      <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+        <span className="font-mono">{event.sourceHandle ?? '—'}</span>
+        <ArrowRight size={11} strokeWidth={2} className="text-text-faint" />
+        <span className="font-mono">{event.destinationLabel ?? '—'}</span>
+        {event.kind === 'sent' && (event.destMessageCount ?? 0) > 1 && (
+          <>
+            <span className="text-text-faint">·</span>
+            <span>forwarded {event.destMessageCount} messages</span>
+          </>
+        )}
+      </div>
+      {event.kind === 'filtered' && event.reasons && event.reasons.length > 0 && (
+        <ReasonChips reasons={event.reasons} />
+      )}
+      {event.kind === 'flood_wait' && (
+        <div className="flex items-center gap-1.5 text-[11.5px] text-warning">
+          <AlertTriangle size={12} strokeWidth={2.2} />
+          <span className="font-mono">FloodWait {event.seconds ?? 0}s</span>
+          {event.seconds !== undefined && (
+            <span className="text-text-muted">— retry in {event.seconds}s</span>
+          )}
+        </div>
+      )}
+      {event.kind === 'failed' && event.error && (
+        <div className="px-2 py-1.5 bg-danger-soft border border-danger/30 rounded-md font-mono text-[11px] text-danger">
+          {event.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RelativeTime({ ageSec }: { ageSec: number }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <span
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className="text-[11.5px] text-text-muted tabular-nums"
+    >
+      {hover ? formatAbsoluteTime(ageSec) : formatRelative(ageSec)}
+    </span>
+  );
+}
+
+interface ParsedReason {
+  /** Library filter name when present (the part between `library:` and the next `:`). */
+  library: string | null;
+  /** The remainder — typically `<ruleType>: <reason>`. */
+  text: string;
+}
+
+function parseReason(reason: string): ParsedReason {
+  if (reason.startsWith('library:')) {
+    const rest = reason.slice('library:'.length);
+    const colon = rest.indexOf(': ');
+    if (colon > 0) {
+      return { library: rest.slice(0, colon), text: rest.slice(colon + 2) };
+    }
+  }
+  return { library: null, text: reason };
+}
+
+function ReasonChips({ reasons }: { reasons: string[] }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {reasons.map((r, i) => {
+        const parsed = parseReason(r);
+        return (
+          <span
+            key={`${i}-${r}`}
+            className={cn(
+              'inline-flex items-center gap-1 font-mono text-[10.5px] px-1.5 py-px rounded',
+              'bg-surface-2 border border-border text-text-muted',
+            )}
+          >
+            {parsed.library && (
+              <span className="bg-accent-soft text-accent border border-accent/30 px-1 rounded text-[9.5px] uppercase tracking-wide">
+                {parsed.library}
+              </span>
+            )}
+            {parsed.text}
+          </span>
+        );
+      })}
+    </div>
+  );
+}

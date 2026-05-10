@@ -1,6 +1,13 @@
 import type { NewMessageEvent } from 'telegram/events/index.js';
 import type { Subscription } from '../db/schema.js';
 
+/**
+ * Subscription with destination chat id resolved via JOIN. The listener
+ * needs `destinationChatId` to enqueue forward jobs but the
+ * `subscriptions` row only carries a FK now (`destinationId`).
+ */
+export type ResolvedSubscription = Subscription & { destinationChatId: string };
+
 export interface MatchableEvent {
   chatId: string;
   messageId: string;
@@ -45,9 +52,9 @@ function extractSenderUsername(message: { sender?: unknown }): string | undefine
   return undefined;
 }
 
-export function matchSubscription(
+export function matchSubscription<T extends Subscription>(
   event: MatchableEvent,
-  subscriptions: readonly Subscription[],
-): Subscription | undefined {
+  subscriptions: readonly T[],
+): T | undefined {
   return subscriptions.find((s) => s.enabled && s.sourceChatId === event.chatId);
 }

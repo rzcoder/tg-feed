@@ -1,15 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestDb, type TestDbHandle } from '../db/testing.js';
-import { subscriptions } from '../db/schema.js';
+import { destinations, subscriptions } from '../db/schema.js';
 import { createLogger } from '../lib/logger.js';
-import { resolveSubscriptionsOnStartup, type EntityResolver } from './subscriptions.js';
+import { resolveSubscriptionsOnStartup, type TelegramEntityClient } from './subscriptions.js';
 
 describe('resolveSubscriptionsOnStartup', () => {
   let handle: TestDbHandle;
   const logger = createLogger({ silent: true });
+  let destId: number;
 
   beforeEach(() => {
     handle = createTestDb();
+    const inserted = handle.db
+      .insert(destinations)
+      .values({ name: 'dest', chatId: '-100DEST' })
+      .returning({ id: destinations.id })
+      .all();
+    destId = inserted[0]!.id;
   });
 
   afterEach(() => {
@@ -20,14 +27,16 @@ describe('resolveSubscriptionsOnStartup', () => {
     handle.db
       .insert(subscriptions)
       .values([
-        { sourceChatId: '-100A', sourceTitle: 'a', destinationChatId: 'd', enabled: true },
-        { sourceChatId: '-100B', sourceTitle: 'b', destinationChatId: 'd', enabled: false },
-        { sourceChatId: '-100C', sourceTitle: 'c', destinationChatId: 'd', enabled: true },
+        { sourceChatId: '-100A', sourceTitle: 'a', destinationId: destId, enabled: true },
+        { sourceChatId: '-100B', sourceTitle: 'b', destinationId: destId, enabled: false },
+        { sourceChatId: '-100C', sourceTitle: 'c', destinationId: destId, enabled: true },
       ])
       .run();
 
     const getEntity = vi.fn().mockResolvedValue({ id: 0 });
-    const client: EntityResolver = { getEntity: getEntity as EntityResolver['getEntity'] };
+    const client: TelegramEntityClient = {
+      getEntity: getEntity as TelegramEntityClient['getEntity'],
+    };
 
     await resolveSubscriptionsOnStartup(client, handle.db, logger);
 
@@ -39,11 +48,13 @@ describe('resolveSubscriptionsOnStartup', () => {
   it('does not throw when getEntity rejects — logs a warning instead', async () => {
     handle.db
       .insert(subscriptions)
-      .values({ sourceChatId: '-100X', sourceTitle: 'x', destinationChatId: 'd', enabled: true })
+      .values({ sourceChatId: '-100X', sourceTitle: 'x', destinationId: destId, enabled: true })
       .run();
 
     const getEntity = vi.fn().mockRejectedValue(new Error('not found'));
-    const client: EntityResolver = { getEntity: getEntity as EntityResolver['getEntity'] };
+    const client: TelegramEntityClient = {
+      getEntity: getEntity as TelegramEntityClient['getEntity'],
+    };
 
     await expect(resolveSubscriptionsOnStartup(client, handle.db, logger)).resolves.toBeUndefined();
     expect(getEntity).toHaveBeenCalledOnce();
@@ -51,7 +62,9 @@ describe('resolveSubscriptionsOnStartup', () => {
 
   it('is a no-op with an empty subscription table', async () => {
     const getEntity = vi.fn();
-    const client: EntityResolver = { getEntity: getEntity as EntityResolver['getEntity'] };
+    const client: TelegramEntityClient = {
+      getEntity: getEntity as TelegramEntityClient['getEntity'],
+    };
     await resolveSubscriptionsOnStartup(client, handle.db, logger);
     expect(getEntity).not.toHaveBeenCalled();
   });

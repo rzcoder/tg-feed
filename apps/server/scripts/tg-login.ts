@@ -6,7 +6,7 @@
  *
  * Usage: `pnpm tg:login`
  */
-import 'dotenv/config';
+import '../src/lib/loadEnv.js';
 import process from 'node:process';
 import input from 'input';
 import { TelegramClient } from 'telegram';

@@ -8,10 +8,12 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { Db } from '../db/client.js';
+import { destinations } from '../db/schema.js';
 import { createTestDb, type TestDbHandle } from '../db/testing.js';
 import { createEventBus, type EventBus } from '../events/bus.js';
 import { createDefaultRegistry } from '../filters/rules/index.js';
 import { createLogger } from '../lib/logger.js';
+import type { EntityResolver } from '../tg/entityResolver.js';
 import { type WebAuth } from './auth.js';
 import { createApiServer } from './server.js';
 
@@ -35,6 +37,8 @@ export interface TestApp {
 export interface BuildTestAppOptions {
   /** Override the SSE heartbeat interval (default 25 s — too long for stream tests). */
   heartbeatMs?: number;
+  /** Stub for the gramjs entity resolver used by `POST /api/subscriptions/resolve`. */
+  entityResolver?: EntityResolver;
 }
 
 export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<TestApp> {
@@ -50,6 +54,7 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
     isProd: false,
     bus,
     ...(options.heartbeatMs !== undefined ? { heartbeatMs: options.heartbeatMs } : {}),
+    ...(options.entityResolver !== undefined ? { entityResolver: options.entityResolver } : {}),
   });
 
   return {
@@ -79,4 +84,24 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
       dbHandle.close();
     },
   };
+}
+
+/**
+ * Insert a destination row and return its id. Most route tests need a
+ * destination to attach subscriptions to.
+ */
+export function seedDestination(
+  db: Db,
+  overrides: { name?: string; chatId?: string; note?: string | null } = {},
+): number {
+  const inserted = db
+    .insert(destinations)
+    .values({
+      name: overrides.name ?? 'test-dest',
+      chatId: overrides.chatId ?? '-1009999999999',
+      note: overrides.note ?? null,
+    })
+    .returning({ id: destinations.id })
+    .all();
+  return inserted[0]!.id;
 }

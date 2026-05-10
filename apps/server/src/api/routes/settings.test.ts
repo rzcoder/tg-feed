@@ -112,12 +112,10 @@ describe('settings routes', () => {
   it.each([
     ['GET', '/api/settings', undefined],
     ['PUT', '/api/settings', { delayMs: 5000 }],
-  ])('%s %s returns 401 without cookie', async (method, url, payload) => {
-    const res = await testApp.app.inject({
-      method: method as 'GET' | 'PUT',
-      url,
-      payload,
-    });
+  ] as const)('%s %s returns 401 without cookie', async (method, url, payload) => {
+    const res = await (payload === undefined
+      ? testApp.app.inject({ method, url })
+      : testApp.app.inject({ method, url, payload }));
     expect(res.statusCode).toBe(401);
   });
 });

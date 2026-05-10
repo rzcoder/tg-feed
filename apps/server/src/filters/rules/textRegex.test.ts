@@ -30,9 +30,18 @@ describe('textRegexRule', () => {
     });
   });
 
-  it('throws SyntaxError on invalid pattern (caught by evaluator, not rule)', () => {
-    expect(() => textRegexRule.evaluate(ctx({ text: 'x' }), { pattern: '(', flags: '' })).toThrow(
-      SyntaxError,
-    );
+  it('throws on invalid pattern (caught by evaluator, not rule)', () => {
+    expect(() => textRegexRule.evaluate(ctx({ text: 'x' }), { pattern: '(', flags: '' })).toThrow();
+  });
+
+  it('does not catastrophically backtrack on pathological pattern (RE2 is linear-time)', () => {
+    // (a+)+$ on a long run of `a` followed by `b` is the textbook ReDoS case
+    // for native RegExp — exponential backtracking. RE2 finishes in linear time.
+    const text = 'a'.repeat(40) + 'b';
+    const start = Date.now();
+    const result = textRegexRule.evaluate(ctx({ text }), { pattern: '(a+)+$', flags: '' });
+    const elapsed = Date.now() - start;
+    expect(result.pass).toBe(false);
+    expect(elapsed).toBeLessThan(100);
   });
 });

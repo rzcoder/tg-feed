@@ -9,22 +9,45 @@ export interface TelegramEnv {
   sessionString: string;
 }
 
-export function requireTelegramEnv(cfg: Config): TelegramEnv {
+export interface TelegramEnvResult {
+  ok: boolean;
+  env?: TelegramEnv;
+  /** Human-readable reason when `ok === false`; safe to surface in API. */
+  reason?: string;
+}
+
+// Non-throwing variant — used by the server entrypoint to support degraded
+// boot (no Telegram client; API + DB still come up). Callers that genuinely
+// require credentials use `requireTelegramEnv` below.
+export function readTelegramEnv(cfg: Config): TelegramEnvResult {
   const missing: string[] = [];
   if (cfg.TG_API_ID === undefined) missing.push('TG_API_ID');
   if (!cfg.TG_API_HASH) missing.push('TG_API_HASH');
   if (!cfg.TG_SESSION_STRING) missing.push('TG_SESSION_STRING');
   if (missing.length > 0) {
-    throw new Error(
-      `Missing required Telegram env vars: ${missing.join(', ')}. ` +
-        `Run \`pnpm tg:login\` to mint a session string.`,
-    );
+    return {
+      ok: false,
+      reason:
+        `Missing required Telegram env vars: ${missing.join(', ')}. ` +
+        `Set them in .env (run \`pnpm tg:login\` to mint a session string).`,
+    };
   }
   return {
-    apiId: cfg.TG_API_ID as number,
-    apiHash: cfg.TG_API_HASH as string,
-    sessionString: cfg.TG_SESSION_STRING as string,
+    ok: true,
+    env: {
+      apiId: cfg.TG_API_ID as number,
+      apiHash: cfg.TG_API_HASH as string,
+      sessionString: cfg.TG_SESSION_STRING as string,
+    },
   };
+}
+
+export function requireTelegramEnv(cfg: Config): TelegramEnv {
+  const result = readTelegramEnv(cfg);
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  return result.env as TelegramEnv;
 }
 
 export interface CreateTelegramClientOptions {
@@ -34,10 +57,15 @@ export interface CreateTelegramClientOptions {
   gramjsLogLevel?: LogLevel;
 }
 
+// gramjs retries connect this many times with exponential backoff before
+// giving up and throwing — the listener's safe-handler catches downstream
+// failures, but `connect()` itself bubbles to the boot path's degraded mode.
+const CONNECTION_RETRIES = 5;
+
 export function createTelegramClient(opts: CreateTelegramClientOptions): TelegramClient {
   const session = new StringSession(opts.sessionString);
   const client = new TelegramClient(session, opts.apiId, opts.apiHash, {
-    connectionRetries: 5,
+    connectionRetries: CONNECTION_RETRIES,
   });
   // gramjs's own logger is loud by default; pin it to warn unless overridden.
   client.setLogLevel(opts.gramjsLogLevel ?? LogLevel.WARN);

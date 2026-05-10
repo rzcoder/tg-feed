@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>tg-feed</title>
+    <meta name="theme-color" content="#222428" />
+    <script>
+      // Resolve theme before React mounts to avoid flash-of-wrong-theme.
+      // Mirrors apps/web/src/lib/useTheme.ts — keep in lockstep.
+      (function () {
+        try {
+          var pref = localStorage.getItem('tg-feed:theme') || 'system';
+          var resolved = pref;
+          if (pref === 'system') {
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', resolved);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'dark');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

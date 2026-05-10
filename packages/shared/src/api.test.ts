@@ -26,25 +26,36 @@ describe('createSubscriptionRequestSchema', () => {
     const result = createSubscriptionRequestSchema.parse({
       sourceChatId: '-100123',
       sourceTitle: 'src',
-      destinationChatId: '-100456',
+      destinationId: 1,
     });
     expect(result.sourceChatId).toBe('-100123');
+    expect(result.destinationId).toBe(1);
     expect(result.enabled).toBeUndefined();
   });
-  it('accepts explicit enabled', () => {
+  it('accepts explicit enabled and handle', () => {
     const result = createSubscriptionRequestSchema.parse({
       sourceChatId: '-100123',
       sourceTitle: 'src',
-      destinationChatId: '-100456',
+      handle: '@src',
+      destinationId: 1,
       enabled: false,
     });
     expect(result.enabled).toBe(false);
+    expect(result.handle).toBe('@src');
   });
   it('rejects missing sourceChatId', () => {
     expect(
       createSubscriptionRequestSchema.safeParse({
         sourceTitle: 'src',
-        destinationChatId: '-100456',
+        destinationId: 1,
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects missing destinationId', () => {
+    expect(
+      createSubscriptionRequestSchema.safeParse({
+        sourceChatId: '-100123',
+        sourceTitle: 'src',
       }).success,
     ).toBe(false);
   });
@@ -53,7 +64,7 @@ describe('createSubscriptionRequestSchema', () => {
       createSubscriptionRequestSchema.safeParse({
         sourceChatId: '',
         sourceTitle: 'src',
-        destinationChatId: '-100456',
+        destinationId: 1,
       }).success,
     ).toBe(false);
   });
@@ -65,6 +76,54 @@ describe('updateSubscriptionRequestSchema', () => {
   });
   it('rejects an empty body', () => {
     expect(updateSubscriptionRequestSchema.safeParse({}).success).toBe(false);
+  });
+  it('accepts an inlineFilters-only PATCH (bulk-replace)', () => {
+    const parsed = updateSubscriptionRequestSchema.parse({
+      inlineFilters: [{ ruleType: 'text-contains', params: { value: 'foo' } }],
+    });
+    expect(parsed.inlineFilters).toHaveLength(1);
+  });
+  it('accepts an empty inlineFilters array (drop all)', () => {
+    expect(updateSubscriptionRequestSchema.parse({ inlineFilters: [] }).inlineFilters).toEqual([]);
+  });
+});
+
+describe('createSubscriptionRequestSchema inlineFilters', () => {
+  const base = {
+    sourceChatId: '-100123',
+    sourceTitle: 'src',
+    destinationId: 1,
+  };
+  it('accepts a valid inlineFilters array', () => {
+    const parsed = createSubscriptionRequestSchema.parse({
+      ...base,
+      inlineFilters: [
+        { ruleType: 'text-contains', params: { value: 'a' } },
+        { ruleType: 'min-length', params: { min: 10 }, enabled: false },
+      ],
+    });
+    expect(parsed.inlineFilters).toHaveLength(2);
+    expect(parsed.inlineFilters?.[1]?.enabled).toBe(false);
+  });
+  it('rejects mismatched params for the declared ruleType', () => {
+    expect(
+      createSubscriptionRequestSchema.safeParse({
+        ...base,
+        inlineFilters: [{ ruleType: 'text-contains', params: { min: 5 } }],
+      }).success,
+    ).toBe(false);
+  });
+  it('rejects an unknown ruleType inside inlineFilters', () => {
+    expect(
+      createSubscriptionRequestSchema.safeParse({
+        ...base,
+        inlineFilters: [{ ruleType: 'no-such-rule', params: {} }],
+      }).success,
+    ).toBe(false);
+  });
+  it('omits inlineFilters when absent', () => {
+    const parsed = createSubscriptionRequestSchema.parse(base);
+    expect(parsed.inlineFilters).toBeUndefined();
   });
 });
 

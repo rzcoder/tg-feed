@@ -1,24 +1,37 @@
 /**
  * Filter evaluator.
  *
- * Loads enabled `subscription_filters` rows for a subscription, runs each
- * through its registered rule, AND-combines, and on failure writes one
- * `forward_log` row per source message id (status `'filtered'`, reasons
- * joined into the `error` column).
+ * Loads enabled filters for a subscription — both per-sub
+ * (`subscription_filters` where `enabled=true`) and library filters
+ * attached via `subscription_library_filters` — runs each through its
+ * registered rule, AND-combines, and on failure writes one `forward_log`
+ * row per source message id (status `'filtered'`, reasons joined into
+ * the `error` column).
  *
- * Fail-open semantics for broken filter rows: an unknown ruleType, a zod
- * params parse failure, or a runtime throw inside a rule's `evaluate`
- * causes that single row to be skipped (with a warning). The remaining
- * rules still gate the message. Empty surviving filter set passes
- * (vacuous AND).
+ * Reasons format:
+ * - per-sub: `"<ruleType>: <reason>"`
+ * - library: `"library:<name>: <ruleType>: <reason>"` so the activity UI
+ *   can split on the `library:` prefix and render a Library chip.
+ *
+ * Fail-open semantics from Ch 6 are preserved across both sources: an
+ * unknown ruleType, a zod params parse failure, or a runtime throw inside
+ * a rule's `evaluate` skips that single row (with a warning). The
+ * remaining rules still gate the message. Empty surviving filter set
+ * passes (vacuous AND).
  */
 import { and, asc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
-import { forwardLog, subscriptionFilters, type SubscriptionFilter } from '../db/schema.js';
+import {
+  forwardLog,
+  libraryFilters,
+  subscriptionFilters,
+  subscriptionLibraryFilters,
+} from '../db/schema.js';
 import type { EventBus } from '../events/bus.js';
 import type { Logger } from '../lib/logger.js';
 import type { FilterRegistry } from './registry.js';
 import type { MessageContext } from './types.js';
+import type { AnyFilterRuleParams, FilterRuleType } from '@tg-feed/shared';
 
 export interface FilterEvaluator {
   evaluate(
@@ -40,6 +53,18 @@ interface PureEvaluation {
   reasons: string[];
 }
 
+/**
+ * Row shape consumed by the pure evaluator. `source` distinguishes per-sub
+ * vs library; `label` is the library filter name (null for per-sub).
+ */
+export interface EvaluatorRow {
+  id: number;
+  source: 'sub' | 'lib';
+  ruleType: FilterRuleType;
+  params: AnyFilterRuleParams;
+  label: string | null;
+}
+
 export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEvaluator {
   const { db, registry, logger, bus } = deps;
 
@@ -49,33 +74,22 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
       subscriptionId: number,
       sourceMessageIds: readonly string[],
     ): { pass: boolean } {
-      const rows = db
-        .select()
-        .from(subscriptionFilters)
-        .where(
-          and(
-            eq(subscriptionFilters.subscriptionId, subscriptionId),
-            eq(subscriptionFilters.enabled, true),
-          ),
-        )
-        .orderBy(asc(subscriptionFilters.id))
-        .all();
-
+      const rows = loadEvaluatorRows(db, subscriptionId);
       const result = evaluateFilters(rows, registry, context, logger);
       if (result.pass) return { pass: true };
 
       const errorText = result.reasons.join('; ');
-      for (const sourceMessageId of sourceMessageIds) {
-        db.insert(forwardLog)
-          .values({
+      db.insert(forwardLog)
+        .values(
+          sourceMessageIds.map((sourceMessageId) => ({
             subscriptionId,
             sourceMessageId,
             destMessageId: null,
-            status: 'filtered',
+            status: 'filtered' as const,
             error: errorText,
-          })
-          .run();
-      }
+          })),
+        )
+        .run();
       logger.info(
         {
           subscriptionId,
@@ -96,11 +110,76 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
 }
 
 /**
+ * Load all evaluatable filters for a subscription as a single ordered list.
+ *
+ * Per-sub filters (where `enabled=true`) and library filters attached via
+ * `subscription_library_filters` are loaded with two selects and merged in
+ * JS. Library rows come first (`source ASC: 'lib' < 'sub'`), then by id.
+ *
+ * Two queries instead of a SQL UNION because drizzle's mapped JSON columns
+ * (`mode: 'json'` in the schema) flow through cleanly per-table; a raw
+ * UNION returns columns as strings and would need manual `JSON.parse`. The
+ * cost is one extra round-trip on a hot path — for personal-use volumes
+ * (single-digit messages/sec at most) this is comfortably below noise.
+ */
+export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[] {
+  const subRows = db
+    .select({
+      id: subscriptionFilters.id,
+      ruleType: subscriptionFilters.ruleType,
+      params: subscriptionFilters.params,
+    })
+    .from(subscriptionFilters)
+    .where(
+      and(
+        eq(subscriptionFilters.subscriptionId, subscriptionId),
+        eq(subscriptionFilters.enabled, true),
+      ),
+    )
+    .orderBy(asc(subscriptionFilters.id))
+    .all();
+
+  const libRows = db
+    .select({
+      id: libraryFilters.id,
+      ruleType: libraryFilters.ruleType,
+      params: libraryFilters.params,
+      name: libraryFilters.name,
+    })
+    .from(libraryFilters)
+    .innerJoin(
+      subscriptionLibraryFilters,
+      eq(subscriptionLibraryFilters.libraryFilterId, libraryFilters.id),
+    )
+    .where(eq(subscriptionLibraryFilters.subscriptionId, subscriptionId))
+    .orderBy(asc(libraryFilters.id))
+    .all();
+
+  const merged: EvaluatorRow[] = [
+    ...libRows.map((r) => ({
+      id: r.id,
+      source: 'lib' as const,
+      ruleType: r.ruleType,
+      params: r.params,
+      label: r.name,
+    })),
+    ...subRows.map((r) => ({
+      id: r.id,
+      source: 'sub' as const,
+      ruleType: r.ruleType,
+      params: r.params,
+      label: null,
+    })),
+  ];
+  return merged;
+}
+
+/**
  * Pure evaluation — no side effects. Exported for unit tests; the public
  * `FilterEvaluator.evaluate` method is what production wiring calls.
  */
 export function evaluateFilters(
-  rows: readonly SubscriptionFilter[],
+  rows: readonly EvaluatorRow[],
   registry: FilterRegistry,
   context: MessageContext,
   logger: Logger,
@@ -111,7 +190,7 @@ export function evaluateFilters(
     const rule = registry.getRule(row.ruleType);
     if (!rule) {
       logger.warn(
-        { subscriptionFilterId: row.id, ruleType: row.ruleType },
+        { source: row.source, refId: row.id, ruleType: row.ruleType },
         'unknown filter rule type, skipping (fail-open)',
       );
       continue;
@@ -121,7 +200,8 @@ export function evaluateFilters(
     if (!parsed.success) {
       logger.warn(
         {
-          subscriptionFilterId: row.id,
+          source: row.source,
+          refId: row.id,
           ruleType: row.ruleType,
           issues: parsed.error.issues,
         },
@@ -135,14 +215,19 @@ export function evaluateFilters(
       evaluation = rule.evaluate(context, parsed.data);
     } catch (err) {
       logger.error(
-        { subscriptionFilterId: row.id, ruleType: row.ruleType, err },
+        { source: row.source, refId: row.id, ruleType: row.ruleType, err },
         'filter rule threw, skipping (fail-open)',
       );
       continue;
     }
 
     if (!evaluation.pass) {
-      reasons.push(`${row.ruleType}: ${evaluation.reason ?? 'no match'}`);
+      const reason = evaluation.reason ?? 'no match';
+      const formatted =
+        row.source === 'lib' && row.label !== null
+          ? `library:${row.label}: ${row.ruleType}: ${reason}`
+          : `${row.ruleType}: ${reason}`;
+      reasons.push(formatted);
     }
   }
 

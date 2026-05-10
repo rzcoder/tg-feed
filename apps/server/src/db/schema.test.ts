@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { createTestDb } from './testing.js';
 import type { Db } from './client.js';
 import {
+  destinations,
   subscriptions,
   subscriptionFilters,
   appSettings,
@@ -14,13 +15,34 @@ import {
 describe('db schema', () => {
   let db: Db;
   let close: () => void;
+  let destId: number;
 
   beforeEach(() => {
     ({ db, close } = createTestDb());
+    const [d] = db
+      .insert(destinations)
+      .values({ name: 'd', chatId: '-1009999999999' })
+      .returning({ id: destinations.id })
+      .all();
+    destId = d!.id;
   });
 
   afterEach(() => {
     close();
+  });
+
+  describe('destinations', () => {
+    it('inserts and reads back with defaults', () => {
+      const [row] = db
+        .insert(destinations)
+        .values({ name: 'ops', chatId: '-1009374102931', note: 'Primary ops channel' })
+        .returning()
+        .all();
+      expect(row?.name).toBe('ops');
+      expect(row?.chatId).toBe('-1009374102931');
+      expect(row?.note).toBe('Primary ops channel');
+      expect(row?.createdAt).toBeInstanceOf(Date);
+    });
   });
 
   describe('subscriptions', () => {
@@ -30,7 +52,7 @@ describe('db schema', () => {
         .values({
           sourceChatId: '-1001234567890',
           sourceTitle: 'Test Channel',
-          destinationChatId: '-1009876543210',
+          destinationId: destId,
         })
         .returning()
         .all();
@@ -40,7 +62,8 @@ describe('db schema', () => {
       expect(row.id).toBeGreaterThan(0);
       expect(row.sourceChatId).toBe('-1001234567890');
       expect(row.sourceTitle).toBe('Test Channel');
-      expect(row.destinationChatId).toBe('-1009876543210');
+      expect(row.destinationId).toBe(destId);
+      expect(row.handle).toBeNull();
       expect(row.enabled).toBe(true);
       expect(row.createdAt).toBeInstanceOf(Date);
     });
@@ -51,12 +74,30 @@ describe('db schema', () => {
         .values({
           sourceChatId: 's',
           sourceTitle: 't',
-          destinationChatId: 'd',
+          destinationId: destId,
           enabled: false,
         })
         .returning()
         .all();
       expect(row?.enabled).toBe(false);
+    });
+
+    it('rejects a subscription pointing at a missing destination', () => {
+      expect(() =>
+        db
+          .insert(subscriptions)
+          .values({ sourceChatId: 's', sourceTitle: 't', destinationId: 9999 })
+          .run(),
+      ).toThrow(/FOREIGN KEY/i);
+    });
+
+    it('blocks deleting a destination still referenced by a subscription', () => {
+      db.insert(subscriptions)
+        .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
+        .run();
+      expect(() => db.delete(destinations).where(eq(destinations.id, destId)).run()).toThrow(
+        /FOREIGN KEY/i,
+      );
     });
   });
 
@@ -64,7 +105,7 @@ describe('db schema', () => {
     it('round-trips JSON params', () => {
       const [sub] = db
         .insert(subscriptions)
-        .values({ sourceChatId: 's', sourceTitle: 't', destinationChatId: 'd' })
+        .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
         .returning()
         .all();
       const params = { value: 'foo', caseInsensitive: true } as const;
@@ -83,7 +124,7 @@ describe('db schema', () => {
     it('cascades delete from parent subscription', () => {
       const [sub] = db
         .insert(subscriptions)
-        .values({ sourceChatId: 's', sourceTitle: 't', destinationChatId: 'd' })
+        .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
         .returning()
         .all();
       db.insert(subscriptionFilters)
@@ -133,7 +174,7 @@ describe('db schema', () => {
     it('inserts with default createdAt and nullable dest fields', () => {
       const [sub] = db
         .insert(subscriptions)
-        .values({ sourceChatId: 's', sourceTitle: 't', destinationChatId: 'd' })
+        .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
         .returning()
         .all();
       const [row] = db
@@ -155,7 +196,7 @@ describe('db schema', () => {
     it('survives subscription deletion (subscriptionId set to null)', () => {
       const [sub] = db
         .insert(subscriptions)
-        .values({ sourceChatId: 's', sourceTitle: 't', destinationChatId: 'd' })
+        .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
         .returning()
         .all();
       const [logRow] = db
@@ -167,7 +208,6 @@ describe('db schema', () => {
       db.delete(subscriptions).where(eq(subscriptions.id, sub!.id)).run();
 
       const [refetched] = db.select().from(forwardLog).where(eq(forwardLog.id, logRow!.id)).all();
-      expect(refetched).toBeDefined();
       expect(refetched?.subscriptionId).toBeNull();
     });
 

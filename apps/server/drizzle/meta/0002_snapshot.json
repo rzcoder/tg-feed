@@ -1,0 +1,198 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "0002-library-filters",
+  "prevId": "0001-destinations-subscriptions-handle",
+  "tables": {
+    "app_settings": {
+      "name": "app_settings",
+      "columns": {
+        "key": { "name": "key", "type": "text", "primaryKey": true, "notNull": true, "autoincrement": false },
+        "value": { "name": "value", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "destinations": {
+      "name": "destinations",
+      "columns": {
+        "id": { "name": "id", "type": "integer", "primaryKey": true, "notNull": true, "autoincrement": true },
+        "name": { "name": "name", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "chat_id": { "name": "chat_id", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "note": { "name": "note", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "created_at": { "name": "created_at", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "forward_log": {
+      "name": "forward_log",
+      "columns": {
+        "id": { "name": "id", "type": "integer", "primaryKey": true, "notNull": true, "autoincrement": true },
+        "subscription_id": { "name": "subscription_id", "type": "integer", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "source_message_id": { "name": "source_message_id", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "dest_message_id": { "name": "dest_message_id", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "status": { "name": "status", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "error": { "name": "error", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "created_at": { "name": "created_at", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {
+        "idx_forward_log_created_at": { "name": "idx_forward_log_created_at", "columns": ["created_at"], "isUnique": false },
+        "idx_forward_log_subscription": { "name": "idx_forward_log_subscription", "columns": ["subscription_id"], "isUnique": false }
+      },
+      "foreignKeys": {
+        "forward_log_subscription_id_subscriptions_id_fk": {
+          "name": "forward_log_subscription_id_subscriptions_id_fk",
+          "tableFrom": "forward_log",
+          "tableTo": "subscriptions",
+          "columnsFrom": ["subscription_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "forward_log_status_check": {
+          "name": "forward_log_status_check",
+          "value": "\"forward_log\".\"status\" IN ('sent', 'filtered', 'flood_wait', 'failed')"
+        }
+      }
+    },
+    "library_filters": {
+      "name": "library_filters",
+      "columns": {
+        "id": { "name": "id", "type": "integer", "primaryKey": true, "notNull": true, "autoincrement": true },
+        "name": { "name": "name", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "rule_type": { "name": "rule_type", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "params": { "name": "params", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "created_at": { "name": "created_at", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "library_filters_rule_type_check": {
+          "name": "library_filters_rule_type_check",
+          "value": "rule_type IN ('text-contains', 'text-excludes', 'text-regex', 'has-media', 'min-length', 'sender-allowlist')"
+        }
+      }
+    },
+    "subscription_filters": {
+      "name": "subscription_filters",
+      "columns": {
+        "id": { "name": "id", "type": "integer", "primaryKey": true, "notNull": true, "autoincrement": true },
+        "subscription_id": { "name": "subscription_id", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "rule_type": { "name": "rule_type", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "params": { "name": "params", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "enabled": { "name": "enabled", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false, "default": true }
+      },
+      "indexes": {
+        "idx_subscription_filters_sub": { "name": "idx_subscription_filters_sub", "columns": ["subscription_id"], "isUnique": false }
+      },
+      "foreignKeys": {
+        "subscription_filters_subscription_id_subscriptions_id_fk": {
+          "name": "subscription_filters_subscription_id_subscriptions_id_fk",
+          "tableFrom": "subscription_filters",
+          "tableTo": "subscriptions",
+          "columnsFrom": ["subscription_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "subscription_library_filters": {
+      "name": "subscription_library_filters",
+      "columns": {
+        "subscription_id": { "name": "subscription_id", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "library_filter_id": { "name": "library_filter_id", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {
+        "idx_subscription_library_filters_lib": { "name": "idx_subscription_library_filters_lib", "columns": ["library_filter_id"], "isUnique": false }
+      },
+      "foreignKeys": {
+        "subscription_library_filters_subscription_id_subscriptions_id_fk": {
+          "name": "subscription_library_filters_subscription_id_subscriptions_id_fk",
+          "tableFrom": "subscription_library_filters",
+          "tableTo": "subscriptions",
+          "columnsFrom": ["subscription_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "subscription_library_filters_library_filter_id_library_filters_id_fk": {
+          "name": "subscription_library_filters_library_filter_id_library_filters_id_fk",
+          "tableFrom": "subscription_library_filters",
+          "tableTo": "library_filters",
+          "columnsFrom": ["library_filter_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "subscription_library_filters_subscription_id_library_filter_id_pk": {
+          "name": "subscription_library_filters_subscription_id_library_filter_id_pk",
+          "columns": ["subscription_id", "library_filter_id"]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "subscriptions": {
+      "name": "subscriptions",
+      "columns": {
+        "id": { "name": "id", "type": "integer", "primaryKey": true, "notNull": true, "autoincrement": true },
+        "source_chat_id": { "name": "source_chat_id", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "source_title": { "name": "source_title", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "handle": { "name": "handle", "type": "text", "primaryKey": false, "notNull": false, "autoincrement": false },
+        "destination_id": { "name": "destination_id", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false },
+        "enabled": { "name": "enabled", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false, "default": true },
+        "created_at": { "name": "created_at", "type": "integer", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "subscriptions_destination_id_destinations_id_fk": {
+          "name": "subscriptions_destination_id_destinations_id_fk",
+          "tableFrom": "subscriptions",
+          "tableTo": "destinations",
+          "columnsFrom": ["destination_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "tg_session": {
+      "name": "tg_session",
+      "columns": {
+        "key": { "name": "key", "type": "text", "primaryKey": true, "notNull": true, "autoincrement": false },
+        "encrypted_string": { "name": "encrypted_string", "type": "text", "primaryKey": false, "notNull": true, "autoincrement": false }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": { "schemas": {}, "tables": {}, "columns": {} },
+  "internal": { "indexes": {} }
+}

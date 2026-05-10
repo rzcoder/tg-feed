@@ -39,7 +39,13 @@ const envSchema = z.object({
 export type Config = z.infer<typeof envSchema>;
 
 export function parseConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const result = envSchema.safeParse(env);
+  // dotenv parses `KEY=` as the empty string, but our optional fields use
+  // `.min(N)` / regex constraints that reject `""`. Treat empty strings as
+  // missing so a placeholder line in `.env` doesn't break startup.
+  const cleaned: NodeJS.ProcessEnv = Object.fromEntries(
+    Object.entries(env).map(([k, v]) => [k, v === '' ? undefined : v]),
+  );
+  const result = envSchema.safeParse(cleaned);
   if (!result.success) {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)

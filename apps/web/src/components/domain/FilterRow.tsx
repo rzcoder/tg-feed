@@ -1,0 +1,102 @@
+import { Hash, Pencil, Trash, X } from 'lucide-react';
+import { cn } from '@/lib/cn';
+import {
+  describeFilter,
+  FILTER_RULE_ICONS,
+  FILTER_RULE_LABELS,
+  type FilterLike,
+} from '@/lib/describeFilter';
+import { Button } from '@/components/ui/button';
+
+export interface FilterRowProps {
+  filter: FilterLike & { id: number; enabled?: boolean; name?: string | null };
+  /** Render a "Library" badge + accent icon styling. */
+  library?: boolean;
+  /** Toggle handler — only shown when set. */
+  onToggle?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  /** Optional label override for the delete button (e.g. "Detach"). */
+  deleteLabel?: string;
+}
+
+export function FilterRow({
+  filter,
+  library,
+  onToggle,
+  onEdit,
+  onDelete,
+  deleteLabel,
+}: FilterRowProps) {
+  const Icon = FILTER_RULE_ICONS[filter.ruleType] ?? Hash;
+  const enabled = filter.enabled !== false;
+  return (
+    <div
+      className={cn(
+        'flex items-center gap-2.5 px-4 py-3 border-b border-border bg-bg min-h-[60px]',
+        !enabled && 'opacity-55',
+      )}
+    >
+      <span
+        className={cn(
+          'grid place-items-center w-8 h-8 rounded-lg flex-shrink-0',
+          library
+            ? 'bg-accent-soft text-accent border border-accent/30'
+            : 'bg-surface-2 text-text-2',
+        )}
+      >
+        <Icon size={15} />
+      </span>
+      <div className="flex flex-col flex-1 min-w-0 gap-px">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[13.5px] font-medium tracking-tight">
+            {filter.name ?? FILTER_RULE_LABELS[filter.ruleType]}
+          </span>
+          {library && (
+            <span className="text-[9.5px] font-semibold tracking-wide uppercase px-1.5 py-px rounded-sm bg-accent-soft text-accent">
+              Library
+            </span>
+          )}
+        </div>
+        <div className="font-mono text-[11.5px] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">
+          {describeFilter(filter)}
+        </div>
+      </div>
+      {onToggle && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          onClick={onToggle}
+          className={cn(
+            'relative w-[38px] h-[22px] rounded-full border transition-colors flex-shrink-0',
+            enabled ? 'bg-accent border-accent' : 'bg-surface-3 border-border',
+          )}
+        >
+          <span
+            className={cn(
+              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-transform',
+              enabled ? 'bg-accent-fg translate-x-4' : 'bg-text',
+            )}
+          />
+        </button>
+      )}
+      {onEdit && (
+        <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Edit filter">
+          <Pencil size={14} />
+        </Button>
+      )}
+      {onDelete && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onDelete}
+          title={deleteLabel ?? 'Delete'}
+          aria-label={deleteLabel ?? 'Delete filter'}
+        >
+          {library ? <X size={15} strokeWidth={2} /> : <Trash size={14} />}
+        </Button>
+      )}
+    </div>
+  );
+}

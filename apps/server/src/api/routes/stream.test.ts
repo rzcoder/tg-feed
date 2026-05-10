@@ -168,8 +168,6 @@ describe('GET /api/stream', () => {
     });
     const frames = parseSseFrames(buf);
     const completed = frames.find((f) => f.type === 'forward.completed');
-    expect(completed).toBeDefined();
-    expect(completed!.data).toBeDefined();
     const payload = JSON.parse(completed!.data!) as Record<string, unknown>;
     expect(payload).toMatchObject({
       type: 'forward.completed',

@@ -49,14 +49,67 @@ export const meResponseSchema = z.object({
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
+// --- Destinations -----------------------------------------------------
+
+// Numeric Telegram chat id; supergroups/channels start with -100. We allow
+// any integer-shaped string (negative or positive) of at least 6 digits.
+export const telegramChatIdSchema = z
+  .string()
+  .min(1)
+  .regex(/^-?\d{6,}$/, 'expected a numeric Telegram chat id');
+
+export const destinationDtoSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  chatId: z.string(),
+  note: z.string().nullable(),
+  usageCount: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+export type DestinationDto = z.infer<typeof destinationDtoSchema>;
+
+export const destinationListResponseSchema = z.object({
+  items: z.array(destinationDtoSchema),
+});
+export type DestinationListResponse = z.infer<typeof destinationListResponseSchema>;
+
+export const createDestinationRequestSchema = z.object({
+  name: z.string().min(1).max(80),
+  chatId: telegramChatIdSchema,
+  note: z.string().max(200).optional(),
+});
+export type CreateDestinationRequest = z.infer<typeof createDestinationRequestSchema>;
+
+export const updateDestinationRequestSchema = z
+  .object({
+    name: z.string().min(1).max(80).optional(),
+    chatId: telegramChatIdSchema.optional(),
+    note: z.string().max(200).nullable().optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'at least one field must be provided',
+  });
+export type UpdateDestinationRequest = z.infer<typeof updateDestinationRequestSchema>;
+
 // --- Subscriptions ----------------------------------------------------
 
 export const subscriptionDtoSchema = z.object({
   id: z.number().int(),
   sourceChatId: z.string(),
   sourceTitle: z.string(),
+  /** `@channel` handle, populated by the resolve endpoint at create time. */
+  handle: z.string().nullable(),
+  destinationId: z.number().int(),
+  /** Joined from `destinations` for UI rendering convenience. */
+  destinationName: z.string(),
   destinationChatId: z.string(),
   enabled: z.boolean(),
+  /** Count of own per-sub filters + attached library filters. */
+  filterCount: z.number().int().nonnegative(),
+  /** Count of forward_log rows with status='sent' for this subscription. */
+  forwardedCount: z.number().int().nonnegative(),
+  /** Library filter ids attached to this subscription (sorted ascending). */
+  libraryFilterIds: z.array(z.number().int().positive()),
   createdAt: z.string(),
 });
 export type SubscriptionDto = z.infer<typeof subscriptionDtoSchema>;
@@ -66,50 +119,11 @@ export const subscriptionListResponseSchema = z.object({
 });
 export type SubscriptionListResponse = z.infer<typeof subscriptionListResponseSchema>;
 
-export const createSubscriptionRequestSchema = z.object({
-  sourceChatId: z.string().min(1),
-  sourceTitle: z.string().min(1),
-  destinationChatId: z.string().min(1),
-  enabled: z.boolean().optional(),
-});
-export type CreateSubscriptionRequest = z.infer<typeof createSubscriptionRequestSchema>;
-
-// `sourceChatId` is intentionally immutable — to change it, delete and
-// recreate. The remaining fields are mutable. The `.refine` rejects an
-// empty PATCH body so callers don't accidentally no-op.
-export const updateSubscriptionRequestSchema = z
-  .object({
-    sourceTitle: z.string().min(1).optional(),
-    destinationChatId: z.string().min(1).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .refine((data) => Object.keys(data).length > 0, {
-    message: 'at least one field must be provided',
-  });
-export type UpdateSubscriptionRequest = z.infer<typeof updateSubscriptionRequestSchema>;
-
-// --- Subscription filters ---------------------------------------------
-
-export const subscriptionFilterDtoSchema = z.object({
-  id: z.number().int(),
-  subscriptionId: z.number().int(),
-  ruleType: z.enum(FILTER_RULE_TYPES),
-  params: z.record(z.string(), z.unknown()),
-  enabled: z.boolean(),
-});
-export type SubscriptionFilterDto = z.infer<typeof subscriptionFilterDtoSchema>;
-
-export const subscriptionFilterListResponseSchema = z.object({
-  items: z.array(subscriptionFilterDtoSchema),
-});
-export type SubscriptionFilterListResponse = z.infer<typeof subscriptionFilterListResponseSchema>;
-
-// Discriminated union over `ruleType` so the server validates `params`
-// against the matching rule's schema in one parse call. Variants are
-// hand-listed (rather than mapped from `FILTER_RULE_TYPES`) so TS infers
-// each variant's literal discriminator and `z.discriminatedUnion`'s
-// tuple-shape requirement is satisfied.
-export const createSubscriptionFilterRequestSchema = z.discriminatedUnion('ruleType', [
+// Shape of an inline-filter input shared by `createSubscriptionRequestSchema`
+// (bulk inline-filters at sub-create time) and `createSubscriptionFilterRequestSchema`
+// (granular inline-filter create at `POST /subscriptions/:id/filters`). The
+// discriminated union forces `params` to match `ruleType` in one parse.
+export const inlineFilterInputSchema = z.discriminatedUnion('ruleType', [
   z.object({
     ruleType: z.literal('text-contains'),
     params: textContainsParamsSchema,
@@ -141,6 +155,88 @@ export const createSubscriptionFilterRequestSchema = z.discriminatedUnion('ruleT
     enabled: z.boolean().optional(),
   }),
 ]);
+export type InlineFilterInput = z.infer<typeof inlineFilterInputSchema>;
+
+export const createSubscriptionRequestSchema = z.object({
+  sourceChatId: z.string().min(1),
+  sourceTitle: z.string().min(1),
+  handle: z.string().min(1).optional(),
+  destinationId: z.number().int().positive(),
+  enabled: z.boolean().optional(),
+  /**
+   * Library filter ids to attach at create time. Bulk-replace semantics:
+   * an empty array attaches none; absent field = same as empty.
+   */
+  libraryFilterIds: z.array(z.number().int().positive()).optional(),
+  /**
+   * Private inline filters to materialize on the new subscription. Bulk
+   * semantics: absent or `[]` means none. The discriminated union enforces
+   * per-rule param validity.
+   */
+  inlineFilters: z.array(inlineFilterInputSchema).optional(),
+});
+export type CreateSubscriptionRequest = z.infer<typeof createSubscriptionRequestSchema>;
+
+// `sourceChatId` and `handle` are intentionally immutable — to change the
+// channel, delete and recreate. Other fields are mutable. `.refine` rejects
+// an empty PATCH body so callers don't accidentally no-op.
+export const updateSubscriptionRequestSchema = z
+  .object({
+    sourceTitle: z.string().min(1).optional(),
+    destinationId: z.number().int().positive().optional(),
+    enabled: z.boolean().optional(),
+    /**
+     * Bulk-replace the attached library filter set. Absent = leave alone;
+     * empty array = detach all. Granular attach/detach also available at
+     * `/api/subscriptions/:id/library-filters[/:libId]`.
+     */
+    libraryFilterIds: z.array(z.number().int().positive()).optional(),
+    /**
+     * Bulk-replace the private inline filter set. Absent = leave alone;
+     * empty array = drop all. Granular CRUD also available at
+     * `/api/subscriptions/:id/filters[/:filterId]`.
+     */
+    inlineFilters: z.array(inlineFilterInputSchema).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'at least one field must be provided',
+  });
+export type UpdateSubscriptionRequest = z.infer<typeof updateSubscriptionRequestSchema>;
+
+// `POST /api/subscriptions/resolve` — preview only, no DB write. The UI
+// then submits the resolved fields to `POST /api/subscriptions`.
+export const resolveSubscriptionRequestSchema = z.object({
+  input: z.string().min(1).max(200),
+});
+export type ResolveSubscriptionRequest = z.infer<typeof resolveSubscriptionRequestSchema>;
+
+export const resolveSubscriptionResponseSchema = z.object({
+  sourceChatId: z.string(),
+  sourceTitle: z.string(),
+  handle: z.string().nullable(),
+});
+export type ResolveSubscriptionResponse = z.infer<typeof resolveSubscriptionResponseSchema>;
+
+// --- Subscription filters ---------------------------------------------
+
+export const subscriptionFilterDtoSchema = z.object({
+  id: z.number().int(),
+  subscriptionId: z.number().int(),
+  ruleType: z.enum(FILTER_RULE_TYPES),
+  params: z.record(z.string(), z.unknown()),
+  enabled: z.boolean(),
+});
+export type SubscriptionFilterDto = z.infer<typeof subscriptionFilterDtoSchema>;
+
+export const subscriptionFilterListResponseSchema = z.object({
+  items: z.array(subscriptionFilterDtoSchema),
+});
+export type SubscriptionFilterListResponse = z.infer<typeof subscriptionFilterListResponseSchema>;
+
+// `POST /subscriptions/:id/filters` body — same discriminated shape as
+// `inlineFilterInputSchema`, exported under the route-specific name so
+// existing imports keep working.
+export const createSubscriptionFilterRequestSchema = inlineFilterInputSchema;
 export type CreateSubscriptionFilterRequest = z.infer<typeof createSubscriptionFilterRequestSchema>;
 
 // PATCH body — `params` is loose at this layer (`z.record`), and the route
@@ -157,6 +253,82 @@ export const updateSubscriptionFilterRequestSchema = z
     message: 'at least one field must be provided',
   });
 export type UpdateSubscriptionFilterRequest = z.infer<typeof updateSubscriptionFilterRequestSchema>;
+
+// --- Library filters --------------------------------------------------
+
+export const libraryFilterDtoSchema = z.object({
+  id: z.number().int(),
+  name: z.string(),
+  ruleType: z.enum(FILTER_RULE_TYPES),
+  params: z.record(z.string(), z.unknown()),
+  /** Number of subscriptions this library filter is attached to. */
+  usageCount: z.number().int().nonnegative(),
+  createdAt: z.string(),
+});
+export type LibraryFilterDto = z.infer<typeof libraryFilterDtoSchema>;
+
+export const libraryFilterListResponseSchema = z.object({
+  items: z.array(libraryFilterDtoSchema),
+});
+export type LibraryFilterListResponse = z.infer<typeof libraryFilterListResponseSchema>;
+
+// Hand-listed discriminated union (mirrors `createSubscriptionFilterRequestSchema`)
+// — z.discriminatedUnion needs a tuple of literal-typed variants. The
+// extra `name` field is the only structural difference.
+export const createLibraryFilterRequestSchema = z.discriminatedUnion('ruleType', [
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('text-contains'),
+    params: textContainsParamsSchema,
+  }),
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('text-excludes'),
+    params: textExcludesParamsSchema,
+  }),
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('text-regex'),
+    params: textRegexParamsSchema,
+  }),
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('has-media'),
+    params: hasMediaParamsSchema,
+  }),
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('min-length'),
+    params: minLengthParamsSchema,
+  }),
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('sender-allowlist'),
+    params: senderAllowlistParamsSchema,
+  }),
+]);
+export type CreateLibraryFilterRequest = z.infer<typeof createLibraryFilterRequestSchema>;
+
+// `ruleType` is immutable post-creation — same precedent as
+// `subscription_filters`: changing the rule type is delete + re-add. The
+// route handler validates `params` against the existing row's `ruleType`.
+export const updateLibraryFilterRequestSchema = z
+  .object({
+    name: z.string().min(1).max(80).optional(),
+    params: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'at least one field must be provided',
+  });
+export type UpdateLibraryFilterRequest = z.infer<typeof updateLibraryFilterRequestSchema>;
+
+// Attach an existing library filter to a subscription. Body just carries
+// the library filter id; the URL captures the subscription. M:N row is
+// idempotent — re-attaching is a no-op (PK violation suppressed).
+export const attachLibraryFilterRequestSchema = z.object({
+  libraryFilterId: z.number().int().positive(),
+});
+export type AttachLibraryFilterRequest = z.infer<typeof attachLibraryFilterRequestSchema>;
 
 // --- Filter rule catalog ----------------------------------------------
 
@@ -216,6 +388,20 @@ export const forwardLogQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 export type ForwardLogQuery = z.infer<typeof forwardLogQuerySchema>;
+
+// --- System status ----------------------------------------------------
+
+export const telegramStatusSchema = z.object({
+  connected: z.boolean(),
+  /** Human-readable reason; only present when not connected. */
+  reason: z.string().optional(),
+});
+export type TelegramStatus = z.infer<typeof telegramStatusSchema>;
+
+export const systemStatusResponseSchema = z.object({
+  telegram: telegramStatusSchema,
+});
+export type SystemStatusResponse = z.infer<typeof systemStatusResponseSchema>;
 
 // --- Errors -----------------------------------------------------------
 

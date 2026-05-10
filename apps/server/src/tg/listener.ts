@@ -1,11 +1,15 @@
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { TelegramClient } from 'telegram';
 import { NewMessage, type NewMessageEvent } from 'telegram/events/index.js';
 import type { Db } from '../db/client.js';
-import { subscriptions } from '../db/schema.js';
+import { destinations, subscriptions } from '../db/schema.js';
 import type { RawForwardingHandle } from '../forwarding/types.js';
 import type { Logger } from '../lib/logger.js';
-import { extractMatchableEvent, matchSubscription } from './messageMatcher.js';
+import {
+  extractMatchableEvent,
+  matchSubscription,
+  type ResolvedSubscription,
+} from './messageMatcher.js';
 
 export function attachNewMessageListener(
   client: TelegramClient,
@@ -17,7 +21,24 @@ export function attachNewMessageListener(
     const matchable = extractMatchableEvent(event);
     if (!matchable) return;
 
-    const activeSubs = db.select().from(subscriptions).where(eq(subscriptions.enabled, true)).all();
+    // Filter by source_chat_id in the WHERE clause (backed by
+    // idx_subscriptions_source_chat_id) so the DB returns only the rows
+    // that could possibly match — usually 0 or 1, never the full table.
+    const activeSubs = db
+      .select({
+        id: subscriptions.id,
+        sourceChatId: subscriptions.sourceChatId,
+        sourceTitle: subscriptions.sourceTitle,
+        handle: subscriptions.handle,
+        destinationId: subscriptions.destinationId,
+        destinationChatId: destinations.chatId,
+        enabled: subscriptions.enabled,
+        createdAt: subscriptions.createdAt,
+      })
+      .from(subscriptions)
+      .innerJoin(destinations, eq(subscriptions.destinationId, destinations.id))
+      .where(and(eq(subscriptions.enabled, true), eq(subscriptions.sourceChatId, matchable.chatId)))
+      .all() as ResolvedSubscription[];
     const matched = matchSubscription(matchable, activeSubs);
 
     if (!matched) {
@@ -52,5 +73,17 @@ export function attachNewMessageListener(
     });
   };
 
-  client.addEventHandler(handler, new NewMessage({}));
+  // Wrap the handler so a single bad event (DB hiccup, malformed gramjs
+  // payload, downstream throw from `enqueue`) gets logged and dropped
+  // instead of bubbling up into gramjs and potentially destabilising the
+  // whole TG session.
+  const safeHandler = async (event: NewMessageEvent): Promise<void> => {
+    try {
+      await handler(event);
+    } catch (err) {
+      logger.error({ err }, 'listener handler threw; dropping event');
+    }
+  };
+
+  client.addEventHandler(safeHandler, new NewMessage({}));
 }

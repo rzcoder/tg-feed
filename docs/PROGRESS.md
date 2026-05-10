@@ -52,12 +52,55 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` done
       routes; new `GET /api/stream` SSE route in the authed scope using
       `reply.hijack()` + raw socket writes, 25 s heartbeat (override-able for
       tests). 15 new tests; 253 total.
-- → [ ] **Chapter 9 — Web skeleton** — Vite + React + Tailwind + shadcn/ui + Router +
-  TanStack Query + auth/login.
-- [ ] **Chapter 10 — Web: Subscriptions UI**.
-- [ ] **Chapter 11 — Web: Filters UI** — schema-driven form per rule.
-- [ ] **Chapter 12 — Web: Settings UI**.
-- [ ] **Chapter 13 — Web: Activity feed (SSE)**.
+- [x] **Chapter 9 — Web skeleton** — Vite + React + Tailwind (CSS-var-driven
+      tokens) + Radix Dialog/DropdownMenu primitives + Router + TanStack Query.
+      RequireAuth + LoginPage + AppShell with TabBar (mobile) / Sidebar
+      (desktop) via `lg:` breakpoint. ThemePicker (System / Light / Dark)
+      persisting via localStorage; pre-mount inline script in `index.html`
+      eliminates flash-of-wrong-theme. Vitest + jsdom per-workspace via
+      `vitest.workspace.ts`. 8 new web tests; 269 total.
+- [x] **Chapter 10 — Destinations table + Subscriptions UI + resolve
+      endpoint** — `destinations` table + drizzle migration `0001_destinations`
+      with table-recreation pattern (FKs disabled around migrate, verified
+      via `foreign_key_check`). `subscriptions.destinationId` FK ON DELETE
+      RESTRICT replaces `destination_chat_id`; `subscriptions.handle`
+      (nullable) added. New `/api/destinations` CRUD with `usageCount`
+      JOIN + delete-blocked-when-in-use (409 `destination_in_use`).
+      `POST /api/subscriptions/resolve` via gramjs `client.getEntity`
+      with classified errors (NotFound / private_channel / upstream
+      generic). Web Subscriptions page (tap-to-expand row + ExpandedSubActions
+      with stat chips + Edit/Filters/Delete) + Destinations page.
+      `SubSheet` does debounced resolve and renders preview card. 38 new
+      tests; 307 total.
+- [x] **Chapter 11 — Library filters + Filters UI** — `library_filters` +
+      `subscription_library_filters` (M:N, no `enabled` column — detach=off)
+      tables; migration `0002_library_filters`. Filter evaluator now loads
+      per-sub UNION library via two `db.select()` calls merged in JS (lib
+      first, by id), reasons formatted with `library:<name>: ` prefix for
+      library rows. Routes: `/api/library-filters` CRUD with
+      `library_filter_in_use` 409 + `usageCount` join; granular
+      `POST/DELETE /api/subscriptions/:id/library-filters[/:libId]` plus
+      bulk `libraryFilterIds` on POST/PATCH `/api/subscriptions[/:id]`.
+      `SubscriptionDto.libraryFilterIds` field added. Web FiltersPage with
+      Per-subscription / Library sub-tabs (URL-state `?view=`), FilterSheet
+      two-step (rule pick → params form, with Name field for library mode),
+      RuleForm per-rule UI, FilterRow with toggle + edit/delete + Library
+      chip + detach-X. SubSheet now includes library filter checkboxes.
+      27 new tests; 334 total.
+- [x] **Chapter 12 — Web: Settings UI** — SettingsPage with global delay
+      input + slider (1000–20000ms step 500), spam-classifier warning under
+      4000ms, Reset/Save buttons, two disabled `· soon` cards
+      (Authentication, Retention) for layout precedent. 3 new tests; 337 total.
+- [x] **Chapter 13 — Web: Activity feed (SSE)** — `useActivityStream` hook
+      wraps a single EventSource on `/api/stream`, tracks
+      `live | reconnect | down`, dispatches forward.\* events to a state
+      slot. `ActivityPage` hydrates from `GET /api/forward-log?limit=50` on
+      mount, then prepends new SSE events (capped at 200). Live events
+      enriched via `useSubscriptions` + `useDestinations` lookups; hydrated
+      rows use server-joined `subscriptionTitle`. Reasons split for
+      `library:<name>:` prefix → render Library chip with name + remaining
+      reason. Album-aware "forwarded N messages" when `destMessageIds.length > 1`.
+      Pause + scroll-lock + jump-to-live affordances. 9 new tests; 346 total.
 - [ ] **Chapter 14 — Docker + deployment** — multi-stage Dockerfile, compose,
       health endpoint, end-to-end smoke.
 
@@ -568,23 +611,206 @@ no-cache, no-transform` covers most other proxies. Initial `: open\n\n`
 
 ### Chapter 9 — Web skeleton
 
-_(notes to be filled in when work starts)_
+- Done. New deps: `react@^18.3.1`, `react-dom`, `react-router-dom@^7`,
+  `@tanstack/react-query@^5`, `tailwindcss@^3`, `@radix-ui/react-dialog`
+  (Sheet), `@radix-ui/react-dropdown-menu` (ThemePicker), `lucide-react`,
+  `class-variance-authority`, `clsx`, `tailwind-merge`. Dev: `vite@^5`,
+  `@vitejs/plugin-react`, `@testing-library/react`, `jsdom`.
+- **`vitest.workspace.ts` at root** so server/shared run in node and web
+  in jsdom from a single `vitest run`. Per-workspace `vitest.config.ts`
+  files set `name`, `environment`, and the test glob.
+- **Tailwind tokens are CSS-var-driven** (`bg`, `accent`, etc. resolved to
+  `var(--bg)` etc.). Theme flips happen via `[data-theme]` attribute on
+  `<html>` — no class swaps. Source of truth lives in
+  `apps/web/src/styles/globals.css` ported verbatim from the design's
+  `styles.css`.
+- **Theme: System / Light / Dark.** `useTheme` hook persists preference
+  in localStorage; resolves `'system'` against `prefers-color-scheme`.
+  Subscribes to media-query `change` only while preference is `'system'`,
+  so OS flips propagate live without yanking user overrides. **Initial
+  resolution happens before React mounts** via a tiny inline script in
+  `index.html` — eliminates flash-of-wrong-theme on cold load. ThemePicker
+  is a Radix DropdownMenu in TopBar; trigger icon shows the _resolved_
+  theme so the user sees what's actually painted.
+- **Layout uses Tailwind `lg:` breakpoint** to swap TabBar (bottom, mobile)
+  for Sidebar (left, desktop). No phone/desktop chrome from the design —
+  that was a canvas affordance only.
+- **Auth gate**: `<RequireAuth>` wraps the `AppShell` route element;
+  `useMe()` hits `GET /api/me` once at boot (`staleTime: Infinity`),
+  401 navigates to `/login` preserving location state. `apiFetch`'s
+  global 401 interceptor `window.location.assign('/login')` for any
+  authed call returning 401 mid-session — except for the auth routes
+  themselves (`silent401: true`), so LoginPage can render its own error.
+- **`api/client.ts` is a tiny fetch wrapper** — `credentials: 'include'`,
+  parses JSON, throws `ApiError` (or `UnauthorizedError`) carrying the
+  parsed `errorResponseSchema` body. All API modules under `src/api/`
+  use it and `.parse()` responses with the shared zod schemas (single
+  source of truth for wire shape).
+- **AppShell layout**: `useStreamConnection()` is a Ch 9 stub that
+  returns `'live'`; Ch 13 wires it to a real EventSource. The hook
+  signature stays stable so TopBar doesn't churn.
 
-### Chapter 10 — Web: Subscriptions UI
+### Chapter 10 — Destinations + Subscriptions UI + resolve endpoint
 
-_(notes to be filled in when work starts)_
+- Done. New deps: none new. Total tests +38 → 307.
+- **Destinations table is a separate entity.** `subscriptions.destinationId`
+  FK → `destinations(id)` ON DELETE RESTRICT. `destinationChatId` column
+  dropped from `subscriptions`. The `usageCount` field on
+  `DestinationDto` is computed via `LEFT JOIN ... GROUP BY` — server
+  enforces "no delete while in use" at the route layer with a 409
+  `destination_in_use` (FK is belt-and-suspenders).
+- **Migration `0001_destinations` uses table-recreation.** SQLite can
+  drop columns natively but `subscriptions` has FKs from
+  `subscription_filters` (CASCADE) and `forward_log` (SET NULL) — those
+  fire when the old table is dropped, wiping referencing rows.
+  Workaround: `migrate.ts` (and `db/testing.ts`) run `PRAGMA
+foreign_keys = OFF` around `migrate()`, then `PRAGMA
+foreign_key_check` to verify the migration left no orphans. drizzle's
+  migrate wraps in a transaction where `PRAGMA foreign_keys` is a
+  no-op, so the disable has to happen at the connection level.
+- **drizzle-kit can't generate this migration.** It chokes on the
+  `@tg-feed/shared` workspace import (`Cannot find module './filters.js'`
+  — CJS resolver doesn't auto-strip `.js` for TS workspace packages).
+  Wrote `0001_destinations.sql`, `meta/0001_snapshot.json`, and the
+  `_journal.json` entry by hand. Future structural migrations will
+  need the same handling until drizzle-kit's loader is fixed.
+- **`subscriptions.handle`** added as nullable text. Populated on create
+  from the resolve endpoint's response; UI prefers `handle` for display,
+  falls back to last 8 of `sourceChatId`.
+- **`POST /api/subscriptions/resolve`** is preview-only — never writes.
+  `tg/entityResolver.ts` normalises input (strips `https?://`, `t.me/`,
+  `@`, trailing path/query; rejects non-`[A-Za-z0-9_]{4,32}`), calls
+  `client.getEntity`, maps gramjs errors:
+  - `USERNAME_NOT_OCCUPIED` / `USERNAME_INVALID` → 404 `unknown_channel`
+  - `CHANNEL_PRIVATE` / `CHANNEL_INVALID` → 503 `private_channel`
+  - any other thrown error → 503 `upstream_unavailable` (new
+    `UpstreamError extends AppError`)
+  - missing `entityResolver` (test mode) → 503 `telegram_unavailable`.
+    Channel ids are normalised to the supergroup `-100<id>` form when the
+    gramjs entity's `className` is `Channel | Chat`.
+- **`tg/subscriptions.ts#EntityResolver` was renamed to `TelegramEntityClient`** —
+  the new resolver type owned the more specific name. Touch-up only.
+- **`SubscriptionDto` gained `destinationId`, `destinationName`,
+  `destinationChatId` (joined), `handle`, `filterCount`, `forwardedCount`.**
+  Listed via one query with two correlated subqueries (own filter count +
+  sent forward count) — no N+1. `getSubscription(db, id)` is exported
+  for the create/patch handlers' refetch.
+- **Listener now JOINs subscriptions + destinations** to get the
+  `destinationChatId` it needs to enqueue forward jobs. The
+  `ResolvedSubscription` type (`Subscription & { destinationChatId }`)
+  is the JOIN row shape; `matchSubscription` is generic over
+  `T extends Subscription` so listener and tests share the same matcher
+  on different row shapes.
+- **Web SubSheet uses TanStack Query mutation methods (`mutate`,
+  `reset`) destructured for stability.** The wrapping mutation object is
+  recreated each render; including it in `useEffect` deps caused
+  re-fire-every-render → reset loop → hung tests. Destructuring fixes it.
+- **Web swipe-row variant deferred.** Plan said both styles ship in Ch 10;
+  shipped tap-to-expand only. Swipe is mobile-only polish; can land in a
+  future chapter.
 
-### Chapter 11 — Web: Filters UI
+### Chapter 11 — Library filters + Filters UI
 
-_(notes to be filled in when work starts)_
+- Done. Total tests +27 → 334.
+- **Two new tables** — `library_filters` (id, name, ruleType, params,
+  createdAt; CHECK constraint inline-listing the 6 rule types) and the
+  M:N join `subscription_library_filters` (composite PK
+  `(subscriptionId, libraryFilterId)`, indexed on libraryFilterId for
+  the usage-count query). **No `enabled` column on the join** — detach
+  IS off, reattach IS on. Single source of truth, no override surface.
+- **Filter evaluator: two `db.select()` queries merged in JS, not a
+  raw UNION.** drizzle's mapped JSON columns flow through cleanly per-
+  table; a SQL UNION returns all columns as strings and would need
+  `JSON.parse` on `params`. Two queries on a hot path is fine for
+  personal-use volumes (<10 msg/sec). Library rows come first
+  (`source: 'lib'`), then per-sub by id ASC. Each row carries
+  `{ id, source, ruleType, params, label }`.
+- **Reasons format change.** Per-sub reasons unchanged
+  (`<ruleType>: <reason>`). Library reasons gain a prefix:
+  `library:<name>: <ruleType>: <reason>`. Persisted to `forward_log.error`
+  joined with `'; '`, also delivered on the bus's `forward.filtered`
+  event verbatim. Web ActivityRow splits on `library:` prefix to render
+  a "Library" chip + name + the rest.
+- **Bulk + granular library-filter attachment.** Bulk via
+  `libraryFilterIds: number[]` on POST/PATCH `/api/subscriptions[/:id]`
+  (replaces the whole set; absent = leave alone, empty = detach all).
+  Granular via `POST /api/subscriptions/:id/library-filters` (idempotent
+  via `onConflictDoNothing`) and `DELETE /:id/library-filters/:libId`.
+  Bus emits `subscription.changed` (change=`'updated'`) on each
+  attach/detach so the activity feed and other open windows refetch.
+- **`SubscriptionDto` gained `libraryFilterIds: number[]`** — sorted
+  ascending. `filterCount` now sums per-sub filter rows + library
+  attachments.
+- **FiltersPage URL state.** `?view=sub|library` and `?sub=<id>` so the
+  Subscriptions tab's "Filters →" link can deep-link to a specific
+  subscription's per-sub view. Default sub is `subs[0]?.id`.
+- **FilterSheet is two-step.** Step 1 (add only): pick a rule from a
+  list (uses `useFilterCatalog()`'s server data). Step 2: render
+  `RuleForm` for the picked type + a Name field when `kind='library'`.
+  Validates params client-side via the shared zod schema before allowing
+  Save — keeps the server's 400 path for genuine wire-tampering.
+- **Per-sub view** shows attached library filters first (with X to detach
+  via `useDetachLibraryFilter`), then own per-sub filters (with toggle,
+  edit, delete). Each row uses `FilterRow` — single component, two
+  badge styles via `library` prop.
+- **Library view** uses usage badges; delete is disabled when
+  `usageCount > 0` with the tooltip "In use by N subs".
 
 ### Chapter 12 — Web: Settings UI
 
-_(notes to be filled in when work starts)_
+- Done. Total tests +3 → 337.
+- **No backend changes.** `GET/PUT /api/settings` from Ch 7 already
+  returns/accepts `{ delayMs: number }`. Web hooks: `useSettings()`,
+  `useUpdateSettings()` (writes to `setQueryData` on success, no
+  invalidate needed since the only consumer is this page).
+- **SettingsPage UI** has the design's full card: number input + range
+  slider (1000–20000ms step 500) wired to the same `draft` state, a
+  warning banner when `draft < 4000ms` ("spam classifier" copy from the
+  design verbatim), Reset/Save buttons (disabled until dirty). Two
+  disabled `· soon` cards (Authentication, Retention) preserve the
+  design's section layout for future expansion.
 
-### Chapter 13 — Web: Activity feed
+### Chapter 13 — Web: Activity feed (SSE)
 
-_(notes to be filled in when work starts)_
+- Done. Total tests +9 → 346.
+- **`useActivityStream(enabled)` hook** wraps a single `EventSource`.
+  Listens to all 6 stream event types via `addEventListener('event-name', …)`
+  (server uses named events, not the default `message`). Tracks readyState
+  → `'live' | 'reconnect' | 'down'`. On `subscription.changed` it
+  invalidates the subscriptions query. Forward events surface via
+  `lastEvent` state slot — a new event creates a new identity, which
+  the `ActivityPage` consumes in a `useEffect`.
+- **ActivityPage hydration**: `useForwardLog({ limit: 50 })` fetches
+  recent rows on mount; each maps into the same `ActivityEvent` shape
+  as live events. Live events from `useActivityStream.lastEvent` get
+  prepended (capped at 200). Hydration `useEffect` preserves any live
+  events that arrived since mount by checking the `live:` id prefix.
+- **Enrichment** happens at render time via maps built from
+  `useSubscriptions` + `useDestinations`. Live events carry only IDs;
+  `enrichEvent` fills `subscriptionTitle`, `sourceHandle`,
+  `destinationLabel` lazily — solves the bootstrap race where SSE
+  events arrive before the subscription/destination caches populate.
+- **`forward.filtered` doesn't carry `destinationChatId`** (per the Ch 8
+  shape). UI looks up the destination via the subscription cache.
+- **Album rendering**: `forward.completed` carries `destMessageIds[]`;
+  when `length > 1` the row shows "forwarded N messages" subtitle.
+  Hydrated rows from `forward_log` get one row per source id (Ch 5
+  precedent), so albums render as N rows in hydration but a single row
+  in live. Acceptable inconsistency for v1.
+- **`flood_wait` seconds parsing**: hydrated rows reconstruct seconds
+  from the `error` column (`flood_wait <N>s` format set by the
+  forwarder in Ch 4). Live events carry `seconds` directly.
+- **Pause + scroll-lock + jump-to-live**: pause stops appending events
+  (the EventSource stays open, just buffers/drops in the hook).
+  Scrolling past 30px locks auto-scroll-to-top so prepends don't yank
+  the user; a floating "↓ Jump to live" button appears.
+- **No message-body preview.** Plan called this out — bus events don't
+  carry text and threading it through listener → debouncer → forwarder
+  → bus → log adds PII surface for marginal UI value. UI shows status,
+  sub→dest, time, reasons/error/seconds.
+- **Connection pill in TopBar still stubbed at `'live'`.** ActivityPage's
+  EventSource is independent — sharing via a context provider is a
+  future polish.
 
 ### Chapter 14 — Docker + deployment
 

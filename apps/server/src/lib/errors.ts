@@ -42,7 +42,30 @@ export class ValidationError extends AppError {
 }
 
 export class ConflictError extends AppError {
+  constructor(message: string, code = 'conflict') {
+    super(409, code, message);
+  }
+}
+
+/**
+ * Thrown when an upstream service (Telegram via gramjs) is unreachable or
+ * misbehaving. Maps to 503; the `code` is an explicit subtype the web UI
+ * keys on for retry / fallback messaging.
+ */
+export class UpstreamError extends AppError {
+  constructor(message: string, code = 'upstream_unavailable') {
+    super(503, code, message);
+  }
+}
+
+/**
+ * Thrown for "this shouldn't happen" cases — e.g. a row that exists at
+ * INSERT-time disappearing before the immediate follow-up read. Maps to
+ * 500; the message is logged but `errorHandler.ts` only echoes the
+ * generic envelope, so internal context never leaks to the client.
+ */
+export class InternalError extends AppError {
   constructor(message: string) {
-    super(409, 'conflict', message);
+    super(500, 'internal', message);
   }
 }
