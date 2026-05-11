@@ -41,6 +41,8 @@ export interface RequestInitJson<TBody> extends Omit<RequestInit, 'body'> {
 
 const AUTH_ROUTES = new Set(['/api/auth/login', '/api/auth/logout', '/api/me']);
 
+let redirectingToLogin = false;
+
 export async function apiFetch<TResponse, TBody = unknown>(
   path: string,
   init: RequestInitJson<TBody> = {},
@@ -61,8 +63,8 @@ export async function apiFetch<TResponse, TBody = unknown>(
 
   if (res.status === 401) {
     const parsed = await safeParseError(res);
-    if (!silent401 && !AUTH_ROUTES.has(path)) {
-      // Drop the user back to login. The next page load will refetch /me.
+    if (!silent401 && !AUTH_ROUTES.has(path) && !redirectingToLogin) {
+      redirectingToLogin = true;
       window.location.assign('/login');
     }
     throw new UnauthorizedError(401, parsed, parsed?.error.message ?? 'unauthorized');
@@ -81,7 +83,7 @@ export async function apiFetch<TResponse, TBody = unknown>(
   if (contentType.includes('application/json')) {
     return (await res.json()) as TResponse;
   }
-  return (await res.text()) as unknown as TResponse;
+  throw new ApiError(res.status, undefined, 'unexpected response format (expected JSON)');
 }
 
 async function safeParseError(res: Response): Promise<ErrorResponse | undefined> {

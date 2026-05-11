@@ -64,7 +64,7 @@ function SubMeta({ sub }: { sub: SubscriptionDto }) {
       </span>
       <span className="text-text-faint flex-shrink-0">·</span>
       {sub.destinationName ? (
-        <span className="inline-flex items-center gap-1 min-w-0">
+        <span className="inline-flex items-center gap-1 min-w-0 max-w-[220px]">
           <Send size={10} className="flex-shrink-0" />
           <span className="truncate">{sub.destinationName}</span>
           {sub.destinationAccessStatus === 'no_access' && (

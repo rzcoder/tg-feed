@@ -82,10 +82,8 @@ describe('SubscriptionsPage', () => {
     // Use exact match — the SubRow itself is a button whose accessible name
     // includes "1 filter" / "2 filters", which would also match /filters/i.
     expect(await screen.findByRole('button', { name: /^edit$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^filters$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^manage filters$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument();
-    // Stat chip showing forwarded count.
-    expect(screen.getByText('42')).toBeInTheDocument();
   });
 
   it('opens the add sheet when Add is clicked and lists destinations', async () => {

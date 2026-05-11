@@ -19,6 +19,8 @@ import type { Logger } from '../lib/logger.js';
 import type { Forwarder } from './forwarder.js';
 import type { ForwardJob, ForwardingHandle } from './types.js';
 
+export const MAX_FLOOD_WAIT_SECONDS = 300;
+
 export type SleepFn = (ms: number, signal: AbortSignal) => Promise<void>;
 
 export const cancellableSleep: SleepFn = (ms, signal) =>
@@ -110,7 +112,18 @@ class DestinationWorker {
       const outcome = await this.deps.forwarder(job);
 
       if (outcome.status === 'flood_wait') {
-        await this.deps.sleep(outcome.seconds * 1000, this.signal);
+        const cappedSeconds = Math.min(outcome.seconds, MAX_FLOOD_WAIT_SECONDS);
+        if (outcome.seconds > MAX_FLOOD_WAIT_SECONDS) {
+          this.deps.logger.warn(
+            {
+              destinationChatId: this.destinationChatId,
+              seconds: outcome.seconds,
+              capped: cappedSeconds,
+            },
+            'flood_wait exceeds cap — clamping sleep',
+          );
+        }
+        await this.deps.sleep(cappedSeconds * 1000, this.signal);
         if (this.signal.aborted) break;
         continue;
       }

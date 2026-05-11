@@ -87,10 +87,17 @@ interface TryStartTelegramDeps {
    * runtime liveness changes (connected → disconnected, etc).
    */
   setStatus: (next: TelegramStatus) => void;
+  /**
+   * Forced session-reload callback. Passed into the health monitor so it
+   * can recover from gramjs getting stuck in a reconnect loop. The function
+   * is `reloadTelegramSession` from `main()`, which coalesces concurrent
+   * calls and atomically swaps the runtime box.
+   */
+  requestReload: () => Promise<void>;
 }
 
 async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRuntime> {
-  const { db, bus, filterEvaluator, isShuttingDown, setStatus } = deps;
+  const { db, bus, filterEvaluator, isShuttingDown, setStatus, requestReload } = deps;
   const tgEnvResult = resolveTelegramEnv({ cfg: config, db, logger });
   if (!tgEnvResult.ok) {
     logger.warn(
@@ -106,10 +113,17 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
     };
   }
 
+  const CONNECT_TIMEOUT_MS = 120_000;
+
   let client: TelegramClient | undefined;
   try {
     client = createTelegramClient(tgEnvResult.env!);
-    await client.connect();
+    await Promise.race([
+      client.connect(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Telegram connect timed out')), CONNECT_TIMEOUT_MS),
+      ),
+    ]);
     if (isShuttingDown()) {
       // SIGINT/SIGTERM landed mid-connect. Bail before we attach the
       // listener — main()'s shutdown handler awaits this promise so
@@ -157,6 +171,7 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
       client,
       logger,
       onStatusChange: (next) => setStatus(next),
+      requestReload,
     });
     healthMonitor.start();
     const accessMonitor = createAccessMonitor({
@@ -294,6 +309,7 @@ async function main(): Promise<void> {
         filterEvaluator,
         isShuttingDown: () => shuttingDown,
         setStatus,
+        requestReload: reloadTelegramSession,
       });
       // Replace refs in the box. Any unset keys on `next` clear the old
       // value (so e.g. degraded mode after a sign-out actually drops the
@@ -352,6 +368,7 @@ async function main(): Promise<void> {
       filterEvaluator,
       isShuttingDown: () => shuttingDown,
       setStatus,
+      requestReload: reloadTelegramSession,
     });
     if (shuttingDown) {
       // Shutdown ran while we were connecting. Tear down what we built

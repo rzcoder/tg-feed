@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
 import type { ForwardLogStatus } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
@@ -28,14 +28,10 @@ export interface ActivityEvent {
 
 interface ActivityRowProps {
   event: ActivityEvent;
+  now: number;
 }
 
-export function ActivityRow({ event }: ActivityRowProps) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 5000);
-    return () => clearInterval(t);
-  }, []);
+export function ActivityRow({ event, now }: ActivityRowProps) {
   const ageSec = Math.max(0, (now - event.occurredAt) / 1000);
 
   return (

@@ -15,7 +15,7 @@
  * the top, prepends don't yank — show a button to jump back.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, Activity as ActivityIcon, Pause, Play } from 'lucide-react';
+import { AlertTriangle, ArrowDown, Activity as ActivityIcon, Pause, Play } from 'lucide-react';
 import type {
   DestinationDto,
   ForwardLogEntryDto,
@@ -97,6 +97,12 @@ export function ActivityPage() {
     });
   }, [subById, destByChatId]);
 
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(t);
+  }, []);
+
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollLocked, setScrollLocked] = useState(false);
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -111,6 +117,7 @@ export function ActivityPage() {
 
   const connectionState = paused ? 'down' : stream.state;
   const isLoading = forwardLog.isPending;
+  const isError = forwardLog.isError;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 relative">
@@ -137,6 +144,17 @@ export function ActivityPage() {
           <div className="grid place-items-center py-12 text-text-muted">
             <Spinner />
           </div>
+        ) : isError ? (
+          <EmptyState
+            icon={<AlertTriangle size={22} className="text-danger" />}
+            title="Failed to load activity"
+            body="Could not fetch the forward log. Check your connection and try again."
+            cta={
+              <Button variant="secondary" size="sm" onClick={() => forwardLog.refetch()}>
+                Retry
+              </Button>
+            }
+          />
         ) : events.length === 0 ? (
           <EmptyState
             icon={
@@ -154,7 +172,7 @@ export function ActivityPage() {
             }
           />
         ) : (
-          events.map((e) => <ActivityRow key={e.id} event={e} />)
+          events.map((e) => <ActivityRow key={e.id} event={e} now={now} />)
         )}
       </div>
 
