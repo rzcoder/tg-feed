@@ -58,18 +58,20 @@ export function SubRow({
 
 function SubMeta({ sub }: { sub: SubscriptionDto }) {
   return (
-    <div className="flex items-center gap-2 text-[11.5px] text-text-muted flex-wrap">
-      <span className="font-mono text-[11px]">{sub.handle ?? sub.sourceChatId.slice(-8)}</span>
-      <span className="text-text-faint">·</span>
+    <div className="flex items-center gap-2 text-[11.5px] text-text-muted min-w-0">
+      <span className="font-mono text-[11px] flex-shrink-0">
+        {sub.handle ?? sub.sourceChatId.slice(-8)}
+      </span>
+      <span className="text-text-faint flex-shrink-0">·</span>
       {sub.destinationName ? (
-        <span className="inline-flex items-center gap-1">
-          <Send size={10} />
-          {sub.destinationName}
+        <span className="inline-flex items-center gap-1 min-w-0">
+          <Send size={10} className="flex-shrink-0" />
+          <span className="truncate">{sub.destinationName}</span>
           {sub.destinationAccessStatus === 'no_access' && (
             <span
               title="Userbot can't post to this destination — check it has been added to the chat."
               aria-label="no destination access"
-              className="inline-flex"
+              className="inline-flex flex-shrink-0"
             >
               <Lock size={10} className="text-danger" />
             </span>
@@ -80,8 +82,8 @@ function SubMeta({ sub }: { sub: SubscriptionDto }) {
       )}
       {sub.filterCount > 0 && (
         <>
-          <span className="text-text-faint">·</span>
-          <span>
+          <span className="text-text-faint flex-shrink-0">·</span>
+          <span className="flex-shrink-0">
             {sub.filterCount} filter{sub.filterCount === 1 ? '' : 's'}
           </span>
         </>
@@ -257,9 +259,12 @@ function DestinationCard({
       <CornerDownRight size={14} className="text-text-faint flex-shrink-0" />
       <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" size="sm" />
       <div className="flex flex-col flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="flex items-baseline gap-1.5 min-w-0">
           <span className="text-[12.5px] font-medium tracking-tight truncate">
             {destination.name}
+          </span>
+          <span className="text-[10px] text-text-faint truncate">
+            (Chat ID: <span className="font-mono">{destination.chatId}</span>)
           </span>
           {accessStatus === 'no_access' && (
             <span
@@ -271,15 +276,11 @@ function DestinationCard({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 text-[11px] text-text-muted min-w-0">
-          <span className="font-mono truncate">{destination.chatId}</span>
-          {destination.note && (
-            <>
-              <span className="text-text-faint">·</span>
-              <span className="text-text-faint italic truncate">{destination.note}</span>
-            </>
-          )}
-        </div>
+        {destination.note && (
+          <div className="text-[11px] text-text-faint italic truncate min-w-0">
+            {destination.note}
+          </div>
+        )}
       </div>
     </div>
   );
