@@ -133,6 +133,8 @@ export function SubscriptionsPage() {
                 {openId === s.id && (
                   <ExpandedSubActions
                     sub={s}
+                    destinations={dests.data ?? []}
+                    library={library.data ?? []}
                     onEdit={() => sheet.openEdit(s)}
                     onViewFilters={() => goToFilters(s)}
                     onDelete={() => onDelete(s)}

@@ -1,8 +1,12 @@
+import type { ReactNode } from 'react';
 import { ChevronRight, Filter, Lock, Pencil, Send, ShieldAlert, Slash, Trash } from 'lucide-react';
-import type { SubscriptionDto } from '@tg-feed/shared';
+import type { DestinationDto, LibraryFilterDto, SubscriptionDto } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
 import { EntityIcon } from '@/components/domain/EntityIcon';
+import { FilterRow } from '@/components/domain/FilterRow';
+import { useSubscriptionFilters } from '@/hooks/useFilters';
 
 export function SubRow({
   sub,
@@ -124,34 +128,161 @@ function NoAccessBadge() {
 
 export function ExpandedSubActions({
   sub,
+  destinations,
+  library,
   onEdit,
   onViewFilters,
   onDelete,
 }: {
   sub: SubscriptionDto;
+  destinations: DestinationDto[];
+  library: LibraryFilterDto[];
   onEdit: () => void;
   onViewFilters: () => void;
   onDelete: () => void;
 }) {
-  return (
-    <div className="bg-bg-2 border-b border-border px-4.5 pb-3.5">
-      <div className="flex gap-2 pt-0.5 pb-3">
-        <StatChip label="Source" value={sub.sourceChatId.slice(-8)} mono />
-        <StatChip label="Destination" value={sub.destinationName ?? '—'} />
-        <StatChip label="Forwarded" value={String(sub.forwardedCount)} mono />
-      </div>
+  const filtersQuery = useSubscriptionFilters(sub.id);
+  const destination =
+    sub.destinationId !== null
+      ? (destinations.find((d) => d.id === sub.destinationId) ?? null)
+      : null;
+  const own = filtersQuery.data ?? [];
+  const attachedLibrary = (sub.libraryFilterIds ?? [])
+    .map((id) => library.find((l) => l.id === id))
+    .filter((l): l is LibraryFilterDto => Boolean(l));
+  const loadedTotal = attachedLibrary.length + own.length;
+  const isPending = filtersQuery.isPending;
+  const showFilters = isPending ? sub.filterCount > 0 : loadedTotal > 0;
+  const displayCount = isPending ? sub.filterCount : loadedTotal;
 
-      <div className="flex gap-2 mt-1">
+  return (
+    <div className="bg-bg-2 border-b border-border px-4.5 pb-3.5 pt-1 flex flex-col gap-3">
+      <DestinationCard destination={destination} accessStatus={sub.destinationAccessStatus} />
+
+      <section className="flex flex-col gap-1.5">
+        <SectionLabel>Stats</SectionLabel>
+        <div className="flex gap-2">
+          <StatChip label="Forwarded" value={sub.forwardedCount.toLocaleString()} mono />
+        </div>
+      </section>
+
+      {showFilters && (
+        <section className="flex flex-col gap-1.5">
+          <SectionLabel>
+            Filters <span className="text-text-faint/70">· {displayCount}</span>
+          </SectionLabel>
+          {isPending ? (
+            <div className="grid place-items-center py-4 bg-bg border border-border rounded-lg text-text-muted">
+              <Spinner size={14} />
+            </div>
+          ) : (
+            <div className="border border-border rounded-lg overflow-hidden bg-bg [&>*:last-child]:border-b-0">
+              {attachedLibrary.map((f) => (
+                <FilterRow
+                  key={`lib-${f.id}`}
+                  filter={{
+                    id: f.id,
+                    ruleType: f.ruleType,
+                    params: f.params,
+                    name: f.name,
+                    mode: f.mode,
+                  }}
+                  library
+                />
+              ))}
+              {own.map((f) => (
+                <FilterRow
+                  key={`own-${f.id}`}
+                  filter={{
+                    id: f.id,
+                    ruleType: f.ruleType,
+                    params: f.params,
+                    enabled: f.enabled,
+                    mode: f.mode,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className="flex gap-2">
         <Button variant="secondary" size="sm" className="flex-1" onClick={onEdit}>
           <Pencil size={13} /> Edit
         </Button>
         <Button variant="secondary" size="sm" className="flex-1" onClick={onViewFilters}>
-          <Filter size={13} /> Filters
+          <Filter size={13} /> Manage filters
         </Button>
         <Button variant="danger" size="sm" onClick={onDelete}>
           <Trash size={13} /> Delete
         </Button>
       </div>
+    </div>
+  );
+}
+
+function DestinationCard({
+  destination,
+  accessStatus,
+}: {
+  destination: DestinationDto | null;
+  accessStatus: SubscriptionDto['destinationAccessStatus'];
+}) {
+  if (!destination) {
+    return (
+      <div className="flex items-center gap-3 px-3 py-2.5 bg-warning-soft border border-warning/30 rounded-lg">
+        <span className="grid place-items-center w-[30px] h-[30px] rounded-[7px] bg-warning/15 text-warning flex-shrink-0">
+          <Slash size={14} />
+        </span>
+        <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+          <div className="text-[13.5px] font-medium tracking-tight text-warning">
+            No destination
+          </div>
+          <div className="text-[11.5px] text-text-muted">
+            Edit subscription to attach one — nothing forwards until then.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5 bg-surface border border-border rounded-lg">
+      <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" />
+      <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span className="text-[13.5px] font-medium tracking-tight truncate">
+            {destination.name}
+          </span>
+          {accessStatus === 'no_access' && (
+            <span
+              title="Userbot can't post to this destination — re-add it to the chat."
+              aria-label="no destination access"
+              className="inline-flex flex-shrink-0"
+            >
+              <Lock size={11} className="text-danger" />
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-[11.5px] text-text-muted min-w-0">
+          <span className="font-mono text-[11px] truncate">{destination.chatId}</span>
+          {destination.note && (
+            <>
+              <span className="text-text-faint">·</span>
+              <span className="text-text-faint italic truncate">{destination.note}</span>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="text-[10px] font-semibold tracking-wide uppercase text-text-faint">
+      {children}
     </div>
   );
 }
