@@ -1,5 +1,15 @@
 import type { ReactNode } from 'react';
-import { ChevronRight, Filter, Lock, Pencil, Send, ShieldAlert, Slash, Trash } from 'lucide-react';
+import {
+  ChevronRight,
+  CornerDownRight,
+  Filter,
+  Lock,
+  Pencil,
+  Send,
+  ShieldAlert,
+  Slash,
+  Trash,
+} from 'lucide-react';
 import type { DestinationDto, LibraryFilterDto, SubscriptionDto } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
@@ -157,13 +167,9 @@ export function ExpandedSubActions({
 
   return (
     <div className="bg-bg-2 border-b border-border px-4.5 pb-3.5 pt-1 flex flex-col gap-3">
-      <DestinationCard destination={destination} accessStatus={sub.destinationAccessStatus} />
-
       <section className="flex flex-col gap-1.5">
-        <SectionLabel>Stats</SectionLabel>
-        <div className="flex gap-2">
-          <StatChip label="Forwarded" value={sub.forwardedCount.toLocaleString()} mono />
-        </div>
+        <SectionLabel>Forwards to</SectionLabel>
+        <DestinationCard destination={destination} accessStatus={sub.destinationAccessStatus} />
       </section>
 
       {showFilters && (
@@ -231,28 +237,28 @@ function DestinationCard({
 }) {
   if (!destination) {
     return (
-      <div className="flex items-center gap-3 px-3 py-2.5 bg-warning-soft border border-warning/30 rounded-lg">
-        <span className="grid place-items-center w-[30px] h-[30px] rounded-[7px] bg-warning/15 text-warning flex-shrink-0">
-          <Slash size={14} />
-        </span>
-        <div className="flex flex-col flex-1 min-w-0 gap-0.5">
-          <div className="text-[13.5px] font-medium tracking-tight text-warning">
+      <div className="flex items-center gap-2 px-2.5 py-2 bg-warning-soft border border-warning/30 rounded-lg">
+        <CornerDownRight size={14} className="text-warning flex-shrink-0" />
+        <Slash size={13} className="text-warning flex-shrink-0" />
+        <div className="flex flex-col flex-1 min-w-0">
+          <span className="text-[12.5px] font-medium tracking-tight text-warning truncate">
             No destination
-          </div>
-          <div className="text-[11.5px] text-text-muted">
-            Edit subscription to attach one — nothing forwards until then.
-          </div>
+          </span>
+          <span className="text-[11px] text-text-muted truncate">
+            Edit subscription to attach one.
+          </span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 bg-surface border border-border rounded-lg">
-      <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" />
-      <div className="flex flex-col flex-1 min-w-0 gap-0.5">
+    <div className="flex items-center gap-2 px-2.5 py-2 bg-surface border border-border rounded-lg">
+      <CornerDownRight size={14} className="text-text-faint flex-shrink-0" />
+      <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" size="sm" />
+      <div className="flex flex-col flex-1 min-w-0">
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[13.5px] font-medium tracking-tight truncate">
+          <span className="text-[12.5px] font-medium tracking-tight truncate">
             {destination.name}
           </span>
           {accessStatus === 'no_access' && (
@@ -265,8 +271,8 @@ function DestinationCard({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 text-[11.5px] text-text-muted min-w-0">
-          <span className="font-mono text-[11px] truncate">{destination.chatId}</span>
+        <div className="flex items-center gap-2 text-[11px] text-text-muted min-w-0">
+          <span className="font-mono truncate">{destination.chatId}</span>
           {destination.note && (
             <>
               <span className="text-text-faint">·</span>
@@ -283,24 +289,6 @@ function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <div className="text-[10px] font-semibold tracking-wide uppercase text-text-faint">
       {children}
-    </div>
-  );
-}
-
-function StatChip({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex flex-col flex-1 min-w-0 px-2.5 py-2 bg-surface border border-border rounded-lg gap-px">
-      <span className="text-[10px] font-semibold tracking-wide uppercase text-text-faint">
-        {label}
-      </span>
-      <span
-        className={cn(
-          'text-[12.5px] font-medium text-text whitespace-nowrap overflow-hidden text-ellipsis',
-          mono && 'font-mono',
-        )}
-      >
-        {value}
-      </span>
     </div>
   );
 }
