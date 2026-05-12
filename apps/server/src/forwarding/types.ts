@@ -28,6 +28,13 @@ export interface RawForwardJob {
   text: string;
   hasMedia: boolean;
   senderUsername?: string;
+  /**
+   * JSON-safe snapshot of the source gramjs `Message` (already passed
+   * through `toJsonSafe` at the capture boundary). Stored verbatim on the
+   * `forward_log` row for later inspection. `null` when capture was skipped
+   * or the encoded payload exceeded the size cap (caller stores `null`).
+   */
+  rawMessage?: unknown;
 }
 
 export interface ForwardJob {
@@ -35,6 +42,14 @@ export interface ForwardJob {
   sourceChatId: string;
   destinationChatId: string;
   sourceMessageIds: string[];
+  /**
+   * Raw message payloads, aligned with `sourceMessageIds`. For an album
+   * (≥2 ids) this is an array of JSON-safe objects sorted to match
+   * `sourceMessageIds`; for a single message it's a plain object. The
+   * forwarder writes the whole value onto every inserted `forward_log`
+   * row of the batch so each row is independently inspectable.
+   */
+  rawMessage?: unknown;
 }
 
 export type ForwardFailureKind =

@@ -6,6 +6,8 @@ interface ForwardLogEntryDtoLike {
   id: number;
   subscriptionId: number | null;
   subscriptionTitle: string | null;
+  sourceHandle: string | null;
+  destinationName: string | null;
   sourceMessageId: string;
   destMessageId: string | null;
   status: string;
@@ -13,10 +15,21 @@ interface ForwardLogEntryDtoLike {
   createdAt: string;
 }
 
-function seedSub(testApp: TestApp, title = 'A'): Subscription {
+function seedSub(
+  testApp: TestApp,
+  options: { title?: string; handle?: string | null; destinationId?: number | null } = {},
+): Subscription {
+  const title = options.title ?? 'A';
+  const destinationId =
+    options.destinationId === undefined ? seedDestination(testApp.db) : options.destinationId;
   return testApp.db
     .insert(subscriptions)
-    .values({ sourceChatId: 'a', sourceTitle: title, destinationId: seedDestination(testApp.db) })
+    .values({
+      sourceChatId: 'a',
+      sourceTitle: title,
+      handle: options.handle ?? null,
+      destinationId,
+    })
     .returning()
     .all()[0]!;
 }
@@ -128,8 +141,13 @@ describe('GET /api/forward-log', () => {
     expect(body.nextOffset).toBeNull();
   });
 
-  it('includes subscriptionTitle from JOIN', async () => {
-    const sub = seedSub(testApp, 'Cool Channel');
+  it('includes subscriptionTitle, sourceHandle, and destinationName from JOINs', async () => {
+    const destinationId = seedDestination(testApp.db, { name: 'My Dest' });
+    const sub = seedSub(testApp, {
+      title: 'Cool Channel',
+      handle: '@cool',
+      destinationId,
+    });
     testApp.db
       .insert(forwardLog)
       .values({ subscriptionId: sub.id, sourceMessageId: '1', status: 'sent' })
@@ -141,9 +159,11 @@ describe('GET /api/forward-log', () => {
     });
     const body = res.json() as { items: ForwardLogEntryDtoLike[] };
     expect(body.items[0]!.subscriptionTitle).toBe('Cool Channel');
+    expect(body.items[0]!.sourceHandle).toBe('@cool');
+    expect(body.items[0]!.destinationName).toBe('My Dest');
   });
 
-  it('returns subscriptionTitle null and subscriptionId null for orphan rows (deleted sub)', async () => {
+  it('returns null subscription/source/destination fields for orphan rows (deleted sub)', async () => {
     // Insert with NULL subscriptionId directly — simulates ON DELETE SET NULL aftermath
     testApp.db
       .insert(forwardLog)
@@ -162,7 +182,30 @@ describe('GET /api/forward-log', () => {
     const body = res.json() as { items: ForwardLogEntryDtoLike[] };
     expect(body.items[0]!.subscriptionId).toBeNull();
     expect(body.items[0]!.subscriptionTitle).toBeNull();
+    expect(body.items[0]!.sourceHandle).toBeNull();
+    expect(body.items[0]!.destinationName).toBeNull();
     expect(body.items[0]!.status).toBe('failed');
+  });
+
+  it('returns destinationName null but keeps sub fields when subscription is detached from destination', async () => {
+    const sub = seedSub(testApp, {
+      title: 'Detached',
+      handle: '@detached',
+      destinationId: null,
+    });
+    testApp.db
+      .insert(forwardLog)
+      .values({ subscriptionId: sub.id, sourceMessageId: '1', status: 'sent' })
+      .run();
+    const res = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/forward-log',
+      headers: { cookie },
+    });
+    const body = res.json() as { items: ForwardLogEntryDtoLike[] };
+    expect(body.items[0]!.subscriptionTitle).toBe('Detached');
+    expect(body.items[0]!.sourceHandle).toBe('@detached');
+    expect(body.items[0]!.destinationName).toBeNull();
   });
 
   it('returns 400 when limit exceeds 200', async () => {

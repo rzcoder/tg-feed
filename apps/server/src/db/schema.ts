@@ -252,6 +252,14 @@ export const forwardLog = sqliteTable(
     destMessageId: text('dest_message_id'),
     status: text('status', { enum: FORWARD_LOG_STATUSES }).notNull(),
     error: text('error'),
+    /**
+     * JSON snapshot of the raw gramjs `Message` (captured at the listener /
+     * history poller boundary). For album batches every row stores the same
+     * N-element array; for single-message forwards a plain object. Nullable
+     * for rows written before the column existed (and for `MessageEmpty` /
+     * `MessageService` events that we deliberately drop in `toJsonSafe`).
+     */
+    rawMessage: text('raw_message', { mode: 'json' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .$defaultFn(() => new Date()),

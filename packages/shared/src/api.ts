@@ -508,11 +508,20 @@ export const forwardLogEntryDtoSchema = z.object({
   id: z.number().int(),
   subscriptionId: z.number().int().nullable(),
   subscriptionTitle: z.string().nullable(),
+  sourceHandle: z.string().nullable(),
+  destinationName: z.string().nullable(),
   sourceMessageId: z.string(),
   destMessageId: z.string().nullable(),
   status: z.enum(FORWARD_LOG_STATUSES),
   error: z.string().nullable(),
   createdAt: z.string(),
+  /**
+   * Whether the row has a stored JSON snapshot of the raw Telegram message.
+   * Fetch the actual payload via `GET /forward-log/:id/raw` on demand —
+   * the raw JSON is intentionally kept off the list endpoint to keep page
+   * responses small.
+   */
+  hasRawMessage: z.boolean(),
 });
 export type ForwardLogEntryDto = z.infer<typeof forwardLogEntryDtoSchema>;
 
@@ -521,6 +530,18 @@ export const forwardLogResponseSchema = z.object({
   nextOffset: z.number().int().nullable(),
 });
 export type ForwardLogResponse = z.infer<typeof forwardLogResponseSchema>;
+
+/**
+ * Response for `GET /forward-log/:id/raw`. `rawMessage` is the JSON snapshot
+ * stored at forward time — a plain object for single-message forwards, an
+ * array of objects (sorted ascending by source message id) for album
+ * batches. `null` for rows that pre-date the feature or for events that
+ * deliberately skipped capture (e.g. `MessageEmpty`).
+ */
+export const forwardLogRawResponseSchema = z.object({
+  rawMessage: z.unknown().nullable(),
+});
+export type ForwardLogRawResponse = z.infer<typeof forwardLogRawResponseSchema>;
 
 export const FORWARD_LOG_LIMIT_DEFAULT = 50;
 export const FORWARD_LOG_LIMIT_MAX = 200;

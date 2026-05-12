@@ -5,10 +5,11 @@
  * the in-memory list. SSE events arrive via `useActivityStream` and get
  * prepended (capped at 200 entries to bound memory).
  *
- * Enrichment: SSE payloads carry IDs only. We look up subscription title,
- * source handle, and destination name from the cached `useSubscriptions`
- * and `useDestinations` queries. Hydrated rows already have
- * `subscriptionTitle` joined server-side via LEFT JOIN.
+ * Enrichment: hydrated rows already have `subscriptionTitle`, `sourceHandle`,
+ * and `destinationName` joined server-side via LEFT JOIN. SSE payloads carry
+ * IDs only, so they're enriched on the client from the cached
+ * `useSubscriptions` and `useDestinations` queries — with a backfill effect
+ * for the case where a live event arrives before those queries hydrate.
  *
  * Pause: stops appending new events to the list (the EventSource stays
  * open). Scroll lock + jump-to-live: when the user has scrolled away from
@@ -28,6 +29,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { ConnectionPill } from '@/components/domain/ConnectionPill';
 import { ActivityRow, type ActivityEvent } from '@/components/domain/ActivityRow';
 import { EmptyState } from '@/components/domain/EmptyState';
+import { JsonViewSheet } from '@/components/domain/JsonViewSheet';
 import { useActivityStream } from '@/hooks/useActivityStream';
 import { useDestinations } from '@/hooks/useDestinations';
 import { useForwardLog } from '@/hooks/useForwardLog';
@@ -103,6 +105,8 @@ export function ActivityPage() {
     return () => clearInterval(t);
   }, []);
 
+  const [jsonViewerId, setJsonViewerId] = useState<number | null>(null);
+
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollLocked, setScrollLocked] = useState(false);
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -172,9 +176,19 @@ export function ActivityPage() {
             }
           />
         ) : (
-          events.map((e) => <ActivityRow key={e.id} event={e} now={now} />)
+          events.map((e) => (
+            <ActivityRow key={e.id} event={e} now={now} onViewJson={setJsonViewerId} />
+          ))
         )}
       </div>
+
+      <JsonViewSheet
+        open={jsonViewerId != null}
+        forwardLogId={jsonViewerId}
+        onOpenChange={(open) => {
+          if (!open) setJsonViewerId(null);
+        }}
+      />
 
       {scrollLocked && events.length > 0 && (
         <button
@@ -230,11 +244,11 @@ function fromForwardLogEntry(row: ForwardLogEntryDto): ActivityEvent {
     kind: row.status,
     subscriptionId: row.subscriptionId,
     subscriptionTitle: row.subscriptionTitle,
-    // Hydrated rows don't carry handle/dest name directly — `enrichEvent`
-    // fills these from subscriptions/destinations on render.
-    sourceHandle: null,
-    destinationLabel: null,
+    sourceHandle: row.sourceHandle,
+    destinationLabel: row.destinationName,
     occurredAt: new Date(row.createdAt).getTime(),
+    forwardLogId: row.id,
+    hasRawMessage: row.hasRawMessage,
     ...(row.status === 'filtered' && row.error ? { reasons: row.error.split('; ') } : {}),
     ...(row.status === 'failed' ? { error: row.error } : {}),
     ...(floodWaitSeconds !== undefined ? { seconds: floodWaitSeconds } : {}),
@@ -262,6 +276,12 @@ function fromStreamEvent(
   const sourceHandle = sub?.handle ?? sub?.sourceChatId ?? null;
   const sourceMessageId = 'sourceMessageIds' in event ? (event.sourceMessageIds[0] ?? '?') : '?';
 
+  // The `forward.*` SSE variants now carry the inserted `forward_log`
+  // row ids so we can offer "view raw" on live entries without waiting
+  // for the next hydration. Index 0 is enough — the JSON viewer reads
+  // the same denormalised payload from any row of an album.
+  const forwardLogId = 'forwardLogIds' in event ? (event.forwardLogIds[0] ?? undefined) : undefined;
+  const hasRawMessage = forwardLogId != null;
   switch (event.type) {
     case 'forward.completed': {
       const destLabel = dests.get(event.destinationChatId)?.name ?? event.destinationChatId;
@@ -276,6 +296,8 @@ function fromStreamEvent(
         occurredAt,
         destMessageCount: event.destMessageIds.length,
         isNew: true,
+        ...(forwardLogId !== undefined ? { forwardLogId } : {}),
+        hasRawMessage,
       };
     }
     case 'forward.failed': {
@@ -290,6 +312,8 @@ function fromStreamEvent(
         occurredAt,
         error: event.error,
         isNew: true,
+        ...(forwardLogId !== undefined ? { forwardLogId } : {}),
+        hasRawMessage,
       };
     }
     case 'forward.flood_wait': {
@@ -304,6 +328,8 @@ function fromStreamEvent(
         occurredAt,
         seconds: event.seconds,
         isNew: true,
+        ...(forwardLogId !== undefined ? { forwardLogId } : {}),
+        hasRawMessage,
       };
     }
     case 'forward.filtered': {
@@ -324,6 +350,8 @@ function fromStreamEvent(
         occurredAt,
         reasons: event.reasons,
         isNew: true,
+        ...(forwardLogId !== undefined ? { forwardLogId } : {}),
+        hasRawMessage,
       };
     }
     default:

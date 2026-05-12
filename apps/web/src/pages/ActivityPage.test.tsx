@@ -76,21 +76,27 @@ describe('ActivityPage', () => {
                 id: 1,
                 subscriptionId: 1,
                 subscriptionTitle: 'Anthropic',
+                sourceHandle: null,
+                destinationName: null,
                 sourceMessageId: '500',
                 destMessageId: '999',
                 status: 'sent',
                 error: null,
                 createdAt: new Date().toISOString(),
+                hasRawMessage: false,
               },
               {
                 id: 2,
                 subscriptionId: 1,
                 subscriptionTitle: 'Anthropic',
+                sourceHandle: null,
+                destinationName: null,
                 sourceMessageId: '501',
                 destMessageId: null,
                 status: 'filtered',
                 error: 'text-excludes: matched "show hn"',
                 createdAt: new Date().toISOString(),
+                hasRawMessage: false,
               },
             ],
             nextOffset: null,
@@ -157,6 +163,7 @@ describe('ActivityPage', () => {
                 sourceAccessCheckedAt: null,
                 destinationAccessStatus: 'ok',
                 createdAt: new Date().toISOString(),
+                hasRawMessage: false,
               },
             ],
           }),
@@ -205,41 +212,18 @@ describe('ActivityPage', () => {
     expect(screen.getAllByText('Source')).toHaveLength(1);
   });
 
-  // Regression: hydrated rows from /api/forward-log come back with
-  // `subscriptionTitle` already filled (server LEFT JOINs subscriptions),
-  // but `sourceHandle` and `destinationLabel` null — they need backfill
-  // from the subscriptions/destinations queries. The old gate only
-  // triggered enrichment when `subscriptionTitle` was null, so on restart
-  // historical rows rendered with `—` for from/to.
-  it('backfills sourceHandle and destinationLabel for hydrated rows', async () => {
+  // Regression: hydrated rows from /api/forward-log used to come back without
+  // `sourceHandle` / `destinationName` and were enriched client-side from the
+  // subscriptions/destinations queries. If those queries were already cached
+  // when the page mounted (e.g. user navigated from Subscriptions first),
+  // their map refs were stable across the forward-log resolve and the
+  // backfill effect never re-ran — rows rendered with `—` permanently. Fixed
+  // by surfacing `sourceHandle` and `destinationName` server-side via LEFT
+  // JOINs, so hydration carries them directly.
+  it('renders from/to from joined fields without needing subscriptions/destinations queries', async () => {
     vi.spyOn(global, 'fetch').mockImplementation(((path: string) => {
-      if (path === '/api/subscriptions') {
-        return Promise.resolve(
-          json(200, {
-            items: [
-              {
-                id: 7,
-                sourceChatId: '1001',
-                sourceTitle: 'FeedTest',
-                handle: '@feedtest',
-                iconDataUrl: null,
-                destinationId: 1,
-                destinationName: 'My Dest',
-                destinationChatId: '2002',
-                enabled: true,
-                filterCount: 0,
-                forwardedCount: 0,
-                libraryFilterIds: [],
-                forwardingRestrictedAt: null,
-                sourceAccessStatus: 'ok',
-                sourceAccessCheckedAt: null,
-                destinationAccessStatus: 'ok',
-                createdAt: new Date().toISOString(),
-              },
-            ],
-          }),
-        );
-      }
+      // Both queries return empty — the test asserts hydration alone fills from/to.
+      if (path === '/api/subscriptions') return Promise.resolve(json(200, { items: [] }));
       if (path === '/api/destinations') return Promise.resolve(json(200, { items: [] }));
       if (path.startsWith('/api/forward-log')) {
         return Promise.resolve(
@@ -249,11 +233,14 @@ describe('ActivityPage', () => {
                 id: 1,
                 subscriptionId: 7,
                 subscriptionTitle: 'FeedTest',
+                sourceHandle: '@feedtest',
+                destinationName: 'My Dest',
                 sourceMessageId: '500',
                 destMessageId: '999',
                 status: 'sent',
                 error: null,
                 createdAt: new Date().toISOString(),
+                hasRawMessage: false,
               },
             ],
             nextOffset: null,

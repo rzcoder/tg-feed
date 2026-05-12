@@ -157,6 +157,7 @@ describe('GET /api/stream', () => {
       destinationChatId: '-100DEST',
       sourceMessageIds: ['10'],
       destMessageIds: ['999'],
+      forwardLogIds: [1],
     });
 
     // Wait for the full frame: event line + data line + terminator. Two

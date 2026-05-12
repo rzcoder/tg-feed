@@ -4,6 +4,7 @@ import { NewMessage, type NewMessageEvent } from 'telegram/events/index.js';
 import type { Db } from '../db/client.js';
 import { destinations, subscriptions } from '../db/schema.js';
 import type { RawForwardingHandle } from '../forwarding/types.js';
+import { toJsonSafe } from '../lib/jsonSafe.js';
 import type { Logger } from '../lib/logger.js';
 import {
   extractMatchableEvent,
@@ -66,6 +67,7 @@ export function attachNewMessageListener(
       sourceMessageId: matchable.messageId,
       text: matchable.text,
       hasMedia: matchable.hasMedia,
+      rawMessage: toJsonSafe(event.message),
       ...(matchable.groupedId !== undefined ? { groupedId: matchable.groupedId } : {}),
       ...(matchable.senderUsername !== undefined
         ? { senderUsername: matchable.senderUsername }

@@ -82,7 +82,12 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
       if (result.pass) return { pass: true };
 
       const errorText = result.reasons.join('; ');
-      db.insert(forwardLog)
+      // Denormalize the raw payload onto every filtered row so each row is
+      // independently inspectable in the Activity JSON viewer, mirroring
+      // the sent/failed paths in `forwarder.writeLogs`.
+      const rawMessage = context.rawMessage ?? null;
+      const inserted = db
+        .insert(forwardLog)
         .values(
           sourceMessageIds.map((sourceMessageId) => ({
             subscriptionId,
@@ -90,9 +95,12 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
             destMessageId: null,
             status: 'filtered' as const,
             error: errorText,
+            rawMessage,
           })),
         )
-        .run();
+        .returning({ id: forwardLog.id })
+        .all();
+      const forwardLogIds = inserted.map((row) => row.id);
       logger.info(
         {
           subscriptionId,
@@ -106,6 +114,7 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
         subscriptionId,
         sourceMessageIds: [...sourceMessageIds],
         reasons: [...result.reasons],
+        forwardLogIds,
       });
       return { pass: false };
     },

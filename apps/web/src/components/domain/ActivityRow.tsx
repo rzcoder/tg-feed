@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowRight } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Braces } from 'lucide-react';
 import type { ForwardLogStatus } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
 import { formatAbsoluteTime, formatRelative } from '@/lib/formatRelative';
@@ -24,15 +24,29 @@ export interface ActivityEvent {
   destMessageCount?: number;
   /** Set true on a freshly-arrived live event for the flash animation. */
   isNew?: boolean;
+  /**
+   * `forward_log` row id for fetching the raw JSON payload. Set on hydrated
+   * rows and on live events whose SSE frame carried `forwardLogIds`.
+   */
+  forwardLogId?: number;
+  /**
+   * Whether the row has a stored raw payload — drives visibility of the
+   * "{}" button. Live events default to `true` since capture happens
+   * before the SSE emit.
+   */
+  hasRawMessage?: boolean;
 }
 
 interface ActivityRowProps {
   event: ActivityEvent;
   now: number;
+  onViewJson?: (forwardLogId: number) => void;
 }
 
-export function ActivityRow({ event, now }: ActivityRowProps) {
+export function ActivityRow({ event, now, onViewJson }: ActivityRowProps) {
   const ageSec = Math.max(0, (now - event.occurredAt) / 1000);
+  const canViewJson =
+    event.hasRawMessage === true && event.forwardLogId != null && onViewJson != null;
 
   return (
     <div
@@ -48,7 +62,20 @@ export function ActivityRow({ event, now }: ActivityRowProps) {
             {event.subscriptionTitle ?? `sub #${event.subscriptionId ?? '?'}`}
           </span>
         </div>
-        <RelativeTime ageSec={ageSec} />
+        <div className="flex items-center gap-1.5">
+          {canViewJson && (
+            <button
+              type="button"
+              aria-label="View raw message JSON"
+              title="View raw message JSON"
+              onClick={() => onViewJson(event.forwardLogId!)}
+              className="text-text-muted hover:text-text transition-colors"
+            >
+              <Braces size={13} strokeWidth={2} />
+            </button>
+          )}
+          <RelativeTime ageSec={ageSec} />
+        </div>
       </div>
       <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
         <span className="font-mono">{event.sourceHandle ?? '—'}</span>

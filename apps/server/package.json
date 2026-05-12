@@ -13,7 +13,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio",
-    "tg:login": "tsx scripts/tg-login.ts"
+    "tg:login": "tsx scripts/tg-login.ts",
+    "probe-membership": "tsx scripts/probe-membership.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",

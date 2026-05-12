@@ -66,7 +66,16 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
     const first = group.jobs[0]!;
     const sourceMessageIds = dedupeAndSort(group.jobs.map((j) => j.sourceMessageId));
     const captionMember = pickCaptionBearingMember(group.jobs);
-    const context = toContext(captionMember);
+    // Build the per-album raw payload as an array aligned with
+    // `sourceMessageIds` (ascending numeric id, deduplicated). Both arrays
+    // are constructed from the same ordering so positions match — the
+    // forwarder stores this array verbatim onto every row of the album so
+    // any row can stand alone in the JSON viewer.
+    const albumRawMessage = collectAlbumRawMessages(group.jobs, sourceMessageIds);
+    const context: MessageContext = {
+      ...toContext(captionMember),
+      rawMessage: albumRawMessage,
+    };
 
     const { pass } = filterEvaluator.evaluate(context, first.subscriptionId, sourceMessageIds);
     if (!pass) return;
@@ -76,6 +85,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
       sourceChatId: first.sourceChatId,
       destinationChatId: first.destinationChatId,
       sourceMessageIds,
+      rawMessage: albumRawMessage,
     };
 
     logger.info(
@@ -103,6 +113,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
           sourceChatId: raw.sourceChatId,
           destinationChatId: raw.destinationChatId,
           sourceMessageIds: [raw.sourceMessageId],
+          rawMessage: raw.rawMessage ?? null,
         });
         return;
       }
@@ -137,8 +148,30 @@ function toContext(job: RawForwardJob): MessageContext {
   return {
     text: job.text,
     hasMedia: job.hasMedia,
+    rawMessage: job.rawMessage ?? null,
     ...(job.senderUsername !== undefined ? { senderUsername: job.senderUsername } : {}),
   };
+}
+
+/**
+ * Map each entry in `sourceMessageIds` (sorted ascending) to the matching
+ * job's `rawMessage`. Duplicate ids — possible if the listener and history
+ * poller both observe the same album member before the debouncer flushes —
+ * collapse to the first occurrence so the array length matches
+ * `sourceMessageIds` exactly. Jobs whose `rawMessage` is missing fall back
+ * to `null`, keeping array positions stable.
+ */
+function collectAlbumRawMessages(
+  jobs: readonly RawForwardJob[],
+  sourceMessageIds: readonly string[],
+): unknown[] {
+  const bySourceId = new Map<string, unknown>();
+  for (const j of jobs) {
+    if (!bySourceId.has(j.sourceMessageId)) {
+      bySourceId.set(j.sourceMessageId, j.rawMessage ?? null);
+    }
+  }
+  return sourceMessageIds.map((id) => bySourceId.get(id) ?? null);
 }
 
 /**

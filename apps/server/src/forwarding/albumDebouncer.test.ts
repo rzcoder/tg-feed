@@ -226,7 +226,12 @@ describe('createAlbumDebouncer', () => {
       expect(downstream.jobs).toHaveLength(0);
       expect(calls).toHaveLength(1);
       expect(calls[0]).toEqual({
-        context: { text: 'hello', hasMedia: true, senderUsername: 'alice' },
+        context: {
+          text: 'hello',
+          hasMedia: true,
+          senderUsername: 'alice',
+          rawMessage: null,
+        },
         subscriptionId: 42,
         sourceMessageIds: ['7'],
       });

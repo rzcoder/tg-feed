@@ -44,11 +44,13 @@ import {
   type AlbumDebouncer,
   type ForwardingPipeline,
 } from './forwarding/index.js';
+import { createHistoryPoller, type HistoryPoller } from './forwarding/historyPoller.js';
 import { logger } from './lib/logger.js';
 import { loadEncryptionKey } from './lib/sessionCrypto.js';
 import { createAccessMonitor, type AccessMonitor } from './tg/accessMonitor.js';
 import { createChatResolver, type ChatResolver } from './tg/chatResolver.js';
 import { createTelegramClient, disconnectClient, resolveTelegramEnv } from './tg/client.js';
+import { createDialogsKeepalive, type DialogsKeepalive } from './tg/dialogsKeepalive.js';
 import { createHealthMonitor, type HealthMonitor } from './tg/healthMonitor.js';
 import { createImportInvite, type ImportInviteFn } from './tg/inviteResolver.js';
 import { createJoinChannel, type JoinChannelFn } from './tg/joinChannel.js';
@@ -61,6 +63,8 @@ interface TelegramRuntime {
   client?: TelegramClient;
   pipeline?: ForwardingPipeline;
   debouncer?: AlbumDebouncer;
+  historyPoller?: HistoryPoller;
+  dialogsKeepalive?: DialogsKeepalive;
   chatResolver?: ChatResolver;
   importInvite?: ImportInviteFn;
   healthMonitor?: HealthMonitor;
@@ -163,6 +167,26 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
     });
     attachNewMessageListener(client, db, logger, debouncer);
     await resolveSubscriptionsOnStartup(client, db, logger);
+    // Polling backstop: catches messages the live `NewMessage` stream misses.
+    // gramjs 2.26.x has no working `catchUp()` and silently stops delivering
+    // channel updates once a per-channel pts drifts, so a periodic
+    // `messages.getHistory` sweep is the only way to guarantee we see new
+    // posts from every subscribed channel. See historyPoller.ts for details.
+    const historyPoller = createHistoryPoller({
+      client,
+      db,
+      logger,
+      forwarding: debouncer,
+    });
+    historyPoller.start();
+    // Belt-and-suspenders alongside the poller: cheap periodic `getDialogs`
+    // call nudges gramjs's update stream and (per maintainer guidance in
+    // gram-js/gramjs#280) helps Telegram keep delivering NewMessage events.
+    // Does NOT replace the poller — high-volume channels still need
+    // explicit history fetches — but it shortens the latency window for
+    // smaller channels where dispatch occasionally pauses.
+    const dialogsKeepalive = createDialogsKeepalive({ client, logger });
+    dialogsKeepalive.start();
     const chatResolver = createChatResolver(client);
     const importInvite = createImportInvite(client, logger);
     const joinChannel = createJoinChannel(client, logger);
@@ -186,6 +210,8 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
       client,
       pipeline,
       debouncer,
+      historyPoller,
+      dialogsKeepalive,
       chatResolver,
       importInvite,
       joinChannel,
@@ -216,6 +242,20 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
  * then the pipeline (in-flight forwards), then the gramjs client itself.
  */
 async function teardownRuntime(runtime: Partial<TelegramRuntime>): Promise<void> {
+  if (runtime.dialogsKeepalive) {
+    try {
+      runtime.dialogsKeepalive.stop();
+    } catch (err) {
+      logger.debug({ err }, 'dialogsKeepalive stop failed');
+    }
+  }
+  if (runtime.historyPoller) {
+    try {
+      runtime.historyPoller.stop();
+    } catch (err) {
+      logger.debug({ err }, 'historyPoller stop failed');
+    }
+  }
   if (runtime.accessMonitor) {
     try {
       runtime.accessMonitor.stop();

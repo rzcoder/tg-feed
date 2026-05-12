@@ -19,6 +19,14 @@ export interface MessageContext {
   text: string;
   hasMedia: boolean;
   senderUsername?: string;
+  /**
+   * Carrier for the raw-message JSON snapshot. The filter rules themselves
+   * don't read this — it rides through `evaluate()` only so the rejection
+   * path can persist it on the `forward_log` row alongside the reasons.
+   * Single object for non-albums, array for albums (aligned with the
+   * `sourceMessageIds` the evaluator receives).
+   */
+  rawMessage?: unknown;
 }
 
 export interface FilterEvaluationResult {

@@ -83,6 +83,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
       destinationChatId: job.destinationChatId,
       sourceMessageIds: [...job.sourceMessageIds],
     });
+    const rawMessage = job.rawMessage ?? null;
     try {
       const sent = await client.forwardMessages(job.destinationChatId, {
         messages: messageIdNums,
@@ -110,7 +111,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
           'forward returned fewer dest ids than source ids',
         );
       }
-      writeLogs(
+      const forwardLogIds = writeLogs(
         db,
         job,
         job.sourceMessageIds.map((sourceId, i) => ({
@@ -119,6 +120,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         })),
         'sent',
         null,
+        rawMessage,
       );
       // A successful forward proves the channel isn't (currently) restricting
       // forwards. Clear any sticky badge from a previous CHAT_FORWARDS_RESTRICTED.
@@ -145,6 +147,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         destinationChatId: job.destinationChatId,
         sourceMessageIds: [...job.sourceMessageIds],
         destMessageIds,
+        forwardLogIds,
       });
       return { status: 'sent', destMessageIds };
     } catch (err) {
@@ -168,7 +171,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
           .where(eq(subscriptions.id, job.subscriptionId))
           .run();
       }
-      writeLogs(
+      const forwardLogIds = writeLogs(
         db,
         job,
         job.sourceMessageIds.map((sourceId) => ({
@@ -177,6 +180,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         })),
         'failed',
         errorText,
+        rawMessage,
       );
       const logFn =
         failureKind === 'transient' ? logger.error.bind(logger) : logger.warn.bind(logger);
@@ -197,6 +201,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
         destinationChatId: job.destinationChatId,
         sourceMessageIds: [...job.sourceMessageIds],
         error: errorText,
+        forwardLogIds,
       });
       return { status: 'failed', error: errorText, failureKind };
     }
@@ -211,7 +216,7 @@ function handleRateLimit(
 ): ForwardOutcome {
   const { db, logger, bus } = deps;
   const errorText = `${kind} ${seconds}s`;
-  writeLogs(
+  const forwardLogIds = writeLogs(
     db,
     job,
     job.sourceMessageIds.map((sourceId) => ({
@@ -220,6 +225,7 @@ function handleRateLimit(
     })),
     'flood_wait',
     errorText,
+    job.rawMessage ?? null,
   );
   logger.warn(
     {
@@ -238,19 +244,29 @@ function handleRateLimit(
     destinationChatId: job.destinationChatId,
     sourceMessageIds: [...job.sourceMessageIds],
     seconds,
+    forwardLogIds,
   });
   return { status: 'flood_wait', seconds, kind };
 }
 
+/**
+ * Insert N `forward_log` rows in one batch and return the assigned ids in
+ * the same order so the caller can attach them to the emitted SSE event.
+ * The whole forward batch shares one `rawMessage` snapshot — single object
+ * for ordinary messages, array for albums — denormalized onto every row so
+ * any row is independently inspectable via `GET /forward-log/:id/raw`.
+ */
 function writeLogs(
   db: Db,
   job: ForwardJob,
   rows: ReadonlyArray<{ sourceMessageId: string; destMessageId: string | null }>,
   status: ForwardLogStatus,
   error: string | null,
-): void {
-  if (rows.length === 0) return;
-  db.insert(forwardLog)
+  rawMessage: unknown,
+): number[] {
+  if (rows.length === 0) return [];
+  const inserted = db
+    .insert(forwardLog)
     .values(
       rows.map((r) => ({
         subscriptionId: job.subscriptionId,
@@ -258,7 +274,10 @@ function writeLogs(
         destMessageId: r.destMessageId,
         status,
         error,
+        rawMessage,
       })),
     )
-    .run();
+    .returning({ id: forwardLog.id })
+    .all();
+  return inserted.map((row) => row.id);
 }

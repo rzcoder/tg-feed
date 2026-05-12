@@ -43,6 +43,12 @@ export type StreamEventInput =
       destinationChatId: string;
       sourceMessageIds: string[];
       destMessageIds: string[];
+      /**
+       * Inserted `forward_log` row ids — one per source message id, in the
+       * same order. Lets the Activity UI fetch the persisted raw-message
+       * JSON for a live event without round-tripping through a list refresh.
+       */
+      forwardLogIds: number[];
     }
   | {
       type: 'forward.failed';
@@ -51,6 +57,7 @@ export type StreamEventInput =
       destinationChatId: string;
       sourceMessageIds: string[];
       error: string;
+      forwardLogIds: number[];
     }
   | {
       type: 'forward.flood_wait';
@@ -59,12 +66,14 @@ export type StreamEventInput =
       destinationChatId: string;
       sourceMessageIds: string[];
       seconds: number;
+      forwardLogIds: number[];
     }
   | {
       type: 'forward.filtered';
       subscriptionId: number;
       sourceMessageIds: string[];
       reasons: string[];
+      forwardLogIds: number[];
     }
   | {
       type: 'subscription.changed';
