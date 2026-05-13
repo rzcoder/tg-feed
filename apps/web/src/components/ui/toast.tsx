@@ -6,7 +6,15 @@
  * 2.4s. Provider mounts a portal at <body>; pages call `useToast().show(msg)`.
  */
 import { Check } from 'lucide-react';
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 interface ToastContextValue {
@@ -28,8 +36,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(t);
   }, [message]);
 
+  const value = useMemo(() => ({ show }), [show]);
+
   return (
-    <ToastContext.Provider value={{ show }}>
+    <ToastContext.Provider value={value}>
       {children}
       {message &&
         createPortal(

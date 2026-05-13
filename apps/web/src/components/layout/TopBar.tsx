@@ -1,10 +1,10 @@
 import { LogoBadge } from '@/components/domain/Logo';
 import { ThemePicker } from '@/components/domain/ThemePicker';
 import { ConnectionPill, type ConnectionState } from '@/components/domain/ConnectionPill';
-import { useActivityStream } from '@/hooks/useActivityStream';
+import { useConnectionState } from '@/hooks/useActivityStream';
 
 export function TopBar({ title }: { title: string }) {
-  const { state } = useActivityStream();
+  const state = useConnectionState();
 
   return (
     <header

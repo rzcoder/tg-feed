@@ -3,15 +3,18 @@
  *
  * `StreamProvider` opens one EventSource on `/api/stream` for the whole app
  * (mounted in AppShell). All consumers — sidebar/top-bar connection pill,
- * activity page event feed — read from the same source via `useActivityStream`.
+ * activity page event feed — read from the same source.
  *
- * The hook tracks connection state (`'live' | 'reconnect' | 'down'`) and
- * exposes the latest `forward.*` event. `subscription.changed` events
- * trigger a query invalidation directly on the shared QueryClient.
+ * The provider exposes two separate contexts so that consumers subscribe
+ * only to the slice they care about. `forward.*` events arrive frequently
+ * (one per forwarded message) — putting `lastEvent` and `state` in a single
+ * context would re-render the connection pill on every event even though
+ * `state` is unchanged. Splitting them keeps the layout chrome quiet.
  *
  * EventSource auto-reconnects with browser-controlled backoff. We surface
  * readyState transitions as `'reconnect'` while connecting and `'live'`
- * once OPEN.
+ * once OPEN. `subscription.changed` events trigger a query invalidation
+ * directly on the shared QueryClient.
  */
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -21,12 +24,6 @@ import { SUBSCRIPTIONS_KEY } from './useSubscriptions';
 
 export type ConnectionState = 'live' | 'reconnect' | 'down';
 
-export interface ActivityStreamHandle {
-  state: ConnectionState;
-  /** Last received forward.* event (excluding started). New event = new identity. */
-  lastEvent: StreamEvent | null;
-}
-
 const FORWARD_EVENT_TYPES = new Set([
   'forward.completed',
   'forward.failed',
@@ -34,7 +31,8 @@ const FORWARD_EVENT_TYPES = new Set([
   'forward.filtered',
 ]);
 
-const StreamContext = createContext<ActivityStreamHandle | null>(null);
+const ConnectionStateContext = createContext<ConnectionState | null>(null);
+const LastEventContext = createContext<StreamEvent | null>(null);
 
 export function StreamProvider({
   children,
@@ -111,13 +109,24 @@ export function StreamProvider({
     };
   }, [url, qc]);
 
-  return <StreamContext.Provider value={{ state, lastEvent }}>{children}</StreamContext.Provider>;
+  return (
+    <ConnectionStateContext.Provider value={state}>
+      <LastEventContext.Provider value={lastEvent}>{children}</LastEventContext.Provider>
+    </ConnectionStateContext.Provider>
+  );
 }
 
-export function useActivityStream(): ActivityStreamHandle {
-  const ctx = useContext(StreamContext);
-  if (!ctx) {
-    throw new Error('useActivityStream must be used inside <StreamProvider>');
+export function useConnectionState(): ConnectionState {
+  const ctx = useContext(ConnectionStateContext);
+  if (ctx === null) {
+    throw new Error('useConnectionState must be used inside <StreamProvider>');
   }
   return ctx;
+}
+
+export function useLatestActivityEvent(): StreamEvent | null {
+  // Note: provider always wraps with both contexts; `null` is a valid value
+  // (no event yet), so we don't throw on null here. To enforce being inside
+  // the provider, use `useConnectionState` alongside this hook.
+  return useContext(LastEventContext);
 }

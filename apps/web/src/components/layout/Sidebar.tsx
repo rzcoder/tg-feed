@@ -5,12 +5,12 @@ import { LogoBadge } from '@/components/domain/Logo';
 import { ConnectionPill } from '@/components/domain/ConnectionPill';
 import { Button } from '@/components/ui/button';
 import { useLogout } from '@/hooks/useAuth';
-import { useActivityStream } from '@/hooks/useActivityStream';
+import { useConnectionState } from '@/hooks/useActivityStream';
 import { NAV_TABS } from './TabBar';
 
 export function Sidebar({ className }: { className?: string }) {
   const logout = useLogout();
-  const { state } = useActivityStream();
+  const state = useConnectionState();
 
   return (
     <aside

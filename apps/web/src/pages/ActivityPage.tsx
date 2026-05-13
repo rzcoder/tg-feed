@@ -2,8 +2,8 @@
  * Activity feed — hydrate from forward-log, prepend live SSE events.
  *
  * Hydration: `useForwardLog({ limit: 50 })` runs once on mount and seeds
- * the in-memory list. SSE events arrive via `useActivityStream` and get
- * prepended (capped at 200 entries to bound memory).
+ * the in-memory list. SSE events arrive via `useLatestActivityEvent` and
+ * get prepended (capped at 200 entries to bound memory).
  *
  * Enrichment: hydrated rows already have `subscriptionTitle`, `sourceHandle`,
  * and `destinationName` joined server-side via LEFT JOIN. SSE payloads carry
@@ -30,7 +30,7 @@ import { ConnectionPill } from '@/components/domain/ConnectionPill';
 import { ActivityRow, type ActivityEvent } from '@/components/domain/ActivityRow';
 import { EmptyState } from '@/components/domain/EmptyState';
 import { JsonViewSheet } from '@/components/domain/JsonViewSheet';
-import { useActivityStream } from '@/hooks/useActivityStream';
+import { useConnectionState, useLatestActivityEvent } from '@/hooks/useActivityStream';
 import { useDestinations } from '@/hooks/useDestinations';
 import { useForwardLog } from '@/hooks/useForwardLog';
 import { useSubscriptions } from '@/hooks/useSubscriptions';
@@ -43,7 +43,8 @@ export function ActivityPage() {
   const forwardLog = useForwardLog({ limit: 50 });
 
   const [paused, setPaused] = useState(false);
-  const stream = useActivityStream();
+  const connectionState = useConnectionState();
+  const lastEvent = useLatestActivityEvent();
 
   const subById = useMemo(() => buildSubMap(subs.data ?? []), [subs.data]);
   const destByChatId = useMemo(() => buildDestMap(dests.data ?? []), [dests.data]);
@@ -78,11 +79,11 @@ export function ActivityPage() {
   // Prepend new SSE events.
   useEffect(() => {
     if (paused) return;
-    if (!stream.lastEvent) return;
-    const built = fromStreamEvent(stream.lastEvent, subByIdRef.current, destByChatIdRef.current);
+    if (!lastEvent) return;
+    const built = fromStreamEvent(lastEvent, subByIdRef.current, destByChatIdRef.current);
     if (!built) return;
     setEvents((prev) => [built, ...prev].slice(0, MAX_EVENTS));
-  }, [stream.lastEvent, paused]);
+  }, [lastEvent, paused]);
 
   // Backfill events constructed before subs/dests loaded. Returns the same
   // array reference when nothing needs enrichment, so ActivityRow rows keep
@@ -99,12 +100,6 @@ export function ActivityPage() {
     });
   }, [subById, destByChatId]);
 
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 5000);
-    return () => clearInterval(t);
-  }, []);
-
   const [jsonViewerId, setJsonViewerId] = useState<number | null>(null);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
@@ -119,7 +114,7 @@ export function ActivityPage() {
     if (scrollerRef.current) scrollerRef.current.scrollTop = 0;
   }, [events.length, scrollLocked]);
 
-  const connectionState = paused ? 'down' : stream.state;
+  const displayConnectionState = paused ? 'down' : connectionState;
   const isLoading = forwardLog.isPending;
   const isError = forwardLog.isError;
 
@@ -131,7 +126,7 @@ export function ActivityPage() {
           <span className="text-[12.5px] text-text-muted">{events.length}</span>
         </div>
         <div className="flex items-center gap-2">
-          <ConnectionPill state={connectionState} />
+          <ConnectionPill state={displayConnectionState} />
           <Button
             variant="secondary"
             size="icon-sm"
@@ -176,9 +171,7 @@ export function ActivityPage() {
             }
           />
         ) : (
-          events.map((e) => (
-            <ActivityRow key={e.id} event={e} now={now} onViewJson={setJsonViewerId} />
-          ))
+          events.map((e) => <ActivityRow key={e.id} event={e} onViewJson={setJsonViewerId} />)
         )}
       </div>
 

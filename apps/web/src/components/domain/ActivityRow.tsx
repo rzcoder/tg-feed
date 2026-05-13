@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { AlertTriangle, ArrowRight, Braces } from 'lucide-react';
 import type { ForwardLogStatus } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
 import { formatAbsoluteTime, formatRelative } from '@/lib/formatRelative';
+import { useNowTick } from '@/lib/useNowTick';
 import { StatusBadge } from './StatusBadge';
 
 export interface ActivityEvent {
@@ -39,12 +40,10 @@ export interface ActivityEvent {
 
 interface ActivityRowProps {
   event: ActivityEvent;
-  now: number;
   onViewJson?: (forwardLogId: number) => void;
 }
 
-export function ActivityRow({ event, now, onViewJson }: ActivityRowProps) {
-  const ageSec = Math.max(0, (now - event.occurredAt) / 1000);
+export const ActivityRow = memo(function ActivityRow({ event, onViewJson }: ActivityRowProps) {
   const canViewJson =
     event.hasRawMessage === true && event.forwardLogId != null && onViewJson != null;
 
@@ -74,7 +73,7 @@ export function ActivityRow({ event, now, onViewJson }: ActivityRowProps) {
               <Braces size={13} strokeWidth={2} />
             </button>
           )}
-          <RelativeTime ageSec={ageSec} />
+          <RelativeTime occurredAt={event.occurredAt} />
         </div>
       </div>
       <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
@@ -107,9 +106,11 @@ export function ActivityRow({ event, now, onViewJson }: ActivityRowProps) {
       )}
     </div>
   );
-}
+});
 
-function RelativeTime({ ageSec }: { ageSec: number }) {
+function RelativeTime({ occurredAt }: { occurredAt: number }) {
+  const now = useNowTick();
+  const ageSec = Math.max(0, (now - occurredAt) / 1000);
   const [hover, setHover] = useState(false);
   return (
     <span
