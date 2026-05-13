@@ -31,6 +31,7 @@ import type { Db } from '../db/client.js';
 import { destinations, forwardLog, subscriptions } from '../db/schema.js';
 import { toJsonSafe } from '../lib/jsonSafe.js';
 import type { Logger } from '../lib/logger.js';
+import { createPoller } from '../lib/poller.js';
 import { extractRateLimit } from './floodwait.js';
 import type { RawForwardingHandle, RawForwardJob } from './types.js';
 
@@ -81,7 +82,6 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
   // are seeded lazily on their first sweep — keeps boot fast and avoids
   // hammering Telegram before the first real poll.
   const seeded = new Set<number>();
-  let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   let inFlight: Promise<void> | undefined;
 
@@ -277,24 +277,18 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
     await inFlight;
   }
 
+  const poller = createPoller({
+    intervalMs,
+    run: poll,
+    logger,
+    errorLogMessage: 'history poller: sweep rejected',
+  });
+
   return {
-    start(): void {
-      if (timer || stopped) return;
-      // Kick off the first sweep immediately so we don't wait `intervalMs`
-      // before catching the first batch on a fresh boot.
-      void poll().catch((err) => {
-        logger.error({ err }, 'history poller: initial sweep rejected');
-      });
-      timer = setInterval(() => {
-        void poll().catch((err) => {
-          logger.error({ err }, 'history poller: sweep rejected');
-        });
-      }, intervalMs);
-    },
+    start: poller.start,
     stop(): void {
       stopped = true;
-      if (timer) clearInterval(timer);
-      timer = undefined;
+      poller.stop();
     },
     poll,
   };

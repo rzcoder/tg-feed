@@ -21,6 +21,7 @@
  * `*_checked_at` timestamp is always updated so future UIs can distinguish
  * fresh from stale.
  */
+import { setTimeout as sleep } from 'node:timers/promises';
 import { eq } from 'drizzle-orm';
 import type { Api } from 'telegram';
 import type { Db } from '../db/client.js';
@@ -28,6 +29,7 @@ import { destinations, subscriptions } from '../db/schema.js';
 import type { EventBus } from '../events/bus.js';
 import { extractRateLimit } from '../forwarding/floodwait.js';
 import type { Logger } from '../lib/logger.js';
+import { createPoller } from '../lib/poller.js';
 import type { ProfilePhotoFetcher } from './profilePhoto.js';
 
 export const ACCESS_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -81,7 +83,6 @@ type Target = SubscriptionTarget | DestinationTarget;
 export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
   const { client, db, bus, logger, fetchProfilePhoto } = deps;
   const intervalMs = deps.intervalMs ?? ACCESS_CHECK_INTERVAL_MS;
-  let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   let inFlight: Promise<void> | undefined;
 
@@ -274,27 +275,19 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
     return out;
   }
 
+  const poller = createPoller({
+    intervalMs,
+    run: probe,
+    logger,
+    errorLogMessage: 'access monitor: probe rejected',
+  });
+
   return {
-    start(): void {
-      if (timer || stopped) return;
-      void probe().catch((err) => {
-        logger.error({ err }, 'access monitor: probe rejected');
-      });
-      timer = setInterval(() => {
-        void probe().catch((err) => {
-          logger.error({ err }, 'access monitor: probe rejected');
-        });
-      }, intervalMs);
-    },
+    start: poller.start,
     stop(): void {
       stopped = true;
-      if (timer) clearInterval(timer);
-      timer = undefined;
+      poller.stop();
     },
     probe,
   };
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

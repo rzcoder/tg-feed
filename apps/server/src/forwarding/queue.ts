@@ -15,6 +15,7 @@
  *
  * `stop()` aborts in-flight sleeps and waits for the current send to finish.
  */
+import { setTimeout as nodeSleep } from 'node:timers/promises';
 import type { Logger } from '../lib/logger.js';
 import type { Forwarder } from './forwarder.js';
 import type { ForwardJob, ForwardingHandle } from './types.js';
@@ -24,21 +25,7 @@ export const MAX_FLOOD_WAIT_SECONDS = 300;
 export type SleepFn = (ms: number, signal: AbortSignal) => Promise<void>;
 
 export const cancellableSleep: SleepFn = (ms, signal) =>
-  new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
+  nodeSleep(ms, undefined, { signal }).catch(() => undefined);
 
 export interface PipelineDeps {
   forwarder: Forwarder;

@@ -26,6 +26,7 @@
 import { Api } from 'telegram';
 import type { TelegramStatus } from '@tg-feed/shared';
 import type { Logger } from '../lib/logger.js';
+import { createPoller } from '../lib/poller.js';
 
 export const HEALTH_CHECK_INTERVAL_MS = 20_000;
 export const HEALTH_CHECK_PROBE_TIMEOUT_MS = 10_000;
@@ -66,27 +67,22 @@ export function createHealthMonitor(deps: HealthMonitorDeps): HealthMonitor {
   const intervalMs = deps.intervalMs ?? HEALTH_CHECK_INTERVAL_MS;
   const probeTimeoutMs = deps.probeTimeoutMs ?? HEALTH_CHECK_PROBE_TIMEOUT_MS;
   const reloadThreshold = deps.reloadThreshold ?? HEALTH_CHECK_RELOAD_THRESHOLD;
-  let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
   let lastConnected: boolean | undefined;
   let consecutiveFailures = 0;
   let reloadInFlight = false;
 
   async function invokeWithTimeout(): Promise<void> {
-    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        client.invoke(new Api.updates.GetState()),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error(`probe timed out after ${probeTimeoutMs}ms`)),
-            probeTimeoutMs,
-          );
-        }),
-      ]);
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-    }
+    await Promise.race([
+      client.invoke(new Api.updates.GetState()),
+      new Promise<never>((_, reject) => {
+        AbortSignal.timeout(probeTimeoutMs).addEventListener(
+          'abort',
+          () => reject(new Error(`probe timed out after ${probeTimeoutMs}ms`)),
+          { once: true },
+        );
+      }),
+    ]);
   }
 
   async function probe(): Promise<void> {
@@ -143,16 +139,18 @@ export function createHealthMonitor(deps: HealthMonitorDeps): HealthMonitor {
     }
   }
 
+  const poller = createPoller({
+    intervalMs,
+    run: probe,
+    logger,
+    errorLogMessage: 'Telegram health check: probe rejected',
+  });
+
   return {
-    start(): void {
-      if (timer || stopped) return;
-      void probe();
-      timer = setInterval(() => void probe(), intervalMs);
-    },
+    start: poller.start,
     stop(): void {
       stopped = true;
-      if (timer) clearInterval(timer);
-      timer = undefined;
+      poller.stop();
     },
     probe,
   };
