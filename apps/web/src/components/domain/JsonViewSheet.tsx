@@ -3,24 +3,77 @@
  *
  * Triggered from `ActivityRow`'s "{}" button. The actual JSON isn't on the
  * list response — the Sheet fetches `GET /forward-log/:id/raw` via
- * `useForwardLogRaw` so we don't bloat hydration. For album rows the
- * payload is a JSON array; for single messages, a plain object — the
- * `<pre>` renders either shape verbatim. Copy puts the formatted string on
- * the clipboard; a brief "Copied" label confirms.
+ * `useForwardLogRaw` so we don't bloat hydration. Rendering goes through
+ * `react-json-view-lite` for free collapsible nodes — essential for album
+ * payloads (JSON array of N nested gramjs `Message` objects).
+ *
+ * Theming: the library ships its own CSS module classes (which carry the
+ * expand/collapse glyphs as `::after` content), and exposes the per-token
+ * class names via `defaultStyles`. We spread those defaults and append our
+ * own Tailwind colour tokens with `!important` so the palette follows our
+ * oklch CSS variables (dark + light theme are handled automatically).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Copy } from 'lucide-react';
+import { JsonView, defaultStyles } from 'react-json-view-lite';
+import 'react-json-view-lite/dist/index.css';
 import { Button } from '@/components/ui/button';
 import { Sheet } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
 import { useForwardLogRaw } from '@/hooks/useForwardLogRaw';
-import { highlightJson } from '@/lib/highlightJson';
 
 interface JsonViewSheetProps {
   open: boolean;
   forwardLogId: number | null;
   onOpenChange: (open: boolean) => void;
 }
+
+/**
+ * Compose a class string for one of the library's per-token style slots.
+ * Keeps the library's structural class (margins, expand-glyph `::after`,
+ * etc.) and stacks our coloured token with `!` so Tailwind wins regardless
+ * of stylesheet order.
+ */
+function withTone(libraryClass: string, ...tones: string[]): string {
+  return [libraryClass, ...tones].filter(Boolean).join(' ');
+}
+
+/**
+ * Expand only the root and its immediate children by default — anything
+ * deeper stays collapsed behind a `{...}` placeholder. Albums (root is an
+ * array of `Message` objects) then surface each member's existence on first
+ * paint, but keep their internals folded so the panel doesn't dump
+ * hundreds of lines on open. Single-message payloads similarly show the
+ * top-level fields but collapse nested objects like `media`, `fwdFrom`.
+ *
+ * `level === 0` is the root call; children increment from there, so
+ * `level < 2` covers root + first nesting level.
+ */
+const expandFirstLevelOnly = (level: number): boolean => level < 2;
+
+const jsonViewStyles = {
+  ...defaultStyles,
+  // Containers don't need recolouring — they inherit from <pre>.
+  container: withTone(defaultStyles.container, 'bg-transparent'),
+  // Keys (object field names).
+  label: withTone(defaultStyles.label, '!text-accent'),
+  clickableLabel: withTone(defaultStyles.clickableLabel, '!text-accent'),
+  // Value types.
+  stringValue: withTone(defaultStyles.stringValue, '!text-success'),
+  numberValue: withTone(defaultStyles.numberValue, '!text-warning'),
+  // true / false / null share the danger tone so they stand out from
+  // strings and numbers when skimming a deep payload.
+  booleanValue: withTone(defaultStyles.booleanValue, '!text-danger'),
+  nullValue: withTone(defaultStyles.nullValue, '!text-danger'),
+  undefinedValue: withTone(defaultStyles.undefinedValue, '!text-text-muted', 'italic'),
+  otherValue: withTone(defaultStyles.otherValue, '!text-text-muted'),
+  // Structural marks (commas, braces, the "..." collapsed indicator, and
+  // the expand/collapse triangles) all share the muted tone.
+  punctuation: withTone(defaultStyles.punctuation, '!text-text-muted'),
+  expandIcon: withTone(defaultStyles.expandIcon, '!text-text-muted'),
+  collapseIcon: withTone(defaultStyles.collapseIcon, '!text-text-muted'),
+  collapsedContent: withTone(defaultStyles.collapsedContent, '!text-text-muted'),
+};
 
 export function JsonViewSheet({ open, forwardLogId, onOpenChange }: JsonViewSheetProps) {
   const query = useForwardLogRaw(open ? forwardLogId : null);
@@ -32,14 +85,8 @@ export function JsonViewSheet({ open, forwardLogId, onOpenChange }: JsonViewShee
     return () => clearTimeout(t);
   }, [copied]);
 
-  const formatted =
-    query.data && query.data.rawMessage !== null
-      ? JSON.stringify(query.data.rawMessage, null, 2)
-      : null;
-  // Memoise so re-renders for the spinner / copy-state don't re-tokenize a
-  // multi-KB payload. The token regex is linear but allocations add up on
-  // a long album.
-  const highlighted = useMemo(() => (formatted ? highlightJson(formatted) : null), [formatted]);
+  const raw = query.data?.rawMessage ?? null;
+  const formatted = raw !== null ? JSON.stringify(raw, null, 2) : null;
 
   const onCopy = async () => {
     if (!formatted) return;
@@ -48,7 +95,7 @@ export function JsonViewSheet({ open, forwardLogId, onOpenChange }: JsonViewShee
       setCopied(true);
     } catch {
       // Clipboard API can fail in non-secure contexts — silently ignore;
-      // the user can still select + copy from the <pre> by hand.
+      // the user can still select + copy from the rendered tree by hand.
     }
   };
 
@@ -58,10 +105,8 @@ export function JsonViewSheet({ open, forwardLogId, onOpenChange }: JsonViewShee
       onOpenChange={onOpenChange}
       title="Raw message"
       description={
-        Array.isArray(query.data?.rawMessage)
-          ? `Album · ${query.data.rawMessage.length} message${
-              query.data.rawMessage.length === 1 ? '' : 's'
-            }`
+        Array.isArray(raw)
+          ? `Album · ${raw.length} message${raw.length === 1 ? '' : 's'}`
           : undefined
       }
       footer={
@@ -82,9 +127,20 @@ export function JsonViewSheet({ open, forwardLogId, onOpenChange }: JsonViewShee
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
           <span>Failed to load raw message.</span>
         </div>
-      ) : highlighted ? (
+      ) : raw !== null && (typeof raw === 'object' || Array.isArray(raw)) ? (
+        <div className="font-mono text-[11.5px] leading-[1.5] text-text">
+          <JsonView
+            data={raw as object | unknown[]}
+            style={jsonViewStyles}
+            shouldExpandNode={expandFirstLevelOnly}
+            clickToExpandNode
+          />
+        </div>
+      ) : raw !== null ? (
+        // Edge case: a stored primitive (string/number/null wrapper). The
+        // library only renders objects/arrays — fall back to plain text.
         <pre className="font-mono text-[11px] leading-[1.5] text-text whitespace-pre-wrap break-all">
-          {highlighted}
+          {JSON.stringify(raw, null, 2)}
         </pre>
       ) : (
         <div className="text-[12.5px] text-text-muted">No raw payload stored for this entry.</div>

@@ -135,6 +135,9 @@ importers:
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
+      react-json-view-lite:
+        specifier: ^2.5.0
+        version: 2.5.0(react@18.3.1)
       react-router-dom:
         specifier: ^7.1.1
         version: 7.15.0(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -3119,6 +3122,12 @@ packages:
 
   react-is@17.0.2:
     resolution: {integrity: sha512-w2GsyukL62IJnlaff/nRegPQR94C/XXamvMWmSHRJ4y7Ts/4ocGRmTHvOs8PSE6pB3dWOrD/nueuU5sduBsQ4w==}
+
+  react-json-view-lite@2.5.0:
+    resolution: {integrity: sha512-tk7o7QG9oYyELWHL8xiMQ8x4WzjCzbWNyig3uexmkLb54r8jO0yH3WCWx8UZS0c49eSA4QUmG5caiRJ8fAn58g==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
 
   react-refresh@0.17.0:
     resolution: {integrity: sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ==}
@@ -6410,6 +6419,10 @@ snapshots:
       scheduler: 0.23.2
 
   react-is@17.0.2: {}
+
+  react-json-view-lite@2.5.0(react@18.3.1):
+    dependencies:
+      react: 18.3.1
 
   react-refresh@0.17.0: {}
 
