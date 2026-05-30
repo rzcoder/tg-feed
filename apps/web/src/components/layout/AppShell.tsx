@@ -17,7 +17,7 @@ export function AppShell() {
   return (
     <RequireAuth>
       <StreamProvider>
-        <div className="h-screen w-screen flex bg-bg text-text overflow-hidden">
+        <div className="h-dvh w-screen flex bg-bg text-text overflow-hidden">
           <Sidebar className="hidden lg:flex" />
           <div className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
             <TopBar title={title} />

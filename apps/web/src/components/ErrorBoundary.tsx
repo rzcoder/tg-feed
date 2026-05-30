@@ -22,7 +22,7 @@ export class ErrorBoundary extends Component<Props, State> {
   override render() {
     if (this.state.error) {
       return (
-        <div className="flex flex-col items-center justify-center min-h-screen p-8 text-center">
+        <div className="flex flex-col items-center justify-center min-h-dvh p-8 text-center">
           <h1 className="text-lg font-semibold mb-2">Something went wrong</h1>
           <p className="text-sm text-text-muted mb-4 max-w-sm">
             An unexpected error occurred. Try reloading the page.

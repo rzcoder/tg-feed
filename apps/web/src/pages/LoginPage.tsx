@@ -47,7 +47,7 @@ export function LoginPage() {
   // Avoid a flash of the login form while /me is still resolving.
   if (me.isPending) {
     return (
-      <div className="grid place-items-center min-h-screen text-text-muted">
+      <div className="grid place-items-center min-h-dvh text-text-muted">
         <Spinner />
       </div>
     );
@@ -58,7 +58,7 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen grid place-items-center px-6 bg-bg text-text">
+    <div className="min-h-dvh grid place-items-center px-6 bg-bg text-text">
       <div className="w-full max-w-[360px]">
         <div className="flex flex-col items-center mb-7">
           <LogoBadge size={28} className="mb-3.5 w-[52px] h-[52px] rounded-[14px]" />

@@ -16,7 +16,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   if (me.isPending) {
     return (
-      <div className="grid place-items-center min-h-screen text-text-muted">
+      <div className="grid place-items-center min-h-dvh text-text-muted">
         <Spinner />
       </div>
     );
