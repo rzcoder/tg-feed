@@ -5,6 +5,7 @@ import {
   EXPORT_SCHEMA_VERSION,
   type ExportFile,
   type ImportResult,
+  type StreamEvent,
   type WipeResult,
 } from '@tg-feed/shared';
 import {
@@ -17,8 +18,10 @@ import {
   telegramAccount,
 } from '../../db/schema.js';
 import { GLOBAL_SETTINGS_KEY } from '../../forwarding/throttle.js';
+import { createLogger } from '../../lib/logger.js';
 import { encryptSessionString, getKeyFingerprint } from '../../lib/sessionCrypto.js';
 import { buildTestApp, seedDestination, type TestApp } from '../testing.js';
+import { backfillImportedIcons } from './system.js';
 
 describe('system export/import/wipe routes', () => {
   let testApp: TestApp;
@@ -713,5 +716,195 @@ describe('system export/import/wipe routes', () => {
       payload: { sections: ['subscriptions'] },
     });
     expect(res2.statusCode).toBe(200);
+  });
+});
+
+// Imported rows land with `iconDataUrl = null` because the export envelope
+// never carries photo bytes (derived data, refetched per host). These tests
+// lock the backfill that re-fetches them — the fix for "imported sources/
+// destinations don't load their icons".
+describe('backfillImportedIcons', () => {
+  let testApp: TestApp;
+  const logger = createLogger({ silent: true });
+
+  beforeEach(async () => {
+    testApp = await buildTestApp();
+  });
+  afterEach(async () => {
+    await testApp.close();
+  });
+
+  it('stamps iconDataUrl and emits a change event for each target', async () => {
+    const destId = seedDestination(testApp.db, { name: 'dest', chatId: '-1001000000010' });
+    const subId = testApp.db
+      .insert(subscriptions)
+      .values({ sourceChatId: '-1002000000010', sourceTitle: 'Src', enabled: true })
+      .returning({ id: subscriptions.id })
+      .all()[0]!.id;
+
+    const events: StreamEvent[] = [];
+    testApp.bus.on((e) => events.push(e));
+
+    const stamped = await backfillImportedIcons({
+      db: testApp.db,
+      bus: testApp.bus,
+      fetchProfilePhoto: async (chatId) => `data:image/jpeg;base64,ICON_${chatId}`,
+      targets: [
+        { kind: 'destination', id: destId, chatId: '-1001000000010' },
+        { kind: 'subscription', id: subId, chatId: '-1002000000010' },
+      ],
+      logger,
+    });
+
+    expect(stamped).toBe(2);
+    const dRow = testApp.db.select().from(destinations).where(eq(destinations.id, destId)).get();
+    const sRow = testApp.db.select().from(subscriptions).where(eq(subscriptions.id, subId)).get();
+    expect(dRow!.iconDataUrl).toBe('data:image/jpeg;base64,ICON_-1001000000010');
+    expect(sRow!.iconDataUrl).toBe('data:image/jpeg;base64,ICON_-1002000000010');
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'destination.changed', destinationId: destId }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'subscription.changed', subscriptionId: subId }),
+    );
+  });
+
+  it('leaves the row icon-less and emits nothing when the photo fetch returns null', async () => {
+    const destId = seedDestination(testApp.db, { name: 'dest', chatId: '-1001000000011' });
+    const events: StreamEvent[] = [];
+    testApp.bus.on((e) => events.push(e));
+
+    const stamped = await backfillImportedIcons({
+      db: testApp.db,
+      bus: testApp.bus,
+      fetchProfilePhoto: async () => null,
+      targets: [{ kind: 'destination', id: destId, chatId: '-1001000000011' }],
+      logger,
+    });
+
+    expect(stamped).toBe(0);
+    const dRow = testApp.db.select().from(destinations).where(eq(destinations.id, destId)).get();
+    expect(dRow!.iconDataUrl).toBeNull();
+    expect(events).toHaveLength(0);
+  });
+
+  it('downloads a shared chatId only once', async () => {
+    const destId = seedDestination(testApp.db, { name: 'dest', chatId: '-1001000000012' });
+    const subId = testApp.db
+      .insert(subscriptions)
+      .values({ sourceChatId: '-1001000000012', sourceTitle: 'Src', enabled: false })
+      .returning({ id: subscriptions.id })
+      .all()[0]!.id;
+
+    let calls = 0;
+    const stamped = await backfillImportedIcons({
+      db: testApp.db,
+      bus: testApp.bus,
+      fetchProfilePhoto: async () => {
+        calls += 1;
+        return 'data:image/jpeg;base64,SHARED';
+      },
+      targets: [
+        { kind: 'destination', id: destId, chatId: '-1001000000012' },
+        { kind: 'subscription', id: subId, chatId: '-1001000000012' },
+      ],
+      logger,
+    });
+
+    expect(calls).toBe(1);
+    expect(stamped).toBe(2);
+  });
+});
+
+describe('POST /api/system/import icon backfill (end-to-end)', () => {
+  // Fire-and-forget backfill: poll the collected SSE events until `count`
+  // change events have landed (or fail loudly). The listener is attached
+  // before the import so no event is missed.
+  async function waitForChangeEvents(
+    collected: StreamEvent[],
+    count: number,
+    timeoutMs = 2000,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const changed = (): number =>
+      collected.filter((e) => e.type === 'subscription.changed' || e.type === 'destination.changed')
+        .length;
+    while (changed() < count) {
+      if (Date.now() > deadline) {
+        throw new Error(`timed out waiting for ${count} change events, saw ${changed()}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  it('stamps icons on imported destinations and subscriptions, including disabled ones', async () => {
+    const fetched: string[] = [];
+    const testApp = await buildTestApp({
+      fetchProfilePhoto: async (chatId) => {
+        fetched.push(chatId);
+        return `data:image/jpeg;base64,ICON_${chatId}`;
+      },
+    });
+    try {
+      const cookie = await testApp.loginAndGetCookie();
+      const events: StreamEvent[] = [];
+      testApp.bus.on((e) => events.push(e));
+
+      const data: ExportFile = {
+        schemaVersion: EXPORT_SCHEMA_VERSION,
+        exportedAt: '2026-05-10T00:00:00.000Z',
+        appVersion: '0.1.0',
+        destinations: [{ name: 'main', chatId: '-1001000000020', note: null }],
+        subscriptions: [
+          {
+            sourceChatId: '-1002000000021',
+            sourceTitle: 'Enabled source',
+            handle: null,
+            enabled: true,
+            destination: null,
+            inlineFilters: [],
+            libraryFilters: [],
+          },
+          {
+            sourceChatId: '-1002000000022',
+            sourceTitle: 'Disabled source',
+            handle: null,
+            enabled: false,
+            destination: null,
+            inlineFilters: [],
+            libraryFilters: [],
+          },
+        ],
+      };
+
+      const res = await testApp.app.inject({
+        method: 'POST',
+        url: '/api/system/import',
+        headers: { cookie },
+        payload: { sections: ['destinations', 'subscriptions'], conflictStrategy: 'skip', data },
+      });
+      expect(res.statusCode).toBe(200);
+
+      // 1 destination + 2 subscriptions = 3 change events once the backfill runs.
+      await waitForChangeEvents(events, 3);
+
+      const destRow = testApp.db.select().from(destinations).all()[0]!;
+      expect(destRow.iconDataUrl).toBe('data:image/jpeg;base64,ICON_-1001000000020');
+
+      const subsByChat = new Map(
+        testApp.db
+          .select()
+          .from(subscriptions)
+          .all()
+          .map((s) => [s.sourceChatId, s.iconDataUrl]),
+      );
+      expect(subsByChat.get('-1002000000021')).toBe('data:image/jpeg;base64,ICON_-1002000000021');
+      // The disabled subscription gets its icon too — the access monitor's
+      // sweep skips `enabled = false` rows, so import must cover them itself.
+      expect(subsByChat.get('-1002000000022')).toBe('data:image/jpeg;base64,ICON_-1002000000022');
+      expect(fetched).toHaveLength(3);
+    } finally {
+      await testApp.close();
+    }
   });
 });

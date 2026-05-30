@@ -40,6 +40,9 @@ import {
   type WipeSection,
 } from '@tg-feed/shared';
 import type { Db } from '../../db/client.js';
+import type { EventBus } from '../../events/bus.js';
+import type { Logger } from '../../lib/logger.js';
+import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import {
   appSettings,
   destinations,
@@ -85,6 +88,8 @@ const IMPORT_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
 
 export interface RegisterSystemRoutesDeps {
   db: Db;
+  bus: EventBus;
+  logger: Logger;
   getTelegramStatus: () => TelegramStatus;
   /**
    * Returns the loaded `TG_SESSION_ENCRYPTION_KEY` as a 32-byte Buffer, or
@@ -98,10 +103,27 @@ export interface RegisterSystemRoutesDeps {
    * still written but takes effect on next boot.
    */
   reloadTelegramSession?: () => Promise<void>;
+  /**
+   * Best-effort Telegram profile-photo fetcher. Import never carries icon
+   * bytes (they're derived data, refetched per host), so after a successful
+   * import we backfill `iconDataUrl` for the rows we just created — mirroring
+   * the inline fetch that POST /subscriptions and POST /destinations already
+   * do. Optional: when absent (Telegram-less boot, tests) imported rows stay
+   * icon-less until the access monitor's 24h sweep catches them.
+   */
+  getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
 }
 
 export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemRoutesDeps): void {
-  const { db, getTelegramStatus, getEncryptionKey, reloadTelegramSession } = deps;
+  const {
+    db,
+    bus,
+    logger,
+    getTelegramStatus,
+    getEncryptionKey,
+    reloadTelegramSession,
+    getFetchProfilePhoto,
+  } = deps;
 
   app.get('/system/status', async (): Promise<SystemStatusResponse> => {
     return { telegram: getTelegramStatus() };
@@ -146,6 +168,23 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
       // swallowed — the row is saved either way.
       if (result.telegramAccountWritten && reloadTelegramSession) {
         await reloadTelegramSession().catch(() => {});
+      }
+      // Backfill profile photos for the rows we just imported. Fire-and-forget:
+      // a large import shouldn't block the HTTP response on hundreds of
+      // sequential Telegram downloads. Icons stream into the UI as they land
+      // via the `subscription.changed` / `destination.changed` SSE events the
+      // backfill emits (the web client invalidates its lists on those).
+      const fetchProfilePhoto = getFetchProfilePhoto?.();
+      if (fetchProfilePhoto && result.iconTargets.length > 0) {
+        void backfillImportedIcons({
+          db,
+          bus,
+          fetchProfilePhoto,
+          targets: result.iconTargets,
+          logger,
+        }).catch((err) => {
+          logger.error({ err }, 'import icon backfill failed');
+        });
       }
       return result.body;
     },
@@ -329,10 +368,23 @@ function destKey(chatId: string, name: string): string {
 
 const emptySectionResult = (): ImportSectionResult => ({ created: 0, skipped: 0, replaced: 0 });
 
+/** A subscription/destination row that import created, needing a profile photo. */
+export interface IconBackfillTarget {
+  kind: 'subscription' | 'destination';
+  id: number;
+  chatId: string;
+}
+
 interface ApplyImportResult {
   body: ImportResult;
   /** True when a `telegram_account` row was created or replaced. */
   telegramAccountWritten: boolean;
+  /**
+   * Subscription/destination rows this import touched (created or replaced)
+   * that still have a null `iconDataUrl` — fed to `backfillImportedIcons`
+   * after the transaction commits. Empty when nothing needs an icon.
+   */
+  iconTargets: IconBackfillTarget[];
 }
 
 function applyImport(
@@ -350,6 +402,13 @@ function applyImport(
     warnings: [],
   };
   let telegramAccountWritten = false;
+  // IDs of subscription / destination rows this import created or replaced.
+  // After the transaction commits we re-read these and keep only the ones
+  // still missing an icon, so the post-import backfill targets exactly the
+  // rows that need one (created rows always do; replaced rows only when they
+  // were icon-less to begin with).
+  const touchedDestIds: number[] = [];
+  const touchedSubIds: number[] = [];
 
   db.transaction((tx) => {
     // Build initial maps from existing rows so subscriptions can resolve
@@ -374,6 +433,7 @@ function applyImport(
               .set({ note: item.note ?? null })
               .where(eq(destinations.id, existingId))
               .run();
+            touchedDestIds.push(existingId);
             result.destinations.replaced += 1;
           } else {
             result.destinations.skipped += 1;
@@ -391,6 +451,7 @@ function applyImport(
           .all();
         const newId = inserted[0]!.id;
         destMap.set(key, newId);
+        touchedDestIds.push(newId);
         result.destinations.created += 1;
       }
     }
@@ -472,6 +533,7 @@ function applyImport(
             existing.id,
             resolveLibraryFilterIds(item, libMap, result.warnings),
           );
+          touchedSubIds.push(existing.id);
           result.subscriptions.replaced += 1;
           continue;
         }
@@ -494,6 +556,7 @@ function applyImport(
           newId,
           resolveLibraryFilterIds(item, libMap, result.warnings),
         );
+        touchedSubIds.push(newId);
         result.subscriptions.created += 1;
       }
     }
@@ -539,7 +602,95 @@ function applyImport(
     }
   });
 
-  return { body: result, telegramAccountWritten };
+  // Re-read the touched rows (post-commit) and keep only those still missing
+  // an icon. Created rows are always null here; replaced rows pass through
+  // only when they were already icon-less, so we never re-download a photo a
+  // row already has.
+  const iconTargets: IconBackfillTarget[] = [];
+  if (touchedDestIds.length > 0) {
+    const rows = db
+      .select({
+        id: destinations.id,
+        chatId: destinations.chatId,
+        iconDataUrl: destinations.iconDataUrl,
+      })
+      .from(destinations)
+      .where(inArray(destinations.id, touchedDestIds))
+      .all();
+    for (const row of rows) {
+      if (row.iconDataUrl === null) {
+        iconTargets.push({ kind: 'destination', id: row.id, chatId: row.chatId });
+      }
+    }
+  }
+  if (touchedSubIds.length > 0) {
+    const rows = db
+      .select({
+        id: subscriptions.id,
+        chatId: subscriptions.sourceChatId,
+        iconDataUrl: subscriptions.iconDataUrl,
+      })
+      .from(subscriptions)
+      .where(inArray(subscriptions.id, touchedSubIds))
+      .all();
+    for (const row of rows) {
+      if (row.iconDataUrl === null) {
+        iconTargets.push({ kind: 'subscription', id: row.id, chatId: row.chatId });
+      }
+    }
+  }
+
+  return { body: result, telegramAccountWritten, iconTargets };
+}
+
+/**
+ * Post-import icon backfill. Import envelopes never carry profile-photo bytes
+ * (they're derived data — large, and tied to the importing host's session),
+ * so freshly imported subscriptions / destinations land with `iconDataUrl =
+ * null` and render the lucide fallback. This mirrors the inline fetch that the
+ * create routes (POST /subscriptions, POST /destinations) run, but batched and
+ * fired after the import response so a big import isn't held hostage to
+ * sequential Telegram downloads.
+ *
+ * Best-effort throughout: `fetchProfilePhoto` already swallows its own errors
+ * and returns null (no photo, gramjs error, oversize), so a failure just
+ * leaves that one row icon-less for the access monitor's 24h sweep to retry.
+ * Each successful stamp emits the same `*.changed` event the access monitor
+ * uses, so the web client's SSE listener invalidates its lists and the icon
+ * appears without a manual refresh. Fetches are deduped per chatId so a chat
+ * used by several rows is downloaded once.
+ */
+export async function backfillImportedIcons(deps: {
+  db: Db;
+  bus: EventBus;
+  fetchProfilePhoto: ProfilePhotoFetcher;
+  targets: IconBackfillTarget[];
+  logger: Logger;
+}): Promise<number> {
+  const { db, bus, fetchProfilePhoto, targets, logger } = deps;
+  const cache = new Map<string, string | null>();
+  let stamped = 0;
+
+  for (const target of targets) {
+    let iconDataUrl = cache.get(target.chatId);
+    if (iconDataUrl === undefined) {
+      iconDataUrl = await fetchProfilePhoto(target.chatId);
+      cache.set(target.chatId, iconDataUrl);
+    }
+    if (iconDataUrl === null) continue;
+
+    if (target.kind === 'subscription') {
+      db.update(subscriptions).set({ iconDataUrl }).where(eq(subscriptions.id, target.id)).run();
+      bus.emit({ type: 'subscription.changed', subscriptionId: target.id, change: 'updated' });
+    } else {
+      db.update(destinations).set({ iconDataUrl }).where(eq(destinations.id, target.id)).run();
+      bus.emit({ type: 'destination.changed', destinationId: target.id, change: 'updated' });
+    }
+    stamped += 1;
+  }
+
+  logger.debug({ requested: targets.length, stamped }, 'import icon backfill complete');
+  return stamped;
 }
 
 /**

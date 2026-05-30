@@ -305,11 +305,14 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
       });
       registerSystemRoutes(authedScope, {
         db,
+        bus,
+        logger,
         getTelegramStatus,
         ...(deps.getEncryptionKey !== undefined ? { getEncryptionKey: deps.getEncryptionKey } : {}),
         ...(deps.reloadTelegramSession !== undefined
           ? { reloadTelegramSession: deps.reloadTelegramSession }
           : {}),
+        ...(getFetchProfilePhoto !== undefined ? { getFetchProfilePhoto } : {}),
       });
       registerTelegramAccountRoutes(authedScope, {
         db,
