@@ -57,3 +57,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
+      - name: Prune old GHCR versions
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: tg-feed
+          keep-n-tagged: 3
+          delete-untagged: true
+          token: ${{ secrets.GITHUB_TOKEN }}
