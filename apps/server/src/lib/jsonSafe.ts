@@ -59,8 +59,13 @@ export function toJsonSafe(value: unknown, opts: ToJsonSafeOptions = {}): unknow
   }
 
   if (encoded === undefined) return null;
-  if (encoded.length > maxBytes) {
-    return { __truncated: true, size: encoded.length };
+  // `Buffer.byteLength` measures real UTF-8 bytes — `.length` measures UTF-16
+  // code units, which understates multibyte content (a 64KB cap allows ~256KB
+  // of emoji-heavy text through). The comment block at the top of this file
+  // promises "byte length"; honor it literally.
+  const byteLen = Buffer.byteLength(encoded, 'utf8');
+  if (byteLen > maxBytes) {
+    return { __truncated: true, size: byteLen };
   }
   try {
     return JSON.parse(encoded) as unknown;

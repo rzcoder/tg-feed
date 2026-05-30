@@ -36,7 +36,9 @@ export { filterRuleParamsSchemas };
 // --- Auth -------------------------------------------------------------
 
 export const loginRequestSchema = z.object({
-  password: z.string().min(1),
+  // Cap the password length so a multi-MB string can't burn CPU through the
+  // SHA-256 compare. Login is rate-limited but free CPU is still free CPU.
+  password: z.string().min(1).max(256),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
@@ -254,6 +256,18 @@ export const inlineFilterInputSchema = z.discriminatedUnion('ruleType', [
 ]);
 export type InlineFilterInput = z.infer<typeof inlineFilterInputSchema>;
 
+// Hard caps shared by create + patch + export-import. Pick generous values
+// that still bound the fan-out of a single request into the DB:
+//   - 64 chars for a chat id (Telegram ids are <20 chars; allow slack)
+//   - 64 chars for `@handle`
+//   - 255 chars for the human-supplied title (matches a typical DB varchar cap)
+//   - 200 attachments / inline filters per subscription (UI would be unusable
+//     past that; an import file with thousands of attachments is misuse)
+const SOURCE_CHAT_ID_MAX = 64;
+const HANDLE_MAX = 64;
+const SOURCE_TITLE_MAX = 255;
+const PER_SUB_ARRAY_MAX = 200;
+
 export const createSubscriptionRequestSchema = z
   .object({
     /**
@@ -262,10 +276,10 @@ export const createSubscriptionRequestSchema = z
      * server calls `messages.ImportChatInvite` to join and derive the
      * resulting chatId). Exactly one is required.
      */
-    sourceChatId: z.string().min(1).optional(),
+    sourceChatId: z.string().min(1).max(SOURCE_CHAT_ID_MAX).optional(),
     inviteHash: telegramInviteHashSchema.optional(),
-    sourceTitle: z.string().min(1),
-    handle: z.string().min(1).optional(),
+    sourceTitle: z.string().min(1).max(SOURCE_TITLE_MAX),
+    handle: z.string().min(1).max(HANDLE_MAX).optional(),
     /**
      * Optional. When omitted (or null), the subscription is created in a
      * detached state — no forwarding until the user attaches a destination.
@@ -277,13 +291,13 @@ export const createSubscriptionRequestSchema = z
      * Library filter ids to attach at create time. Bulk-replace semantics:
      * an empty array attaches none; absent field = same as empty.
      */
-    libraryFilterIds: z.array(z.number().int().positive()).optional(),
+    libraryFilterIds: z.array(z.number().int().positive()).max(PER_SUB_ARRAY_MAX).optional(),
     /**
      * Private inline filters to materialize on the new subscription. Bulk
      * semantics: absent or `[]` means none. The discriminated union enforces
      * per-rule param validity.
      */
-    inlineFilters: z.array(inlineFilterInputSchema).optional(),
+    inlineFilters: z.array(inlineFilterInputSchema).max(PER_SUB_ARRAY_MAX).optional(),
   })
   .refine((b) => (b.sourceChatId ? 1 : 0) + (b.inviteHash ? 1 : 0) === 1, {
     message: 'exactly one of sourceChatId or inviteHash is required',
@@ -295,7 +309,7 @@ export type CreateSubscriptionRequest = z.infer<typeof createSubscriptionRequest
 // an empty PATCH body so callers don't accidentally no-op.
 export const updateSubscriptionRequestSchema = z
   .object({
-    sourceTitle: z.string().min(1).optional(),
+    sourceTitle: z.string().min(1).max(SOURCE_TITLE_MAX).optional(),
     /**
      * Number to attach/replace; explicit `null` to detach. `undefined`
      * (omitted) leaves the existing value alone.
@@ -307,13 +321,13 @@ export const updateSubscriptionRequestSchema = z
      * empty array = detach all. Granular attach/detach also available at
      * `/api/subscriptions/:id/library-filters[/:libId]`.
      */
-    libraryFilterIds: z.array(z.number().int().positive()).optional(),
+    libraryFilterIds: z.array(z.number().int().positive()).max(PER_SUB_ARRAY_MAX).optional(),
     /**
      * Bulk-replace the private inline filter set. Absent = leave alone;
      * empty array = drop all. Granular CRUD also available at
      * `/api/subscriptions/:id/filters[/:filterId]`.
      */
-    inlineFilters: z.array(inlineFilterInputSchema).optional(),
+    inlineFilters: z.array(inlineFilterInputSchema).max(PER_SUB_ARRAY_MAX).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'at least one field must be provided',

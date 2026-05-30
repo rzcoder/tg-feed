@@ -29,13 +29,13 @@ export const filterModeSchema = z.enum(FILTER_MODES);
 export type FilterMode = z.infer<typeof filterModeSchema>;
 
 export const textContainsParamsSchema = z.object({
-  value: z.string().min(1),
+  value: z.string().min(1).max(500),
   caseInsensitive: z.boolean().default(true),
 });
 export type TextContainsParams = z.infer<typeof textContainsParamsSchema>;
 
 export const textExcludesParamsSchema = z.object({
-  value: z.string().min(1),
+  value: z.string().min(1).max(500),
   caseInsensitive: z.boolean().default(true),
 });
 export type TextExcludesParams = z.infer<typeof textExcludesParamsSchema>;
@@ -63,8 +63,11 @@ export const minLengthParamsSchema = z.object({
 });
 export type MinLengthParams = z.infer<typeof minLengthParamsSchema>;
 
+// Cap usernames at the typical Telegram username length (~32) and the whole
+// array at a reasonable count; the evaluator walks every entry on every
+// matching message, so a 10⁴-element allowlist would slow down forwarding.
 export const senderAllowlistParamsSchema = z.object({
-  usernames: z.array(z.string().min(1)).min(1),
+  usernames: z.array(z.string().min(1).max(64)).min(1).max(100),
 });
 export type SenderAllowlistParams = z.infer<typeof senderAllowlistParamsSchema>;
 

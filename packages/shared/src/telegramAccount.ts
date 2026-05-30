@@ -90,7 +90,14 @@ export type TelegramLoginPasswordResponse = z.infer<typeof telegramLoginPassword
 // --- Login: raw-paste flow ----------------------------------------------
 
 export const telegramLoginRawRequestSchema = z.object({
-  sessionString: z.string().min(8).max(8192),
+  // The gramjs StringSession alphabet is base64-url-ish (`A-Za-z0-9+/=_-`).
+  // Garbage outside this set burns a connection attempt against Telegram for
+  // no reason; reject up-front so the route returns 400 instead of 502.
+  sessionString: z
+    .string()
+    .min(8)
+    .max(8192)
+    .regex(/^[A-Za-z0-9+/=_-]+$/, 'invalid character in session string'),
 });
 export type TelegramLoginRawRequest = z.infer<typeof telegramLoginRawRequestSchema>;
 

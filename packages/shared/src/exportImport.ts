@@ -30,9 +30,9 @@ export const EXPORT_SCHEMA_VERSION = 2;
 // --- Section: destinations -------------------------------------------------
 
 export const exportedDestinationSchema = z.object({
-  name: z.string().min(1),
-  chatId: z.string().min(1),
-  note: z.string().nullable().optional(),
+  name: z.string().min(1).max(80),
+  chatId: z.string().min(1).max(64),
+  note: z.string().max(200).nullable().optional(),
 });
 export type ExportedDestination = z.infer<typeof exportedDestinationSchema>;
 
@@ -127,9 +127,9 @@ export const exportedInlineFilterSchema = z.discriminatedUnion('ruleType', [
 export type ExportedInlineFilter = z.infer<typeof exportedInlineFilterSchema>;
 
 export const exportedSubscriptionSchema = z.object({
-  sourceChatId: z.string().min(1),
-  sourceTitle: z.string().min(1),
-  handle: z.string().nullable(),
+  sourceChatId: z.string().min(1).max(64),
+  sourceTitle: z.string().min(1).max(255),
+  handle: z.string().max(64).nullable(),
   enabled: z.boolean(),
   /**
    * Embedded by-natural-key reference to the destination. Null means the
@@ -139,13 +139,13 @@ export const exportedSubscriptionSchema = z.object({
    */
   destination: z
     .object({
-      chatId: z.string().min(1),
-      name: z.string().min(1),
+      chatId: z.string().min(1).max(64),
+      name: z.string().min(1).max(80),
     })
     .nullable(),
-  inlineFilters: z.array(exportedInlineFilterSchema),
+  inlineFilters: z.array(exportedInlineFilterSchema).max(200),
   /** Library filter references by name. Resolved at import time. */
-  libraryFilters: z.array(z.object({ name: z.string().min(1) })),
+  libraryFilters: z.array(z.object({ name: z.string().min(1).max(80) })).max(200),
 });
 export type ExportedSubscription = z.infer<typeof exportedSubscriptionSchema>;
 
@@ -194,15 +194,21 @@ export const EXPORT_SECTIONS = [
 export type ExportSection = (typeof EXPORT_SECTIONS)[number];
 export const exportSectionSchema = z.enum(EXPORT_SECTIONS);
 
+// Generous upper bound on per-section row counts. Anything beyond ~2k is
+// almost certainly misuse (or attack) — the import endpoint already has a
+// 2 MB body limit, but caps here keep the parser from materializing a 10⁴+
+// element array before the route handler even runs.
+const EXPORT_ARRAY_MAX = 2000;
+
 // Sections are optional — absent means "not exported". This lets the import
 // flow distinguish "user didn't export this" from "user exported nothing".
 export const exportFileSchema = z.object({
   schemaVersion: z.number().int().positive(),
   exportedAt: z.string(),
   appVersion: z.string(),
-  destinations: z.array(exportedDestinationSchema).optional(),
-  libraryFilters: z.array(exportedLibraryFilterSchema).optional(),
-  subscriptions: z.array(exportedSubscriptionSchema).optional(),
+  destinations: z.array(exportedDestinationSchema).max(EXPORT_ARRAY_MAX).optional(),
+  libraryFilters: z.array(exportedLibraryFilterSchema).max(EXPORT_ARRAY_MAX).optional(),
+  subscriptions: z.array(exportedSubscriptionSchema).max(EXPORT_ARRAY_MAX).optional(),
   appSettings: exportedAppSettingsSchema.optional(),
 });
 export type ExportFile = z.infer<typeof exportFileSchema>;

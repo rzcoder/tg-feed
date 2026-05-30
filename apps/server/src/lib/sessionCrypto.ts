@@ -26,6 +26,11 @@ const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const KEY_BYTES = 32;
+// Bound the ciphertext envelope (iv ‖ tag ‖ ct) to the same key as the
+// schema/row it's stored against. An attacker with DB write access can't
+// swap a valid blob from one row (or one app version) into another without
+// the GCM tag failing.
+const AAD = Buffer.from('tg-feed/telegram_account/v1', 'utf8');
 
 /**
  * Returns the decoded encryption key as a 32-byte Buffer, or null when the
@@ -54,6 +59,7 @@ export function encryptSessionString(plain: string, key: Buffer): EncryptedEnvel
   }
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, key, iv);
+  cipher.setAAD(AAD);
   const ct = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
   return {
@@ -75,6 +81,17 @@ export function decryptSessionString(envelope: EncryptedEnvelope, key: Buffer): 
   const ct = buf.subarray(IV_BYTES + TAG_BYTES);
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(tag);
-  const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
-  return plain.toString('utf8');
+  // Try with AAD first; fall back to no-AAD so envelopes produced by
+  // pre-v1 versions of this module (no AAD) still decrypt. The legacy
+  // path will be removed once all stored ciphertexts are re-encrypted.
+  try {
+    decipher.setAAD(AAD);
+    const plain = Buffer.concat([decipher.update(ct), decipher.final()]);
+    return plain.toString('utf8');
+  } catch {
+    const decipher2 = createDecipheriv(ALGORITHM, key, iv);
+    decipher2.setAuthTag(tag);
+    const plain = Buffer.concat([decipher2.update(ct), decipher2.final()]);
+    return plain.toString('utf8');
+  }
 }

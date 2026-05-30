@@ -28,6 +28,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Production source maps leak original TypeScript to anyone who can fetch
+    // the bundle (i.e. any authenticated client). Disable; build-time errors
+    // still surface via the original `tsc -b` pass in `pnpm build`.
+    sourcemap: false,
   },
 });

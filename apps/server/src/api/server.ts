@@ -18,7 +18,8 @@
  *   5. Public scope (just `POST /api/auth/login`)
  *   6. Authed scope (`requireAuth` preHandler + everything else)
  */
-import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastifyCookie from '@fastify/cookie';
@@ -37,7 +38,8 @@ import type { ImportInviteFn } from '../tg/inviteResolver.js';
 import type { JoinChannelFn } from '../tg/joinChannel.js';
 import type { LoginSessionStore } from '../tg/loginSession.js';
 import type { ProfilePhotoFetcher } from '../tg/profilePhoto.js';
-import { requireAuth, type WebAuth } from './auth.js';
+import { makeRequireAuth, type WebAuth } from './auth.js';
+import { createSessionStore, type SessionStore } from './sessionStore.js';
 import { makeErrorHandler } from './errorHandler.js';
 import { registerAuthRoutes, registerLoginRoute } from './routes/auth.js';
 import { registerDestinationRoutes } from './routes/destinations.js';
@@ -129,6 +131,12 @@ export interface CreateApiServerDeps {
    * the row but no swap occurs.
    */
   reloadTelegramSession?: () => Promise<void>;
+  /**
+   * Optional override for the DB-backed session store. Defaults to
+   * `createSessionStore({ db })`. Tests may inject a custom one but the
+   * default is fine for both production and the standard test scaffolding.
+   */
+  sessionStore?: SessionStore;
 }
 
 const DEFAULT_TELEGRAM_STATUS: TelegramStatus = {
@@ -136,6 +144,36 @@ const DEFAULT_TELEGRAM_STATUS: TelegramStatus = {
   connected: false,
   reason: 'Telegram client not initialized',
 };
+
+/**
+ * Compute the sha256 hashes of every inline `<script>` tag found in the
+ * built `apps/web/dist/index.html` so they can be added to the CSP. This
+ * preserves the no-FOUC inline theme-bootstrap script while still pinning a
+ * strict `script-src 'self' 'sha256-...'` policy.
+ *
+ * Tolerant: if the file is missing (dev mode) or contains no inline
+ * scripts, returns []. The CSP just allows nothing inline in that case,
+ * which is the right default — production deploys MUST have the bundle.
+ */
+function collectInlineScriptHashes(distRoot: string): string[] {
+  try {
+    const html = readFileSync(path.join(distRoot, 'index.html'), 'utf8');
+    const hashes: string[] = [];
+    // Match only inline scripts (no `src=` attribute). Capture the content
+    // between the tags exactly as served — that's what the browser hashes.
+    const re = /<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(html)) !== null) {
+      const content = match[1] ?? '';
+      if (content.trim().length === 0) continue;
+      const digest = createHash('sha256').update(content, 'utf8').digest('base64');
+      hashes.push(`'sha256-${digest}'`);
+    }
+    return hashes;
+  } catch {
+    return [];
+  }
+}
 
 export async function createApiServer(deps: CreateApiServerDeps): Promise<FastifyInstance> {
   const {
@@ -154,14 +192,50 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   const getTelegramStatus =
     deps.getTelegramStatus ?? ((): TelegramStatus => DEFAULT_TELEGRAM_STATUS);
 
-  const app = Fastify({ logger: false, bodyLimit: BODY_LIMIT_BYTES });
+  const app = Fastify({
+    logger: false,
+    bodyLimit: BODY_LIMIT_BYTES,
+    // Required for the login rate-limit (and `request.ip` everywhere) to key
+    // on the real client IP behind a reverse proxy / Docker NAT / CDN. Deploys
+    // MUST terminate TLS upstream and forward X-Forwarded-For; see DEPLOY.md.
+    trustProxy: true,
+  });
 
   await app.register(fastifyCookie, { secret: webAuth.sessionSecret });
 
-  // Helmet adds standard security headers (X-Content-Type-Options, X-Frame-Options,
-  // Referrer-Policy, etc.). CSP is disabled because the SPA bundle includes inline
-  // scripts/styles from Vite — enabling CSP without per-build nonces breaks it.
-  await app.register(fastifyHelmet, { contentSecurityPolicy: false });
+  // DB-backed session store. Cookies carry an opaque token; this is the
+  // server-side lookup that actually decides whether a request is authed.
+  const sessionStore = deps.sessionStore ?? createSessionStore({ db });
+
+  // Helmet adds standard security headers (X-Content-Type-Options,
+  // X-Frame-Options, Referrer-Policy, etc.). CSP is enabled in production
+  // using the inline-script hash from the built `index.html`. In dev the
+  // hash is unknown (Vite serves an unbuilt index.html with HMR scripts), so
+  // CSP is left off there — same posture as before this change.
+  const inlineScriptHashes = isProd ? collectInlineScriptHashes(WEB_DIST_ROOT) : [];
+  await app.register(fastifyHelmet, {
+    contentSecurityPolicy: isProd
+      ? {
+          useDefaults: true,
+          directives: {
+            defaultSrc: ["'self'"],
+            // `data:` covers profile-photo `<img>`s; inline hashes cover the
+            // theme bootstrap script in `index.html`.
+            imgSrc: ["'self'", 'data:'],
+            scriptSrc: ["'self'", ...inlineScriptHashes],
+            // Vite's CSS pipeline emits some inline styles for runtime
+            // theming; `'unsafe-inline'` for styleSrc is the standard
+            // pragmatic carve-out.
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+            // `upgrade-insecure-requests` is on by default via `useDefaults`.
+          },
+        }
+      : false,
+  });
 
   // Register rate-limit globally with `global: false` so only routes that opt
   // in via `config.rateLimit` are throttled. The login route uses this; other
@@ -183,6 +257,10 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   await app.register(fastifyStatic, {
     root: WEB_DIST_ROOT,
     prefix: '/',
+    // Refuse to serve dotfiles even if a stray `.env` / `.git/` ends up in
+    // the build output — default is `'allow'` which would happily serve them.
+    dotfiles: 'deny',
+    index: ['index.html'],
   });
 
   app.setErrorHandler(makeErrorHandler(logger));
@@ -190,7 +268,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // Public scope — only the login route. No `requireAuth` preHandler.
   await app.register(
     async (publicScope) => {
-      registerLoginRoute(publicScope, { webAuth, isProd, logger });
+      registerLoginRoute(publicScope, { webAuth, isProd, logger, sessionStore });
     },
     { prefix: '/api' },
   );
@@ -199,8 +277,8 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // routes registered inside this plugin only. No per-route opt-in.
   await app.register(
     async (authedScope) => {
-      authedScope.addHook('preHandler', requireAuth);
-      registerAuthRoutes(authedScope, { isProd });
+      authedScope.addHook('preHandler', makeRequireAuth(sessionStore));
+      registerAuthRoutes(authedScope, { isProd, sessionStore });
       registerDestinationRoutes(authedScope, {
         db,
         getTelegramStatus,

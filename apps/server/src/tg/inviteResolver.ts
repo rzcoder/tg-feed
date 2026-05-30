@@ -82,6 +82,15 @@ function chatTitle(chat: unknown): string {
   return c.title ?? '';
 }
 
+// Invite hashes are bearer credentials — anyone with the full string can join
+// the chat (subject to expiry/usage limits). Logs may be shipped to external
+// systems; only the first 6 chars survive so the operator can still correlate
+// without leaking the credential.
+function redactInviteHash(hash: string): string {
+  if (hash.length <= 6) return '***';
+  return `${hash.slice(0, 6)}…`;
+}
+
 export async function checkInvite(client: InviteClient, hash: string): Promise<InvitePreview> {
   let result: Api.TypeChatInvite;
   try {
@@ -136,11 +145,14 @@ export function createImportInvite(client: InviteClient, logger: Logger): Import
           const preview = await checkInvite(client, hash);
           return { status: 'ok', chatId: preview.chatId, title: preview.title };
         } catch (checkErr) {
-          logger.warn({ err: checkErr, hash }, 'check-after-already-participant failed');
+          logger.warn(
+            { err: checkErr, hashPrefix: redactInviteHash(hash) },
+            'check-after-already-participant failed',
+          );
           return { status: 'no_access', chatId: null, title: null };
         }
       }
-      logger.warn({ err, hash }, 'ImportChatInvite failed');
+      logger.warn({ err, hashPrefix: redactInviteHash(hash) }, 'ImportChatInvite failed');
       return { status: 'no_access', chatId: null, title: null };
     }
     const chats: unknown[] = (updates as { chats?: unknown[] }).chats ?? [];

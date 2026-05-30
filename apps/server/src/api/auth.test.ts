@@ -39,7 +39,11 @@ describe('verifyPassword', () => {
   it('returns false when plain is empty', () => {
     expect(verifyPassword('', 'hunter2')).toBe(false);
   });
-  it('returns true when both sides are empty (SHA-256 collision-free comparison)', () => {
-    expect(verifyPassword('', '')).toBe(true);
+  it('refuses empty-on-both-sides as a defensive guard against degenerate inputs', () => {
+    // Pre-defensive-guard, `verifyPassword('', '')` returned true because both
+    // SHA-256 digests of the empty string are equal. Today we explicitly bail
+    // when either side is falsy so a misconfigured `WEB_PASSWORD=''` (which
+    // upstream zod also rejects, but defense-in-depth) can't unlock the API.
+    expect(verifyPassword('', '')).toBe(false);
   });
 });

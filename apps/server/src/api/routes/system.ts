@@ -107,11 +107,21 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
     return { telegram: getTelegramStatus() };
   });
 
-  app.post('/system/export', async (request): Promise<ExportFile> => {
-    const body = exportRequestSchema.parse(request.body);
-    const sectionSet = new Set<ExportSection>(body.sections);
-    return buildExport(db, sectionSet);
-  });
+  app.post(
+    '/system/export',
+    {
+      // Behind cookie auth and SameSite=strict, but cap nonetheless: a stolen
+      // cookie or compromised browser extension shouldn't be able to grind
+      // out unlimited full-DB dumps. Generous enough that legitimate
+      // back-to-back exports work; tight enough that abuse is bounded.
+      config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+    },
+    async (request): Promise<ExportFile> => {
+      const body = exportRequestSchema.parse(request.body);
+      const sectionSet = new Set<ExportSection>(body.sections);
+      return buildExport(db, sectionSet);
+    },
+  );
 
   app.post(
     '/system/import',
@@ -141,11 +151,20 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
     },
   );
 
-  app.post('/system/wipe', async (request): Promise<WipeResult> => {
-    const body = wipeRequestSchema.parse(request.body);
-    const sectionSet = new Set<WipeSection>(body.sections);
-    return applyWipe(db, sectionSet);
-  });
+  app.post(
+    '/system/wipe',
+    {
+      // Destructive — cap aggressively. A leaked cookie or stored-XSS
+      // shouldn't be able to nuke the DB in a tight loop. Three calls per
+      // minute is still plenty for a legitimate "clear & re-import" flow.
+      config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+    },
+    async (request): Promise<WipeResult> => {
+      const body = wipeRequestSchema.parse(request.body);
+      const sectionSet = new Set<WipeSection>(body.sections);
+      return applyWipe(db, sectionSet);
+    },
+  );
 }
 
 // --- Export ----------------------------------------------------------------

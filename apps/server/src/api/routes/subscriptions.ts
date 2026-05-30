@@ -170,6 +170,25 @@ export function registerSubscriptionRoutes(
     if (body.libraryFilterIds && body.libraryFilterIds.length > 0) {
       assertLibraryFiltersExist(db, body.libraryFilterIds);
     }
+    // Source==destination guard. A subscription whose source chat id is also
+    // a destination chat id would forward into itself: the bot's own forwards
+    // would (via the history poller, which bypasses the `incoming:true`
+    // filter on the live listener) be re-ingested and forwarded again on the
+    // next sweep, ad infinitum. Reject up-front; safe to skip when the body
+    // uses an `inviteHash` since we don't know the chat id until after join,
+    // and the post-join shape is checked below.
+    if (body.sourceChatId !== undefined) {
+      const conflict = db
+        .select({ id: destinations.id })
+        .from(destinations)
+        .where(eq(destinations.chatId, body.sourceChatId))
+        .get();
+      if (conflict) {
+        throw new ValidationError(
+          'sourceChatId matches an existing destination — would cause a forwarding loop',
+        );
+      }
+    }
 
     // Resolve the source chat id from either the resolved id (existing flow)
     // or by joining via invite hash (new flow). The hash path is destructive
@@ -190,6 +209,23 @@ export function registerSubscriptionRoutes(
       preJoined = true;
     } else {
       sourceChatId = body.sourceChatId!;
+    }
+    // Re-check post-resolve in case the invite path landed on a chat that is
+    // already a destination. (Same loop-prevention rationale as above.) We
+    // intentionally don't undo the join — at this point the bot has joined
+    // the channel; the operator just can't use it as a subscription with
+    // that destination configuration.
+    {
+      const conflict = db
+        .select({ id: destinations.id })
+        .from(destinations)
+        .where(eq(destinations.chatId, sourceChatId))
+        .get();
+      if (conflict) {
+        throw new ValidationError(
+          'resolved source chat is also a destination — would cause a forwarding loop',
+        );
+      }
     }
 
     const newId = db.transaction((tx) => {

@@ -13,6 +13,12 @@
  * configured. The encrypted blob is written to `telegram_account` (single
  * row, id=1) and `reloadTelegramSession()` is called so the gramjs runtime
  * picks up the new credentials without a restart.
+ *
+ * Each in-progress login session is bound to the caller's web-session cookie
+ * token via `readSessionToken(request)`; verify/password/cancel reject if a
+ * second authed tab tries to drive someone else's flow. The phone-code and
+ * password endpoints are rate-limited per IP — brute-forcing a 5-digit
+ * Telegram code via this surface would shadow-ban the operator's phone.
  */
 import type { FastifyInstance } from 'fastify';
 import {
@@ -32,6 +38,7 @@ import { deleteAccount, getActiveAccount, upsertAccount } from '../../db/telegra
 import { AppError } from '../../lib/errors.js';
 import { encryptSessionString, getKeyFingerprint } from '../../lib/sessionCrypto.js';
 import type { LoginAccountInfo, LoginSessionStore } from '../../tg/loginSession.js';
+import { readSessionToken } from '../auth.js';
 
 export interface RegisterTelegramAccountRoutesDeps {
   db: Db;
@@ -60,45 +67,74 @@ export function registerTelegramAccountRoutes(
     });
   });
 
-  app.post('/tg/login/start', async (request) => {
-    requireKeyConfigured(getEncryptionKey);
-    const store = requireStore(loginSessionStore);
-    const body = telegramLoginStartRequestSchema.parse(request.body);
-    return store.start(body.phoneNumber);
-  });
+  app.post(
+    '/tg/login/start',
+    {
+      // Telegram throttles SendCode aggressively per phone number; cap our own
+      // call rate to avoid getting the operator's phone number shadow-banned
+      // when the UI fires repeated start requests.
+      config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
+    },
+    async (request) => {
+      requireKeyConfigured(getEncryptionKey);
+      const store = requireStore(loginSessionStore);
+      const body = telegramLoginStartRequestSchema.parse(request.body);
+      const owner = readSessionToken(request) ?? '';
+      return store.start(body.phoneNumber, owner);
+    },
+  );
 
-  app.post('/tg/login/verify', async (request): Promise<TelegramLoginVerifyResponse> => {
-    requireKeyConfigured(getEncryptionKey);
-    const store = requireStore(loginSessionStore);
-    const body = telegramLoginVerifyRequestSchema.parse(request.body);
-    const result = await store.verifyCode(body.sessionId, body.code);
-    if ('needsPassword' in result) {
-      return { done: false, needsPassword: true };
-    }
-    const account = await commitLogin({
-      db,
-      ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
-      info: result.account,
-      ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
-      getTelegramStatus,
-    });
-    return { done: true, account };
-  });
+  app.post(
+    '/tg/login/verify',
+    {
+      // Brute-forcing the SMS code via this surface would shadow-ban the
+      // phone — Telegram counts attempts per phone+app, not per IP. Stay
+      // well under the limit; legitimate users only need a handful of tries.
+      config: { rateLimit: { max: 8, timeWindow: '5 minutes' } },
+    },
+    async (request): Promise<TelegramLoginVerifyResponse> => {
+      requireKeyConfigured(getEncryptionKey);
+      const store = requireStore(loginSessionStore);
+      const body = telegramLoginVerifyRequestSchema.parse(request.body);
+      const owner = readSessionToken(request) ?? '';
+      const result = await store.verifyCode(body.sessionId, body.code, owner);
+      if ('needsPassword' in result) {
+        return { done: false, needsPassword: true };
+      }
+      const account = await commitLogin({
+        db,
+        ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
+        info: result.account,
+        ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
+        getTelegramStatus,
+      });
+      return { done: true, account };
+    },
+  );
 
-  app.post('/tg/login/password', async (request): Promise<TelegramLoginCompleted> => {
-    requireKeyConfigured(getEncryptionKey);
-    const store = requireStore(loginSessionStore);
-    const body = telegramLoginPasswordRequestSchema.parse(request.body);
-    const result = await store.verifyPassword(body.sessionId, body.password);
-    const account = await commitLogin({
-      db,
-      ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
-      info: result.account,
-      ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
-      getTelegramStatus,
-    });
-    return { done: true, account };
-  });
+  app.post(
+    '/tg/login/password',
+    {
+      // Same reasoning as `/verify` — 2FA password brute-force is upstream-
+      // rate-limited but the operator pays the bill.
+      config: { rateLimit: { max: 8, timeWindow: '5 minutes' } },
+    },
+    async (request): Promise<TelegramLoginCompleted> => {
+      requireKeyConfigured(getEncryptionKey);
+      const store = requireStore(loginSessionStore);
+      const body = telegramLoginPasswordRequestSchema.parse(request.body);
+      const owner = readSessionToken(request) ?? '';
+      const result = await store.verifyPassword(body.sessionId, body.password, owner);
+      const account = await commitLogin({
+        db,
+        ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
+        info: result.account,
+        ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
+        getTelegramStatus,
+      });
+      return { done: true, account };
+    },
+  );
 
   app.post('/tg/login/raw', async (request): Promise<TelegramLoginCompleted> => {
     requireKeyConfigured(getEncryptionKey);
@@ -118,7 +154,8 @@ export function registerTelegramAccountRoutes(
   app.post('/tg/login/cancel', async (request): Promise<TelegramLoginCancelResponse> => {
     const store = requireStore(loginSessionStore);
     const body = telegramLoginCancelRequestSchema.parse(request.body);
-    await store.cancel(body.sessionId);
+    const owner = readSessionToken(request) ?? '';
+    await store.cancel(body.sessionId, owner);
     return { ok: true };
   });
 

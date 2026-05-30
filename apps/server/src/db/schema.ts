@@ -297,3 +297,35 @@ export type NewTelegramAccount = typeof telegramAccount.$inferInsert;
 
 export type ForwardLogEntry = typeof forwardLog.$inferSelect;
 export type NewForwardLogEntry = typeof forwardLog.$inferInsert;
+
+/**
+ * Per-login session row.
+ *
+ * Replaces the legacy "static cookie value + signed by SESSION_SECRET" scheme
+ * with opaque random tokens, so logout actually invalidates a session and a
+ * stolen cookie has a single revocation point. The token in the cookie is the
+ * primary-key lookup against this table.
+ *
+ * `expiresAt` is the hard cap; `lastSeenAt` is updated on each authed request
+ * for the sliding-window refresh (limits damage from a leaked cookie that
+ * sits unused). A background prune sweeps rows past expiry.
+ */
+export const webSessions = sqliteTable(
+  'web_sessions',
+  {
+    token: text('token').primaryKey(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    expiresAt: integer('expires_at', { mode: 'timestamp_ms' }).notNull(),
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    byExpiresAt: index('idx_web_sessions_expires_at').on(t.expiresAt),
+  }),
+);
+
+export type WebSession = typeof webSessions.$inferSelect;
+export type NewWebSession = typeof webSessions.$inferInsert;

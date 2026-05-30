@@ -249,6 +249,31 @@ function handleRateLimit(
   return { status: 'flood_wait', seconds, kind };
 }
 
+// Hard cap on the size of the `raw_message` JSON snapshot persisted per row.
+// `toJsonSafe` already truncates at 64KB (string length, now byte length),
+// but a malicious / pathological gramjs payload could still slip a large
+// nested object through; clamp at the storage boundary as a second wall.
+const RAW_MESSAGE_MAX_BYTES = 128 * 1024;
+
+/**
+ * If a snapshot would store more than `RAW_MESSAGE_MAX_BYTES` of JSON, swap
+ * it for a small truncation marker so the row still inserts cleanly and the
+ * UI surfaces the reason instead of streaming a huge JSON blob.
+ */
+function clampRawMessage(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  let encoded: string;
+  try {
+    encoded = JSON.stringify(value);
+  } catch {
+    return null;
+  }
+  if (encoded === undefined) return null;
+  const byteLen = Buffer.byteLength(encoded, 'utf8');
+  if (byteLen <= RAW_MESSAGE_MAX_BYTES) return value;
+  return { __truncated: true, size: byteLen };
+}
+
 /**
  * Insert N `forward_log` rows in one batch and return the assigned ids in
  * the same order so the caller can attach them to the emitted SSE event.
@@ -265,6 +290,7 @@ function writeLogs(
   rawMessage: unknown,
 ): number[] {
   if (rows.length === 0) return [];
+  const safeRaw = clampRawMessage(rawMessage);
   const inserted = db
     .insert(forwardLog)
     .values(
@@ -274,7 +300,7 @@ function writeLogs(
         destMessageId: r.destMessageId,
         status,
         error,
-        rawMessage,
+        rawMessage: safeRaw,
       })),
     )
     .returning({ id: forwardLog.id })

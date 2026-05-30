@@ -40,10 +40,21 @@ export interface LoginCompleted {
 }
 
 export interface LoginSessionStore {
-  start(phoneNumber: string): Promise<{ sessionId: string }>;
-  verifyCode(sessionId: string, code: string): Promise<LoginCompleted | VerifyCodeNeedsPassword>;
-  verifyPassword(sessionId: string, password: string): Promise<LoginCompleted>;
-  cancel(sessionId: string): Promise<void>;
+  /**
+   * Begin a phone-code sign-in. `ownerToken` ties this session to the
+   * calling web session so other authed tabs (or anyone who guesses a
+   * sessionId) can't drive someone else's in-progress login. Defaults to
+   * an empty string for raw-paste / legacy callers — those skip binding
+   * because they don't need to cross HTTP boundaries.
+   */
+  start(phoneNumber: string, ownerToken?: string): Promise<{ sessionId: string }>;
+  verifyCode(
+    sessionId: string,
+    code: string,
+    ownerToken?: string,
+  ): Promise<LoginCompleted | VerifyCodeNeedsPassword>;
+  verifyPassword(sessionId: string, password: string, ownerToken?: string): Promise<LoginCompleted>;
+  cancel(sessionId: string, ownerToken?: string): Promise<void>;
   validateRaw(sessionString: string): Promise<LoginAccountInfo>;
   shutdown(): Promise<void>;
 }
@@ -60,6 +71,13 @@ interface PendingLogin {
   phoneNumber: string;
   phoneCodeHash: string;
   expiresAt: number;
+  /**
+   * Web-session token (the cookie value) of the caller who created this
+   * login session. Empty string means "no binding" (legacy / raw-paste).
+   * `verifyCode`/`verifyPassword`/`cancel` reject if the caller's token
+   * doesn't match — keeps a second authed tab from hijacking the flow.
+   */
+  ownerToken: string;
 }
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000;
@@ -88,7 +106,7 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
     return randomBytes(SESSION_ID_BYTES).toString('hex');
   }
 
-  function takeSession(sessionId: string): PendingLogin {
+  function takeSession(sessionId: string, ownerToken: string | undefined): PendingLogin {
     const pending = sessions.get(sessionId);
     if (!pending) {
       throw new AppError(410, 'login_session_expired', 'login session not found or expired');
@@ -97,6 +115,17 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
       sessions.delete(sessionId);
       void disconnectSilently(pending.client, logger);
       throw new AppError(410, 'login_session_expired', 'login session expired');
+    }
+    // Owner-binding check: skip when either side has no token (raw-paste /
+    // legacy path), enforce strictly when both sides have one. Using `!==`
+    // is safe — opaque random tokens (random.bytes) don't admit a useful
+    // timing attack at HTTP-request granularity.
+    if (pending.ownerToken && ownerToken && pending.ownerToken !== ownerToken) {
+      throw new AppError(
+        403,
+        'login_session_owner_mismatch',
+        'login session belongs to another tab',
+      );
     }
     return pending;
   }
@@ -108,7 +137,7 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
   }
 
   return {
-    async start(phoneNumber) {
+    async start(phoneNumber, ownerToken = '') {
       const trimmed = phoneNumber.trim();
       if (!/^\+?\d{6,20}$/.test(trimmed)) {
         throw new ValidationError('invalid phone number');
@@ -138,6 +167,7 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
           phoneNumber: trimmed,
           phoneCodeHash,
           expiresAt: Date.now() + ttlMs,
+          ownerToken,
         });
         return { sessionId };
       } catch (err) {
@@ -146,8 +176,8 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
       }
     },
 
-    async verifyCode(sessionId, code) {
-      const pending = takeSession(sessionId);
+    async verifyCode(sessionId, code, ownerToken) {
+      const pending = takeSession(sessionId, ownerToken);
       const trimmedCode = code.trim();
       if (!/^\d{4,8}$/.test(trimmedCode)) {
         throw new ValidationError('invalid login code');
@@ -179,8 +209,8 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
       }
     },
 
-    async verifyPassword(sessionId, password) {
-      const pending = takeSession(sessionId);
+    async verifyPassword(sessionId, password, ownerToken) {
+      const pending = takeSession(sessionId, ownerToken);
       try {
         const passwordSrp = await pending.client.invoke(new Api.account.GetPassword());
         const check = await computeCheck(passwordSrp, password);
@@ -202,11 +232,21 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
       }
     },
 
-    async cancel(sessionId) {
-      const pending = dropSession(sessionId);
-      if (pending) {
-        await disconnectSilently(pending.client, logger);
+    async cancel(sessionId, ownerToken) {
+      const pending = sessions.get(sessionId);
+      if (!pending) return;
+      // Owner check — if the binding is present on both sides, enforce.
+      // We tolerate missing tokens on either side (raw-paste / legacy) so
+      // an operator cleaning up after a server restart can still cancel.
+      if (pending.ownerToken && ownerToken && pending.ownerToken !== ownerToken) {
+        throw new AppError(
+          403,
+          'login_session_owner_mismatch',
+          'login session belongs to another tab',
+        );
       }
+      sessions.delete(sessionId);
+      await disconnectSilently(pending.client, logger);
     },
 
     async validateRaw(sessionString) {

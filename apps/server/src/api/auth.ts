@@ -1,11 +1,15 @@
 /**
  * Auth primitives for the API server.
  *
- * Single-user model: a successful `POST /api/auth/login` sets a signed
- * cookie whose value is `'1'`. The signature is the security; the value
- * carries no info. Subsequent requests pass the auth pre-handler if and
- * only if the cookie is present, the signature verifies (against
- * `SESSION_SECRET`), and the value still equals `'1'` after unsigning.
+ * Single-user model. A successful `POST /api/auth/login` mints a fresh
+ * opaque random token (256-bit, base64url), stores it in `web_sessions` with
+ * an expiry, and sets a signed cookie carrying that token as the value.
+ *
+ * The signature exists for tamper detection; the *security* comes from the
+ * token being unguessable and existing in the DB. Logout deletes the row,
+ * so a leaked cookie can be revoked. Sliding refresh on each authed request
+ * keeps the user signed in while limiting damage from a long-unused
+ * captured cookie.
  *
  * `requireWebAuthEnv` parallels `tg/client.ts#requireTelegramEnv`. Both
  * `WEB_PASSWORD` and `SESSION_SECRET` stay `.optional()` in `config.ts`
@@ -21,12 +25,10 @@ import type { CookieSerializeOptions } from '@fastify/cookie';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import type { Config } from '../config.js';
 import { UnauthorizedError } from '../lib/errors.js';
+import type { SessionStore } from './sessionStore.js';
+import { SESSION_TTL_MS } from './sessionStore.js';
 
 export const SESSION_COOKIE_NAME = 'tg_feed_session';
-export const SESSION_COOKIE_VALUE = '1';
-// 7 days — short enough to limit damage from a leaked cookie, long enough
-// that a single-user operator isn't re-authing daily.
-const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 export interface WebAuth {
   password: string;
@@ -50,6 +52,10 @@ export function requireWebAuthEnv(cfg: Config): WebAuth {
 }
 
 export function verifyPassword(plain: string, expected: string): boolean {
+  // Defensive: refuse to match empty/missing credentials even if upstream
+  // validation lets them through. SHA-256 of '' is a deterministic constant —
+  // without this guard, two empty strings would compare equal and grant entry.
+  if (!plain || !expected) return false;
   const a = createHash('sha256').update(plain).digest();
   const b = createHash('sha256').update(expected).digest();
   return timingSafeEqual(a, b);
@@ -62,7 +68,7 @@ export function signedCookieOptions(isProd: boolean): CookieSerializeOptions {
     secure: isProd,
     signed: true,
     path: '/',
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: Math.floor(SESSION_TTL_MS / 1000),
   };
 }
 
@@ -75,11 +81,32 @@ export function clearedCookieOptions(isProd: boolean): CookieSerializeOptions {
   };
 }
 
-export async function requireAuth(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+/**
+ * Read a session token from the incoming signed cookie, or null if absent /
+ * tampered. Does NOT verify against the DB — the auth pre-handler does that
+ * via `sessionStore.verifyAndRefresh`.
+ */
+export function readSessionToken(request: FastifyRequest): string | null {
   const raw = request.cookies[SESSION_COOKIE_NAME];
-  if (!raw) throw new UnauthorizedError();
+  if (!raw) return null;
   const result = request.unsignCookie(raw);
-  if (!result.valid || result.value !== SESSION_COOKIE_VALUE) {
-    throw new UnauthorizedError();
+  if (!result.valid || typeof result.value !== 'string' || result.value.length === 0) {
+    return null;
   }
+  return result.value;
+}
+
+/**
+ * Build the Fastify pre-handler that enforces auth on a scoped route plugin.
+ * The factory takes the session store so the pre-handler closes over a real
+ * DB-backed lookup; tests build their own via `buildTestApp`.
+ */
+export function makeRequireAuth(sessionStore: SessionStore) {
+  return async function requireAuth(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+    const token = readSessionToken(request);
+    if (!token) throw new UnauthorizedError();
+    if (!sessionStore.verifyAndRefresh(token)) {
+      throw new UnauthorizedError();
+    }
+  };
 }
