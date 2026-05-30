@@ -24,8 +24,12 @@ RUN pnpm build
 
 # --- Prune to prod-only deps, keeping native modules compiled above ---
 FROM build AS prod-deps
+# Switching dev→prod makes pnpm 10 want to purge node_modules, and it prompts
+# for confirmation first. BuildKit RUN steps have no TTY and don't inherit CI,
+# so pnpm aborts (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY). Opt out of the
+# prompt so the prune runs non-interactively.
 RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --prod --frozen-lockfile
+    pnpm install --prod --frozen-lockfile --config.confirm-modules-purge=false
 
 # --- Runtime ---
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
