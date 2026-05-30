@@ -68,6 +68,9 @@ describe('createAccessMonitor', () => {
       bus: s.bus,
       logger,
       intervalMs: 100,
+      // Single-probe flip — the production default (3) is exercised by the
+      // dedicated hysteresis test further down.
+      noAccessFailThreshold: 1,
     });
 
     await monitor.probe();
@@ -130,6 +133,7 @@ describe('createAccessMonitor', () => {
       bus: s.bus,
       logger,
       intervalMs: 100,
+      noAccessFailThreshold: 1,
     });
 
     await monitor.probe();
@@ -329,6 +333,7 @@ describe('createAccessMonitor', () => {
       bus: s.bus,
       logger,
       intervalMs: 100,
+      noAccessFailThreshold: 1,
       fetchProfilePhoto,
     });
 
@@ -365,6 +370,52 @@ describe('createAccessMonitor', () => {
       .where(eq(subscriptions.id, s.subId))
       .get();
     expect(subRow?.iconDataUrl).toBeNull();
+    monitor.stop();
+  });
+
+  it('does not flip ok→no_access on a single failure when threshold > 1 (hysteresis)', async () => {
+    let calls = 0;
+    const client = makeClient(() => {
+      calls++;
+      return Promise.reject(new Error('CHANNEL_PRIVATE'));
+    });
+    const monitor = createAccessMonitor({
+      client,
+      db: s.dbHandle.db,
+      bus: s.bus,
+      logger,
+      intervalMs: 100,
+      noAccessFailThreshold: 3,
+    });
+
+    // First failure: badge stays `ok` (hysteresis), but `checked_at` updates.
+    await monitor.probe();
+    const sub1 = s.dbHandle.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, s.subId))
+      .get();
+    expect(sub1?.sourceAccessStatus).toBe('ok');
+    // Second failure: still `ok`.
+    await monitor.probe();
+    const sub2 = s.dbHandle.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, s.subId))
+      .get();
+    expect(sub2?.sourceAccessStatus).toBe('ok');
+    // Third failure crosses the threshold — now flip.
+    await monitor.probe();
+    const sub3 = s.dbHandle.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, s.subId))
+      .get();
+    expect(sub3?.sourceAccessStatus).toBe('no_access');
+    // No flapping events from the under-threshold sweeps; only the final one.
+    const subFlipEvents = s.busEvents.filter((e) => e.type === 'subscription.changed');
+    expect(subFlipEvents.length).toBe(1);
+    expect(calls).toBeGreaterThanOrEqual(3);
     monitor.stop();
   });
 });

@@ -34,6 +34,13 @@ import type { ProfilePhotoFetcher } from './profilePhoto.js';
 
 export const ACCESS_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+// Avoid flapping the "no access" badge on transient Telegram errors (a hostile
+// admin briefly kicking the bot, a one-off CHANNEL_PRIVATE on the wire, etc).
+// We only flip an existing `ok` status to `no_access` after this many
+// consecutive failures; going back to `ok` is always one-shot because access
+// being restored is unambiguous.
+const NO_ACCESS_CONSECUTIVE_FAILS = 3;
+
 // Subset of `TelegramClient` we depend on so tests can pass a stub.
 export interface AccessProbeClient {
   getEntity(entity: string | Api.TypeInputPeer | Api.TypeInputUser): Promise<unknown>;
@@ -46,6 +53,13 @@ export interface AccessMonitorDeps {
   logger: Logger;
   /** Default 24h. Overridable for tests. */
   intervalMs?: number;
+  /**
+   * How many consecutive failed probes flip a chat's status from `ok` to
+   * `no_access`. Default 3 — a hostile admin briefly kicking the bot, or a
+   * one-off `CHANNEL_PRIVATE` on the wire, shouldn't stamp the badge for a
+   * full 24h. Tests that want single-probe semantics override to 1.
+   */
+  noAccessFailThreshold?: number;
   /**
    * Lazy backfill: when a row's `icon_data_url` is null and the access
    * probe came back ok, the monitor calls this to fetch and stamp the
@@ -83,8 +97,14 @@ type Target = SubscriptionTarget | DestinationTarget;
 export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
   const { client, db, bus, logger, fetchProfilePhoto } = deps;
   const intervalMs = deps.intervalMs ?? ACCESS_CHECK_INTERVAL_MS;
+  const failThreshold = deps.noAccessFailThreshold ?? NO_ACCESS_CONSECUTIVE_FAILS;
   let stopped = false;
   let inFlight: Promise<void> | undefined;
+  // Per-chat consecutive-failure counter. Reset on success; flip the persisted
+  // status only after `failThreshold` sweeps in a row. Lives in memory —
+  // survives between sweeps but not restarts, which is fine because the
+  // operator can see the persisted status in the UI either way.
+  const failureCounts = new Map<string, number>();
 
   async function probe(): Promise<void> {
     if (stopped) return;
@@ -122,10 +142,35 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
     let iconBackfillCount = 0;
     for (const [chatId, group] of byChatId) {
       if (stopped) return;
-      const status = await probeOne(chatId);
-      if (status === 'skip') {
+      const probed = await probeOne(chatId);
+      if (probed === 'skip') {
         skippedCount++;
         continue;
+      }
+      // Hysteresis: a single failed probe doesn't flip the badge. Only after
+      // N consecutive failures does the persisted status move ok → no_access.
+      // Recovery (no_access → ok) is one-shot — the moment we can read the
+      // channel again, clear the badge.
+      let status: 'ok' | 'no_access';
+      if (probed === 'no_access') {
+        const next = (failureCounts.get(chatId) ?? 0) + 1;
+        failureCounts.set(chatId, next);
+        if (next < failThreshold) {
+          // Keep the previous persisted status; just bump the freshness ts.
+          // Recovery shortcut: if every target in the group was already
+          // `no_access`, treat as still `no_access` so we don't write `ok`.
+          const wasNoAccess = group.every((t) => t.prevStatus === 'no_access');
+          status = wasNoAccess ? 'no_access' : 'ok';
+          logger.debug(
+            { chatId, consecutiveFailures: next },
+            'access monitor: probe failed but still under flap threshold',
+          );
+        } else {
+          status = 'no_access';
+        }
+      } else {
+        failureCounts.delete(chatId);
+        status = 'ok';
       }
       if (status === 'ok') okCount++;
       else noAccessCount++;
