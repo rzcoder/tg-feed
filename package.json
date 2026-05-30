@@ -1,6 +1,6 @@
 {
   "name": "tg-feed",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Personal Telegram channel forwarding userbot with web UI for managing subscriptions and filters",
   "private": true,
   "type": "module",
