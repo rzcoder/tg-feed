@@ -46,7 +46,10 @@ import {
 } from './forwarding/index.js';
 import { createHistoryPoller, type HistoryPoller } from './forwarding/historyPoller.js';
 import { logger } from './lib/logger.js';
+import { createPoller } from './lib/poller.js';
 import { loadEncryptionKey } from './lib/sessionCrypto.js';
+import { pruneForwardLog } from './forwarding/retention.js';
+import { createSessionStore } from './api/sessionStore.js';
 import { createAccessMonitor, type AccessMonitor } from './tg/accessMonitor.js';
 import { createChatResolver, type ChatResolver } from './tg/chatResolver.js';
 import { createTelegramClient, disconnectClient, resolveTelegramEnv } from './tg/client.js';
@@ -378,6 +381,10 @@ async function main(): Promise<void> {
     }
   }
 
+  // DB-backed session store. Shared with the Fastify factory so both the
+  // login route and the prune task see the same set of rows.
+  const sessionStore = createSessionStore({ db });
+
   const app = await createApiServer({
     db,
     logger,
@@ -393,9 +400,26 @@ async function main(): Promise<void> {
     getEncryptionKey: () => loadEncryptionKey(config),
     loginSessionStore,
     reloadTelegramSession,
+    sessionStore,
   });
   await app.listen({ host: '0.0.0.0', port: config.PORT });
   logger.info({ port: config.PORT }, 'API listening');
+
+  // Background pruner: keeps `forward_log` bounded and reaps expired web
+  // sessions. One hour cadence is plenty — neither table changes fast enough
+  // to justify aggressive ticking, and a single sweep is cheap.
+  const prunePoller = createPoller({
+    intervalMs: 60 * 60 * 1000,
+    runOnStart: true,
+    logger,
+    errorLogMessage: 'prune task failed',
+    run: async () => {
+      pruneForwardLog({ db, logger });
+      const expired = sessionStore.prune();
+      if (expired > 0) logger.info({ expired }, 'pruned expired web sessions');
+    },
+  });
+  prunePoller.start();
 
   // Background Telegram bring-up. Errors are caught inside
   // tryStartTelegram; the outer .catch is a belt-and-suspenders for any
@@ -433,6 +457,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
     try {
+      prunePoller.stop();
       await app.close();
       // gramjs client.connect() doesn't accept an AbortSignal cleanly, so
       // wait for the in-flight init to settle before tearing down its
