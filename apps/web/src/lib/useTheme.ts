@@ -10,6 +10,7 @@
  * value in sync with React state and re-applies on changes.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { getTelegramColorScheme } from './telegram';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';
@@ -31,6 +32,10 @@ function readPreference(): ThemePreference {
 }
 
 function systemTheme(): ResolvedTheme {
+  // Inside Telegram, "system" follows the surrounding Telegram chrome so the
+  // Mini App doesn't clash with it; elsewhere it tracks the OS preference.
+  const tg = getTelegramColorScheme();
+  if (tg) return tg;
   if (typeof window === 'undefined' || !window.matchMedia) return 'dark';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }

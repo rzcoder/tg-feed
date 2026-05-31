@@ -9,12 +9,13 @@
     <meta name="theme-color" content="#222428" />
     <!--
       Telegram Mini App SDK. Populates window.Telegram.WebApp when the client
-      is opened inside Telegram so the app can auto-sign-in via initData. Loads
-      from telegram.org (allowed by the server CSP only when the bot is
-      configured); outside Telegram it's a harmless no-op and the password
-      login is used instead.
+      is opened inside Telegram so the app can auto-sign-in via initData.
+      `async` so a slow/blocked telegram.org never delays first paint for the
+      common (non-Telegram) case; the LoginPage waits for it to populate via
+      `waitForTelegramInitData()` only when it detects a Telegram launch.
+      Outside Telegram it's a harmless no-op and password login is used.
     -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script async src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       // Resolve theme before React mounts to avoid flash-of-wrong-theme.
       // Mirrors apps/web/src/lib/useTheme.ts — keep in lockstep.

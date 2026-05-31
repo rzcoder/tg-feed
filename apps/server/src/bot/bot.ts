@@ -39,6 +39,12 @@ export interface CreateBotDeps {
 
 const MENU_BUTTON_TEXT = 'Open tg-feed';
 
+// Upper bound on the two awaits in `stop()`. grammy's `stop()` issues a final
+// `getUpdates` round-trip with no timeout of its own, so without this a
+// shutdown while Telegram is unreachable would hang the whole teardown path
+// until the underlying HTTP client gives up.
+const STOP_TIMEOUT_MS = 5000;
+
 /** Whether the update's sender is on the admin allowlist. */
 export function isBotAdmin(adminIds: string[], userId: number | string | undefined): boolean {
   if (userId === undefined) return false;
@@ -55,6 +61,10 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
   const { token, adminIds, logger } = deps;
   const webAppUrl = resolveWebAppUrl(deps.publicUrl);
   const bot = new Bot(token);
+
+  // Retained so `stop()` can await the long-poll loop fully unwinding. Never
+  // rejects — a polling crash is logged in the `.catch` below.
+  let pollLoop: Promise<void> | undefined;
 
   bot.catch((err) => {
     // grammy wraps handler errors; log and swallow so a single bad update
@@ -113,9 +123,14 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
       }
 
       // Long-poll in the background. `bot.start()` resolves only when the bot
-      // stops, so we intentionally don't await it; errors surface via the
-      // attached catch.
-      void bot
+      // stops, so we intentionally don't await it here; errors surface via the
+      // attached catch. We retain the promise so `stop()` can await teardown.
+      //
+      // Note: because `bot.init()` above already ran, grammy's `start()` sets
+      // `pollingRunning = true` synchronously when invoked (its own setup is a
+      // no-op), so a `stop()` arriving immediately after will see a running
+      // bot — there's no stop-before-start window to lose.
+      pollLoop = bot
         .start({
           onStart: (info) => logger.info({ username: info.username }, 'bot: started long-polling'),
         })
@@ -124,10 +139,40 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
 
     async stop() {
       try {
-        await bot.stop();
+        await withTimeout(bot.stop(), STOP_TIMEOUT_MS);
       } catch (err) {
-        logger.debug({ err }, 'bot: stop failed');
+        logger.debug({ err }, 'bot: stop failed or timed out');
+      }
+      // Ensure the poll loop has actually unwound before we report stopped, so
+      // the process isn't left with a dangling getUpdates in flight.
+      if (pollLoop) {
+        try {
+          await withTimeout(pollLoop, STOP_TIMEOUT_MS);
+        } catch (err) {
+          logger.debug({ err }, 'bot: poll loop did not unwind in time');
+        }
       }
     },
   };
+}
+
+/**
+ * Resolve/reject with `p`, but reject after `ms` if it hasn't settled. The
+ * timer is unref'd so a pending timeout never keeps the process alive.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+    if (typeof timer.unref === 'function') timer.unref();
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }

@@ -106,8 +106,13 @@ export function verifyTelegramInitData(
     if (parsed.id === undefined || parsed.id === null) {
       return { ok: false, reason: 'initData user missing id' };
     }
+    // Telegram user ids are heading toward 64-bit, beyond JS's safe-integer
+    // range. `JSON.parse` would already have rounded `parsed.id` as a float,
+    // so pull the exact digits straight out of the raw JSON text instead and
+    // only fall back to the parsed value if the shape is unexpected.
+    const idMatch = /"id"\s*:\s*(-?\d+)/.exec(userRaw);
     user = {
-      id: String(parsed.id),
+      id: idMatch ? idMatch[1]! : String(parsed.id),
       firstName: typeof parsed.first_name === 'string' ? parsed.first_name : null,
       lastName: typeof parsed.last_name === 'string' ? parsed.last_name : null,
       username: typeof parsed.username === 'string' ? parsed.username : null,

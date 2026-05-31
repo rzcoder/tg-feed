@@ -89,6 +89,10 @@ export function registerLoginRoute(app: FastifyInstance, deps: RegisterLoginDeps
   );
 }
 
+// Max age accepted for a Mini App initData payload on the auth route. Short
+// because the client posts it right after launch; bounds replay of a leak.
+const TELEGRAM_INITDATA_MAX_AGE_SEC = 5 * 60;
+
 export interface RegisterTelegramAuthDeps {
   /** Null when the bot token / admin allowlist isn't configured. */
   telegramAuth: TelegramAuth | null;
@@ -127,7 +131,13 @@ export function registerTelegramAuthRoute(
       }
 
       const body = telegramAuthRequestSchema.parse(request.body);
-      const result = verifyTelegramInitData(body.initData, telegramAuth.botToken);
+      // Tight freshness window: the web client posts initData immediately on
+      // Mini App launch, so a valid payload is seconds old. Capping at 5 min
+      // (vs. the verifier's lenient 24h default) shrinks the replay window for
+      // any captured initData that mints a full admin session.
+      const result = verifyTelegramInitData(body.initData, telegramAuth.botToken, {
+        maxAgeSec: TELEGRAM_INITDATA_MAX_AGE_SEC,
+      });
       if (!result.ok) {
         deps.logger.warn(
           { ip: request.ip, reason: result.reason },

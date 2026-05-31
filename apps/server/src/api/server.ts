@@ -233,18 +233,20 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // hash is unknown (Vite serves an unbuilt index.html with HMR scripts), so
   // CSP is left off there — same posture as before this change.
   const inlineScriptHashes = isProd ? collectInlineScriptHashes(distRoot) : [];
-  // When the Telegram Mini App is enabled, the client loads Telegram's
-  // `telegram-web-app.js` SDK from telegram.org and must be embeddable by
-  // Telegram's web clients (web/webk/webz.telegram.org) — the strict
-  // `frameAncestors 'none'` would otherwise blank the app inside Telegram Web.
-  // Native Telegram clients run the Mini App in a webview not subject to
-  // `frame-ancestors`, but the SDK script still needs the script-src grant.
-  // Password-only deploys keep the tight default.
+  // `index.html` loads Telegram's `telegram-web-app.js` SDK unconditionally
+  // (it's inert outside Telegram), so `script-src` allows telegram.org in
+  // every prod deploy — gating it only produced a CSP-violation console error
+  // on the common password-only deploy without buying any isolation, since
+  // our own HTML requests the script either way. telegram.org is a trusted
+  // first-party origin here.
+  //
+  // `frame-ancestors`, by contrast, IS gated: only when the Mini App is
+  // enabled do we let Telegram Web (web.telegram.org, incl. its /k and /z
+  // clients served from the same host) embed the authenticated console.
+  // Native Telegram clients use a webview not subject to `frame-ancestors`,
+  // so they need nothing here. Password-only deploys keep the strict default.
   const telegramWebApp = !!deps.telegramAuth;
-  const telegramScriptSrc = telegramWebApp ? ['https://telegram.org'] : [];
-  const frameAncestors = telegramWebApp
-    ? ["'self'", 'https://web.telegram.org', 'https://*.telegram.org']
-    : ["'none'"];
+  const frameAncestors = telegramWebApp ? ["'self'", 'https://web.telegram.org'] : ["'none'"];
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: isProd
       ? {
@@ -254,7 +256,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
             // `data:` covers profile-photo `<img>`s; inline hashes cover the
             // theme bootstrap script in `index.html`.
             imgSrc: ["'self'", 'data:'],
-            scriptSrc: ["'self'", ...inlineScriptHashes, ...telegramScriptSrc],
+            scriptSrc: ["'self'", ...inlineScriptHashes, 'https://telegram.org'],
             // Vite's CSS pipeline emits some inline styles for runtime
             // theming; `'unsafe-inline'` for styleSrc is the standard
             // pragmatic carve-out.

@@ -1,25 +1,6 @@
-import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { verifyTelegramInitData } from './initData.js';
-
-const BOT_TOKEN = '123456:test-bot-token';
-
-/**
- * Build a correctly-signed initData string the same way Telegram does, so the
- * verifier's happy path is exercised against a real signature rather than a
- * hand-fixed constant.
- */
-function signInitData(fields: Record<string, string>, token = BOT_TOKEN): string {
-  const pairs = Object.entries(fields)
-    .map(([k, v]) => `${k}=${v}`)
-    .sort();
-  const dataCheckString = pairs.join('\n');
-  const secretKey = createHmac('sha256', 'WebAppData').update(token).digest();
-  const hash = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-  const params = new URLSearchParams(fields);
-  params.set('hash', hash);
-  return params.toString();
-}
+import { signInitData, TEST_BOT_TOKEN as BOT_TOKEN } from './testing.js';
 
 function freshFields(overrides: Record<string, string> = {}): Record<string, string> {
   return {
@@ -82,5 +63,13 @@ describe('verifyTelegramInitData', () => {
   it('rejects empty inputs', () => {
     expect(verifyTelegramInitData('', BOT_TOKEN).ok).toBe(false);
     expect(verifyTelegramInitData(signInitData(freshFields()), '').ok).toBe(false);
+  });
+
+  it('preserves a 64-bit user id exactly (no float rounding)', () => {
+    const bigId = '9007199254740993'; // 2^53 + 1, not representable as a JS number
+    const initData = signInitData(freshFields({ user: `{"id":${bigId},"first_name":"Ada"}` }));
+    const result = verifyTelegramInitData(initData, BOT_TOKEN);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.user.id).toBe(bigId);
   });
 });

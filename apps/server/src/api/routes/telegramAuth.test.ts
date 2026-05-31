@@ -1,29 +1,18 @@
-import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { TelegramAuth } from '../auth.js';
+import { signInitData, TEST_BOT_TOKEN as BOT_TOKEN } from '../../bot/testing.js';
 import { buildTestApp, type TestApp } from '../testing.js';
 
-const BOT_TOKEN = '123456:test-bot-token';
-const ADMIN_ID = '4242';
+// A 64-bit-range admin id (> 2^53) doubles as a precision regression guard:
+// the id is embedded as a raw JSON integer literal so the server must extract
+// it from the text, not round-trip it through a lossy JS number.
+const ADMIN_ID = '9007199254740993';
 const TELEGRAM_AUTH: TelegramAuth = { botToken: BOT_TOKEN, adminIds: [ADMIN_ID] };
-
-/** Build a correctly-signed initData payload (same algorithm Telegram uses). */
-function signInitData(fields: Record<string, string>, token = BOT_TOKEN): string {
-  const dataCheckString = Object.entries(fields)
-    .map(([k, v]) => `${k}=${v}`)
-    .sort()
-    .join('\n');
-  const secretKey = createHmac('sha256', 'WebAppData').update(token).digest();
-  const hash = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
-  const params = new URLSearchParams(fields);
-  params.set('hash', hash);
-  return params.toString();
-}
 
 function initDataFor(userId: string): string {
   return signInitData({
     auth_date: String(Math.floor(Date.now() / 1000)),
-    user: JSON.stringify({ id: Number(userId), first_name: 'Op' }),
+    user: `{"id":${userId},"first_name":"Op"}`,
   });
 }
 
