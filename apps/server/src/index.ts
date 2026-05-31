@@ -25,9 +25,10 @@ import './lib/loadEnv.js';
 import process from 'node:process';
 import type { TelegramClient } from 'telegram';
 import type { TelegramStatus } from '@tg-feed/shared';
-import { readTelegramAuth, requireWebAuthEnv } from './api/auth.js';
+import { requireWebAuthEnv } from './api/auth.js';
 import { createApiServer } from './api/server.js';
 import { createTgFeedBot, type TgFeedBot } from './bot/bot.js';
+import { resolvePublicUrl, resolveTelegramAuth } from './bot/botConfig.js';
 import { config } from './config.js';
 import type { Db } from './db/client.js';
 import { closeDb, getDb } from './db/client.js';
@@ -376,20 +377,69 @@ async function main(): Promise<void> {
     }
   }
 
+  // Telegram Web App bot. Held in a mutable `bot` ref + a reload mutex so the
+  // bot-config route can live-swap it (new token / admin ids / public URL)
+  // without a restart.
+  let bot: TgFeedBot | undefined;
+  let botReloadPending: Promise<void> | null = null;
+
+  async function reloadBot(): Promise<void> {
+    if (shuttingDown) return;
+    if (botReloadPending) return botReloadPending;
+    botReloadPending = (async () => {
+      const auth = resolveTelegramAuth({ cfg: config, db, logger });
+      const publicUrl = resolvePublicUrl({ cfg: config, db });
+      // Stop the old bot FIRST: grammy long-polls and two getUpdates loops on
+      // the same token would 409. A brief no-bot window is acceptable.
+      const old = bot;
+      bot = undefined;
+      if (old) {
+        try {
+          await old.stop();
+        } catch (err) {
+          logger.debug({ err }, 'bot: stop during reload failed');
+        }
+      }
+      if (!auth) {
+        logger.info(
+          'Telegram Web App bot disabled (set a token + admin id via Settings → Bot, or TG_BOT_TOKEN + TG_BOT_ADMIN_IDS)',
+        );
+        return;
+      }
+      const next = createTgFeedBot({
+        token: auth.botToken,
+        adminIds: auth.adminIds,
+        publicUrl,
+        logger,
+      });
+      try {
+        await next.start();
+        bot = next;
+      } catch (err) {
+        logger.error({ err }, 'bot: failed to start — continuing without it');
+        bot = undefined;
+      }
+    })();
+    try {
+      await botReloadPending;
+    } finally {
+      botReloadPending = null;
+    }
+  }
+
   // DB-backed session store. Shared with the Fastify factory so both the
   // login route and the prune task see the same set of rows.
   const sessionStore = createSessionStore({ db });
-
-  // Telegram Web App auth config (bot token + admin allowlist). Null when the
-  // bot isn't configured — the API still boots password-only.
-  const telegramAuth = readTelegramAuth(config);
 
   const app = await createApiServer({
     db,
     logger,
     filterRegistry,
     webAuth,
-    telegramAuth,
+    cfg: config,
+    getTelegramAuth: () => resolveTelegramAuth({ cfg: config, db, logger }),
+    reloadBot,
+    getBotRunning: () => bot !== undefined,
     isProd: config.NODE_ENV === 'production',
     bus,
     getTelegramStatus: () => statusRef.current,
@@ -422,24 +472,9 @@ async function main(): Promise<void> {
   prunePoller.start();
 
   // Telegram Web App bot — best-effort: a failed start leaves the API serving
-  // (password login still works). Started after `listen()`.
-  let bot: TgFeedBot | undefined;
-  if (telegramAuth) {
-    bot = createTgFeedBot({
-      token: telegramAuth.botToken,
-      adminIds: telegramAuth.adminIds,
-      publicUrl: config.PUBLIC_URL,
-      logger,
-    });
-    try {
-      await bot.start();
-    } catch (err) {
-      logger.error({ err }, 'bot: failed to start — continuing without it');
-      bot = undefined;
-    }
-  } else {
-    logger.info('Telegram Web App bot disabled (set TG_BOT_TOKEN + TG_BOT_ADMIN_IDS to enable)');
-  }
+  // (password login still works). Started after `listen()`. `reloadBot`
+  // resolves the config DB-over-env and starts the bot when one is configured.
+  await reloadBot();
 
   // Background Telegram bring-up. Errors are caught inside
   // tryStartTelegram; the outer .catch is a belt-and-suspenders for any
@@ -478,6 +513,9 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'shutting down');
     try {
       prunePoller.stop();
+      // Let any in-flight bot reload settle before stopping the bot, so a
+      // reload triggered moments before SIGTERM can't leave a poll loop running.
+      if (botReloadPending) await botReloadPending.catch(() => {});
       if (bot) await bot.stop();
       await app.close();
       // gramjs client.connect() doesn't accept an AbortSignal cleanly, so

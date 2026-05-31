@@ -29,6 +29,7 @@ import fastifyRateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { TelegramStatus } from '@tg-feed/shared';
+import { parseConfig, type Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import type { EventBus } from '../events/bus.js';
 import type { FilterRegistry } from '../filters/registry.js';
@@ -46,6 +47,7 @@ import {
   registerLoginRoute,
   registerTelegramAuthRoute,
 } from './routes/auth.js';
+import { registerBotConfigRoutes } from './routes/botConfig.js';
 import { registerDestinationRoutes } from './routes/destinations.js';
 import { registerFilterRoutes } from './routes/filters.js';
 import { registerForwardLogRoutes } from './routes/forwardLog.js';
@@ -68,11 +70,27 @@ export interface CreateApiServerDeps {
   filterRegistry: FilterRegistry;
   webAuth: WebAuth;
   /**
-   * Telegram Web App auth config (bot token + admin allowlist). When present,
-   * enables `POST /api/auth/telegram` and relaxes the CSP for the Mini App.
-   * Null/omitted = password-only with the strict default CSP.
+   * Parsed env config — supplies the env fallbacks behind the bot-config
+   * route's DB-over-env resolver. Optional for tests; defaults to a config
+   * parsed from an empty env (all bot/web vars unset).
    */
-  telegramAuth?: TelegramAuth | null;
+  cfg?: Config;
+  /**
+   * Live getter for the Telegram Web App auth config (bot token + admin
+   * allowlist), resolved DB-over-env. Read per request by
+   * `POST /api/auth/telegram` so a config change made via Settings → Bot
+   * applies without a restart. Read once at boot to decide whether to relax
+   * the CSP `frame-ancestors` for the Mini App. Null/omitted (or a getter
+   * that yields null) = password-only with the strict default CSP.
+   */
+  getTelegramAuth?: () => TelegramAuth | null;
+  /**
+   * Live-swaps the long-polling bot after a config change. Wired to the
+   * bot-config route's PUT/DELETE. Optional for tests (no swap occurs).
+   */
+  reloadBot?: () => Promise<void>;
+  /** Whether the long-polling bot is currently running (for the masked GET). */
+  getBotRunning?: () => boolean;
   isProd: boolean;
   bus: EventBus;
   /** Override the SSE heartbeat interval — primarily for tests. */
@@ -208,6 +226,13 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   } = deps;
   const getTelegramStatus =
     deps.getTelegramStatus ?? ((): TelegramStatus => DEFAULT_TELEGRAM_STATUS);
+  const cfg = deps.cfg ?? parseConfig({});
+  const getTelegramAuth = deps.getTelegramAuth ?? ((): TelegramAuth | null => null);
+  // Resolved once at boot — used only to decide the CSP frame-ancestors. The
+  // route itself reads the getter per request, so token/admin changes apply
+  // live; toggling the bot from fully-off to on still needs a restart for the
+  // in-Telegram iframe embedding (the CSP), but the Mini App auth works live.
+  const bootTelegramAuth = getTelegramAuth();
   const distRoot = deps.webDistRoot ?? WEB_DIST_ROOT;
 
   const app = Fastify({
@@ -235,7 +260,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // always allows telegram.org. `frame-ancestors` lets Telegram Web embed the
   // console and is enabled only when the Mini App is configured; native
   // Telegram clients use a webview not subject to it.
-  const telegramWebApp = !!deps.telegramAuth;
+  const telegramWebApp = !!bootTelegramAuth;
   const frameAncestors = telegramWebApp ? ["'self'", 'https://web.telegram.org'] : ["'none'"];
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: isProd
@@ -316,7 +341,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
     async (publicScope) => {
       registerLoginRoute(publicScope, { webAuth, isProd, logger, sessionStore });
       registerTelegramAuthRoute(publicScope, {
-        telegramAuth: deps.telegramAuth ?? null,
+        getTelegramAuth,
         isProd,
         logger,
         sessionStore,
@@ -376,6 +401,15 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
           ? { reloadTelegramSession: deps.reloadTelegramSession }
           : {}),
         getTelegramStatus,
+      });
+      registerBotConfigRoutes(authedScope, {
+        cfg,
+        db,
+        getTelegramStatus,
+        ...(deps.getEncryptionKey !== undefined ? { getEncryptionKey: deps.getEncryptionKey } : {}),
+        ...(deps.reloadBot !== undefined ? { reloadBot: deps.reloadBot } : {}),
+        ...(deps.getBotRunning !== undefined ? { getBotRunning: deps.getBotRunning } : {}),
+        ...(getChatResolver !== undefined ? { getChatResolver } : {}),
       });
     },
     { prefix: '/api' },

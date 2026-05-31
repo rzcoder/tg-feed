@@ -41,12 +41,6 @@ export interface TelegramAuth {
   adminIds: string[];
 }
 
-/** Returns the Telegram auth config, or null when the bot token / allowlist is unset. */
-export function readTelegramAuth(cfg: Config): TelegramAuth | null {
-  if (!cfg.TG_BOT_TOKEN || cfg.TG_BOT_ADMIN_IDS.length === 0) return null;
-  return { botToken: cfg.TG_BOT_TOKEN, adminIds: cfg.TG_BOT_ADMIN_IDS };
-}
-
 export function requireWebAuthEnv(cfg: Config): WebAuth {
   const missing: string[] = [];
   if (!cfg.WEB_PASSWORD) missing.push('WEB_PASSWORD');

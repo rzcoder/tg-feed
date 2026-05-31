@@ -91,8 +91,12 @@ export function registerLoginRoute(app: FastifyInstance, deps: RegisterLoginDeps
 const TELEGRAM_INITDATA_MAX_AGE_SEC = 5 * 60;
 
 export interface RegisterTelegramAuthDeps {
-  /** Null when the bot token / admin allowlist isn't configured. */
-  telegramAuth: TelegramAuth | null;
+  /**
+   * Live getter for the bot auth config (token + admin allowlist), resolved
+   * DB-over-env. Read per request so a config change made via Settings → Bot
+   * applies without a restart. Yields null when the bot isn't configured.
+   */
+  getTelegramAuth: () => TelegramAuth | null;
   isProd: boolean;
   logger: Logger;
   sessionStore: SessionStore;
@@ -114,7 +118,7 @@ export function registerTelegramAuthRoute(
       },
     },
     async (request, reply) => {
-      const { telegramAuth } = deps;
+      const telegramAuth = deps.getTelegramAuth();
       if (!telegramAuth) {
         // Feature off — the SPA falls back to password login.
         throw new AppError(

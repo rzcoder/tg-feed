@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Label, Hint } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toast';
+import { BotConfigSection } from '@/components/settings/BotConfigSection';
 import { DataSection } from '@/components/settings/DataSection';
 import { TelegramAccountSection } from '@/components/settings/TelegramAccountSection';
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings';
@@ -67,6 +68,9 @@ export function SettingsPage() {
       <div className="scroll flex-1 min-h-0 px-4.5 pt-4 pb-6">
         <SectionLabel>Connection</SectionLabel>
         <TelegramAccountSection />
+
+        <SectionLabel className="mt-3">Bot</SectionLabel>
+        <BotConfigSection />
 
         <SectionLabel className="mt-3">Forwarding</SectionLabel>
         <div className="rounded-[var(--radius)] border border-border bg-surface p-4">

@@ -13,3 +13,4 @@ export * from './api.js';
 export * from './events.js';
 export * from './exportImport.js';
 export * from './telegramAccount.js';
+export * from './botConfig.js';

@@ -8,6 +8,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { TelegramStatus } from '@tg-feed/shared';
+import { type Config } from '../config.js';
 import type { Db } from '../db/client.js';
 import { destinations } from '../db/schema.js';
 import { createTestDb, type TestDbHandle } from '../db/testing.js';
@@ -71,8 +72,15 @@ export interface BuildTestAppOptions {
   /**
    * Telegram Web App auth config. Default undefined → the
    * `POST /api/auth/telegram` route reports `telegram_auth_disabled`.
+   * Forwarded as a `getTelegramAuth` getter to the server factory.
    */
   telegramAuth?: TelegramAuth | null;
+  /** Parsed env config for the bot-config route's DB-over-env fallbacks. */
+  cfg?: Config;
+  /** Stub for the bot live-swap invoked by the bot-config route's PUT/DELETE. */
+  reloadBot?: () => Promise<void>;
+  /** Whether the bot is "running" for the masked `GET /api/config/bot`. */
+  getBotRunning?: () => boolean;
 }
 
 const DEFAULT_TEST_TELEGRAM_STATUS: TelegramStatus = {
@@ -106,7 +114,12 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
       ? { getEncryptionKey: options.getEncryptionKey }
       : {}),
     ...(options.webDistRoot !== undefined ? { webDistRoot: options.webDistRoot } : {}),
-    ...(options.telegramAuth !== undefined ? { telegramAuth: options.telegramAuth } : {}),
+    ...(options.telegramAuth !== undefined
+      ? { getTelegramAuth: () => options.telegramAuth ?? null }
+      : {}),
+    ...(options.cfg !== undefined ? { cfg: options.cfg } : {}),
+    ...(options.reloadBot !== undefined ? { reloadBot: options.reloadBot } : {}),
+    ...(options.getBotRunning !== undefined ? { getBotRunning: options.getBotRunning } : {}),
   });
 
   return {
