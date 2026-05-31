@@ -27,19 +27,17 @@ export function LoginPage() {
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tgFailed, setTgFailed] = useState(false);
-  // Resolved Telegram initData: `undefined` while we wait for the async SDK to
-  // populate it (only when a Telegram launch is detected), `null` when this
-  // isn't a Telegram launch, or the signed string when available.
+  // Resolved Telegram initData: `undefined` while waiting for the async SDK,
+  // `null` when this isn't a Telegram launch, or the signed string.
   const [initData, setInitData] = useState<string | null | undefined>(() =>
     detectTelegramLaunch() ? undefined : null,
   );
-  // Ref (not state) so the auto sign-in fires exactly once even under React
-  // StrictMode's double-invoked effects — refs update synchronously and
-  // persist across the remount, so there's no double `mutate`.
+  // One-shot guard for the auto sign-in; a ref so it survives StrictMode's
+  // double-invoked effects.
   const attemptedRef = useRef(false);
 
-  // Resolve initData once. Waits briefly for the async SDK when a launch is
-  // detected, then signals the viewport ready. No-op once resolved.
+  // Resolve initData (waiting briefly for the async SDK on a launch) and signal
+  // the viewport ready.
   useEffect(() => {
     if (initData !== undefined) return;
     let cancelled = false;
@@ -53,9 +51,8 @@ export function LoginPage() {
     };
   }, [initData]);
 
-  // Auto sign-in via Telegram when opened as a Mini App. Runs once after both
-  // initData and `/me` resolve; on failure we fall through to the password
-  // form (kept as a backup login method).
+  // Auto sign-in via Telegram once initData and `/me` resolve; on failure the
+  // password form takes over.
   useEffect(() => {
     if (initData === undefined || me.isPending || me.data?.authenticated) return;
     if (attemptedRef.current) return;
@@ -102,10 +99,8 @@ export function LoginPage() {
     return <Navigate to="/" replace />;
   }
 
-  // Hold on the spinner while we (a) wait for the async Telegram SDK to
-  // populate initData, or (b) are mid auto-sign-in / waiting for the redirect.
-  // Drop to the password form only once Telegram auth has actually failed or
-  // this turned out not to be a Telegram launch (initData === null).
+  // Show the spinner while initData is resolving or the auto sign-in is in
+  // flight; drop to the password form on failure or when not a Telegram launch.
   const awaitingTelegram = initData === undefined || (initData !== null && !tgFailed);
   if (awaitingTelegram) {
     return (

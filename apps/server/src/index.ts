@@ -427,10 +427,8 @@ async function main(): Promise<void> {
   });
   prunePoller.start();
 
-  // Telegram Web App bot. Best-effort like the gramjs client: if the token is
-  // bad or Telegram is unreachable, the API still serves (password login +
-  // any already-working features). Started after `listen()` so the menu
-  // button points at a server that's actually up.
+  // Telegram Web App bot — best-effort: a failed start leaves the API serving
+  // (password login still works). Started after `listen()`.
   let bot: TgFeedBot | undefined;
   if (telegramAuth) {
     bot = createTgFeedBot({

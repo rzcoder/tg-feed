@@ -2,11 +2,10 @@
  * Telegram Mini App helpers.
  *
  * The Telegram SDK script (loaded in index.html) injects
- * `window.Telegram.WebApp` when the page runs inside a Telegram client. We
- * only need a sliver of its surface: the signed `initData` string (posted to
- * `/api/auth/telegram`) and a couple of lifecycle/theming calls. Everything
- * here is defensive — outside Telegram the global is absent and the helpers
- * report "not in Telegram" so the app falls back to password login.
+ * `window.Telegram.WebApp` when the page runs inside a Telegram client. These
+ * read the signed `initData` string (posted to `/api/auth/telegram`) and the
+ * color scheme, and drive the viewport lifecycle. Outside Telegram the global
+ * is absent and the getters return null.
  */
 
 interface TelegramWebApp {
@@ -65,12 +64,10 @@ export function detectTelegramLaunch(): boolean {
 }
 
 /**
- * Resolve the signed initData once the async SDK has populated it. Resolves
- * immediately when it's already present, or with null when this isn't a
- * Telegram launch. When it *is* a Telegram launch but the SDK script hasn't
- * finished loading yet, polls briefly (up to `timeoutMs`) before giving up
- * and falling back to null (→ password login). This closes the race opened
- * by loading the SDK `async`.
+ * Resolve the signed initData. Returns it immediately when already present,
+ * null when this isn't a Telegram launch, or — when it is a launch but the
+ * async SDK hasn't populated it yet — polls every `intervalMs` up to
+ * `timeoutMs` before falling back to null.
  */
 export function waitForTelegramInitData(timeoutMs = 3000, intervalMs = 50): Promise<string | null> {
   const immediate = getTelegramInitData();

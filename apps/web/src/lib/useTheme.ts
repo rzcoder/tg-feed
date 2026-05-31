@@ -32,8 +32,7 @@ function readPreference(): ThemePreference {
 }
 
 function systemTheme(): ResolvedTheme {
-  // Inside Telegram, "system" follows the surrounding Telegram chrome so the
-  // Mini App doesn't clash with it; elsewhere it tracks the OS preference.
+  // Inside Telegram, follow Telegram's color scheme; elsewhere the OS preference.
   const tg = getTelegramColorScheme();
   if (tg) return tg;
   if (typeof window === 'undefined' || !window.matchMedia) return 'dark';

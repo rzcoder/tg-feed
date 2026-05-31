@@ -12,11 +12,9 @@
  * client. The login-route rate limit only counts failed attempts so a
  * legitimate user mid-debugging doesn't burn the brute-force bucket.
  *
- * `registerTelegramAuthRoute` is the Mini-App counterpart of the password
- * login: it verifies a Telegram Web App `initData` payload and, if the
- * embedded user is on the admin allowlist, mints the same kind of session.
- * Both public routes share the session store, so a Telegram sign-in is
- * indistinguishable downstream from a password sign-in.
+ * `registerTelegramAuthRoute` is the Mini App counterpart: it verifies a
+ * Telegram `initData` payload and, if the embedded user is on the admin
+ * allowlist, mints a session via the same store as the password login.
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
@@ -89,8 +87,7 @@ export function registerLoginRoute(app: FastifyInstance, deps: RegisterLoginDeps
   );
 }
 
-// Max age accepted for a Mini App initData payload on the auth route. Short
-// because the client posts it right after launch; bounds replay of a leak.
+// Max accepted age of a Mini App initData payload on the auth route.
 const TELEGRAM_INITDATA_MAX_AGE_SEC = 5 * 60;
 
 export interface RegisterTelegramAuthDeps {
@@ -108,9 +105,7 @@ export function registerTelegramAuthRoute(
   app.post(
     '/auth/telegram',
     {
-      // Same brute-force posture as the password route — an unauthenticated
-      // endpoint that mints sessions. The HMAC makes forgery infeasible, but
-      // the limiter still bounds abuse (and is reset on success below).
+      // Rate-limit this unauthenticated session-minting route; reset on success below.
       config: {
         rateLimit: {
           max: 10,
@@ -121,8 +116,7 @@ export function registerTelegramAuthRoute(
     async (request, reply) => {
       const { telegramAuth } = deps;
       if (!telegramAuth) {
-        // Feature off (no bot token / admin ids). The SPA treats this as
-        // "fall back to password" rather than a hard error.
+        // Feature off — the SPA falls back to password login.
         throw new AppError(
           503,
           'telegram_auth_disabled',
@@ -131,10 +125,7 @@ export function registerTelegramAuthRoute(
       }
 
       const body = telegramAuthRequestSchema.parse(request.body);
-      // Tight freshness window: the web client posts initData immediately on
-      // Mini App launch, so a valid payload is seconds old. Capping at 5 min
-      // (vs. the verifier's lenient 24h default) shrinks the replay window for
-      // any captured initData that mints a full admin session.
+      // Cap initData age at 5 min (the verifier default is 24h).
       const result = verifyTelegramInitData(body.initData, telegramAuth.botToken, {
         maxAgeSec: TELEGRAM_INITDATA_MAX_AGE_SEC,
       });
@@ -154,8 +145,7 @@ export function registerTelegramAuthRoute(
         throw new UnauthorizedError('this Telegram account is not authorized');
       }
 
-      // Reset the limiter for this IP on a successful sign-in (mirrors the
-      // password route) so a legitimate admin isn't throttled after retries.
+      // Reset the rate-limit bucket for this IP on success.
       try {
         const rl = (request as FastifyRequest & { rateLimit?: () => Promise<unknown> }).rateLimit;
         if (typeof rl === 'function') await rl();

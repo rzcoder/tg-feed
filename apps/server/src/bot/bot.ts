@@ -1,31 +1,22 @@
 /**
- * Telegram bot (Bot API via grammy) that fronts the web client.
+ * Telegram bot (Bot API via grammy) fronting the web client.
  *
- * Responsibilities today:
- *   - Answer `/start` (for admins) with a button that opens the web client as
- *     a Telegram Mini App.
- *   - Install a persistent chat menu button pointing at the same Mini App, so
- *     the client is one tap away next to the message input.
- *   - Refuse non-admins.
+ * Handles `/start`: replies to admins with a button that opens the web client
+ * as a Telegram Mini App and installs a persistent chat menu button to the
+ * same Mini App; refuses non-admins. In-app authentication is handled
+ * separately in `api/routes/auth.ts`.
  *
- * This is deliberately thin — the in-app auth happens in
- * `api/routes/auth.ts` via `initData` verification, not here. Later chapters
- * will hang subscription-management commands off this same bot (the admin
- * guard and grammy instance are already in place for that).
- *
- * Lifecycle mirrors the gramjs runtime: `start()` is best-effort (the caller
- * boots the API regardless), long-polling runs in the background, and
- * `stop()` is awaited on shutdown. Telegram Mini Apps require HTTPS, so the
- * Web App button is only wired when `publicUrl` is an `https://` URL;
- * otherwise the bot still answers `/start` with a setup hint.
+ * `start()` configures the bot and runs long-polling in the background;
+ * `stop()` tears it down. The Web App button requires an `https://` public
+ * URL; without one, `/start` replies with a setup hint instead.
  */
 import { Bot, InlineKeyboard, type Context } from 'grammy';
 import type { Logger } from '../lib/logger.js';
 
 export interface TgFeedBot {
-  /** Configure commands/menu button, then start long-polling in the background. */
+  /** Configure commands + menu button and start long-polling in the background. */
   start(): Promise<void>;
-  /** Stop long-polling. Idempotent enough for the shutdown path. */
+  /** Stop long-polling and wait for the poll loop to unwind. */
   stop(): Promise<void>;
 }
 
@@ -39,10 +30,8 @@ export interface CreateBotDeps {
 
 const MENU_BUTTON_TEXT = 'Open tg-feed';
 
-// Upper bound on the two awaits in `stop()`. grammy's `stop()` issues a final
-// `getUpdates` round-trip with no timeout of its own, so without this a
-// shutdown while Telegram is unreachable would hang the whole teardown path
-// until the underlying HTTP client gives up.
+// Timeout for each await in `stop()` — grammy's `stop()` makes a final
+// `getUpdates` call that has no timeout of its own.
 const STOP_TIMEOUT_MS = 5000;
 
 /** Whether the update's sender is on the admin allowlist. */
@@ -62,13 +51,12 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
   const webAppUrl = resolveWebAppUrl(deps.publicUrl);
   const bot = new Bot(token);
 
-  // Retained so `stop()` can await the long-poll loop fully unwinding. Never
-  // rejects — a polling crash is logged in the `.catch` below.
+  // Long-poll promise; `stop()` awaits it for teardown. Never rejects — a
+  // polling crash is logged in the `.catch` below.
   let pollLoop: Promise<void> | undefined;
 
   bot.catch((err) => {
-    // grammy wraps handler errors; log and swallow so a single bad update
-    // never tears down the poll loop.
+    // Log and swallow per-update handler errors so one bad update doesn't stop polling.
     logger.error(
       { err: err.error, update: err.ctx.update.update_id },
       'bot: update handler failed',
@@ -94,8 +82,7 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
 
   return {
     async start() {
-      // `init()` fetches bot info and validates the token; let a bad token
-      // throw to the best-effort caller in index.ts.
+      // Fetch bot info and validate the token; a bad token rejects to the caller.
       await bot.init();
 
       try {
@@ -122,14 +109,9 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
         );
       }
 
-      // Long-poll in the background. `bot.start()` resolves only when the bot
-      // stops, so we intentionally don't await it here; errors surface via the
-      // attached catch. We retain the promise so `stop()` can await teardown.
-      //
-      // Note: because `bot.init()` above already ran, grammy's `start()` sets
-      // `pollingRunning = true` synchronously when invoked (its own setup is a
-      // no-op), so a `stop()` arriving immediately after will see a running
-      // bot — there's no stop-before-start window to lose.
+      // Run long-polling in the background; `bot.start()` resolves only when
+      // the bot stops, so it's not awaited here. `bot.init()` ran above, so
+      // grammy marks the bot running synchronously on this call.
       pollLoop = bot
         .start({
           onStart: (info) => logger.info({ username: info.username }, 'bot: started long-polling'),
@@ -143,8 +125,7 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
       } catch (err) {
         logger.debug({ err }, 'bot: stop failed or timed out');
       }
-      // Ensure the poll loop has actually unwound before we report stopped, so
-      // the process isn't left with a dangling getUpdates in flight.
+      // Wait for the poll loop to unwind so no getUpdates is left in flight.
       if (pollLoop) {
         try {
           await withTimeout(pollLoop, STOP_TIMEOUT_MS);
@@ -156,10 +137,7 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
   };
 }
 
-/**
- * Resolve/reject with `p`, but reject after `ms` if it hasn't settled. The
- * timer is unref'd so a pending timeout never keeps the process alive.
- */
+/** Settle with `p`, or reject after `ms` if it hasn't settled. Timer is unref'd. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);

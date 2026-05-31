@@ -7,17 +7,13 @@
  * minted by Telegram for *our* bot and extracts the calling user.
  *
  * Verification (per https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app):
- *   1. Parse the query string; pull out the `hash` field.
+ *   1. Parse the query string and pull out the `hash` field.
  *   2. Build the data-check-string: the remaining `key=value` pairs sorted
- *      alphabetically by key, joined with `\n`.
+ *      by key, joined with `\n`.
  *   3. secret_key = HMAC-SHA256(key = "WebAppData", data = bot_token)
  *   4. expected  = hex(HMAC-SHA256(key = secret_key, data = data-check-string))
  *   5. constant-time compare `expected` with the supplied `hash`.
- *   6. reject stale payloads via `auth_date` to blunt replay of leaked initData.
- *
- * The security here comes from the HMAC keyed by the bot token (a secret).
- * `timingSafeEqual` avoids leaking the comparison position; we hash both
- * sides to a fixed-width digest first so length never has to match up front.
+ *   6. reject payloads older than `maxAgeSec` via `auth_date`.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
@@ -34,12 +30,7 @@ export type VerifyInitDataResult =
   | { ok: false; reason: string };
 
 export interface VerifyInitDataOptions {
-  /**
-   * Reject initData whose `auth_date` is older than this many seconds. Guards
-   * against replay of a captured payload. Default 24h — long enough that a
-   * Mini App left open overnight still authenticates, short enough that a
-   * stale leak ages out.
-   */
+  /** Reject initData whose `auth_date` is older than this many seconds. Default 24h. */
   maxAgeSec?: number;
   /** Injectable clock for tests. Defaults to `Date.now()`. */
   now?: () => number;
@@ -65,9 +56,7 @@ export function verifyTelegramInitData(
   if (!hash) return { ok: false, reason: 'initData missing hash' };
 
   // Data-check-string: every field except `hash`, sorted by key, `key=value`
-  // joined by newlines. `signature` (the newer Ed25519 third-party field) is
-  // intentionally kept in the string — Telegram includes everything but
-  // `hash` in the HMAC base.
+  // joined by newlines (`signature` stays in — the HMAC base excludes only `hash`).
   const pairs: string[] = [];
   for (const [key, value] of params) {
     if (key === 'hash') continue;
@@ -79,13 +68,12 @@ export function verifyTelegramInitData(
   const secretKey = createHmac('sha256', 'WebAppData').update(botToken).digest();
   const expectedHash = createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
 
-  // Both sides are fixed-length hex digests; hash again to guarantee equal
-  // width before the timing-safe compare even if a caller sends garbage.
+  // Hash both sides to equal-width digests for the constant-time compare.
   const a = createHmac('sha256', secretKey).update(expectedHash).digest();
   const b = createHmac('sha256', secretKey).update(hash).digest();
   if (!timingSafeEqual(a, b)) return { ok: false, reason: 'initData signature mismatch' };
 
-  // Freshness. `auth_date` is unix seconds.
+  // `auth_date` is unix seconds.
   const authDateRaw = params.get('auth_date');
   const authDateSec = authDateRaw ? Number(authDateRaw) : NaN;
   if (!Number.isFinite(authDateSec)) return { ok: false, reason: 'initData missing auth_date' };
@@ -106,10 +94,8 @@ export function verifyTelegramInitData(
     if (parsed.id === undefined || parsed.id === null) {
       return { ok: false, reason: 'initData user missing id' };
     }
-    // Telegram user ids are heading toward 64-bit, beyond JS's safe-integer
-    // range. `JSON.parse` would already have rounded `parsed.id` as a float,
-    // so pull the exact digits straight out of the raw JSON text instead and
-    // only fall back to the parsed value if the shape is unexpected.
+    // Telegram ids can exceed JS's safe-integer range, so take the exact
+    // digits from the raw JSON text rather than the (lossy) parsed number.
     const idMatch = /"id"\s*:\s*(-?\d+)/.exec(userRaw);
     user = {
       id: idMatch ? idMatch[1]! : String(parsed.id),

@@ -32,11 +32,7 @@ export function useLogin() {
   });
 }
 
-/**
- * Sign in with a Telegram Mini App `initData` payload. Used by the LoginPage
- * to auto-authenticate when the client is opened inside Telegram. Mirrors
- * `useLogin` — invalidates `/me` on success so RequireAuth re-resolves.
- */
+/** Sign in with a Telegram Mini App `initData` payload; invalidates `/me` on success. */
 export function useTelegramLogin() {
   const qc = useQueryClient();
   return useMutation({

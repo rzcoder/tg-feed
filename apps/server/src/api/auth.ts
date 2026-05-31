@@ -35,18 +35,13 @@ export interface WebAuth {
   sessionSecret: string;
 }
 
-/**
- * Optional Telegram Web App auth. When the bot token and at least one admin
- * id are configured, the public `POST /api/auth/telegram` route is live and
- * the SPA can sign the admin in by their Telegram account. Absent either
- * field, the feature is off and the route reports it as disabled — password
- * login is unaffected either way.
- */
+/** Bot token + admin allowlist for the Telegram Web App sign-in route. */
 export interface TelegramAuth {
   botToken: string;
   adminIds: string[];
 }
 
+/** Returns the Telegram auth config, or null when the bot token / allowlist is unset. */
 export function readTelegramAuth(cfg: Config): TelegramAuth | null {
   if (!cfg.TG_BOT_TOKEN || cfg.TG_BOT_ADMIN_IDS.length === 0) return null;
   return { botToken: cfg.TG_BOT_TOKEN, adminIds: cfg.TG_BOT_ADMIN_IDS };

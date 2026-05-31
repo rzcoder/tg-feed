@@ -19,10 +19,8 @@ export async function login(password: string): Promise<LoginResponse> {
 }
 
 /**
- * Sign in with a Telegram Mini App `initData` payload. The server verifies
- * its HMAC against the bot token and checks the admin allowlist. `silent401`
- * keeps a rejection from triggering the global redirect — the LoginPage falls
- * back to the password form instead.
+ * Sign in with a Telegram Mini App `initData` payload. `silent401` suppresses
+ * the global redirect so the LoginPage can fall back to the password form.
  */
 export async function loginWithTelegram(initData: string): Promise<LoginResponse> {
   const body = telegramAuthRequestSchema.parse({ initData });

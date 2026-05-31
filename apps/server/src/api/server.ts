@@ -69,10 +69,8 @@ export interface CreateApiServerDeps {
   webAuth: WebAuth;
   /**
    * Telegram Web App auth config (bot token + admin allowlist). When present,
-   * the public `POST /api/auth/telegram` route signs the admin in by their
-   * Telegram account and the CSP is relaxed to allow the Telegram Mini App
-   * SDK + embedding from Telegram's web clients. Null/omitted = password-only
-   * with the strict default CSP.
+   * enables `POST /api/auth/telegram` and relaxes the CSP for the Mini App.
+   * Null/omitted = password-only with the strict default CSP.
    */
   telegramAuth?: TelegramAuth | null;
   isProd: boolean;
@@ -233,18 +231,10 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // hash is unknown (Vite serves an unbuilt index.html with HMR scripts), so
   // CSP is left off there — same posture as before this change.
   const inlineScriptHashes = isProd ? collectInlineScriptHashes(distRoot) : [];
-  // `index.html` loads Telegram's `telegram-web-app.js` SDK unconditionally
-  // (it's inert outside Telegram), so `script-src` allows telegram.org in
-  // every prod deploy — gating it only produced a CSP-violation console error
-  // on the common password-only deploy without buying any isolation, since
-  // our own HTML requests the script either way. telegram.org is a trusted
-  // first-party origin here.
-  //
-  // `frame-ancestors`, by contrast, IS gated: only when the Mini App is
-  // enabled do we let Telegram Web (web.telegram.org, incl. its /k and /z
-  // clients served from the same host) embed the authenticated console.
-  // Native Telegram clients use a webview not subject to `frame-ancestors`,
-  // so they need nothing here. Password-only deploys keep the strict default.
+  // `index.html` always loads the `telegram-web-app.js` SDK, so `script-src`
+  // always allows telegram.org. `frame-ancestors` lets Telegram Web embed the
+  // console and is enabled only when the Mini App is configured; native
+  // Telegram clients use a webview not subject to it.
   const telegramWebApp = !!deps.telegramAuth;
   const frameAncestors = telegramWebApp ? ["'self'", 'https://web.telegram.org'] : ["'none'"];
   await app.register(fastifyHelmet, {
@@ -321,9 +311,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
 
   app.setErrorHandler(makeErrorHandler(logger));
 
-  // Public scope — password login + the Telegram Web App sign-in. No
-  // `requireAuth` preHandler. The Telegram route reports `telegram_auth_disabled`
-  // when the bot isn't configured, so it's always safe to register.
+  // Public scope — password login + Telegram Web App sign-in, no `requireAuth`.
   await app.register(
     async (publicScope) => {
       registerLoginRoute(publicScope, { webAuth, isProd, logger, sessionStore });

@@ -1,10 +1,7 @@
 /**
- * Test helpers for the Telegram Web App auth flow.
- *
- * `signInitData` reproduces the exact signing Telegram performs so tests can
- * mint valid `initData` payloads (and, by mutating them, invalid ones). Kept
- * in one place so the two suites that need it (`initData.test.ts`,
- * `api/routes/telegramAuth.test.ts`) can't drift apart.
+ * Test helpers for the Telegram Web App auth flow. `signInitData` reproduces
+ * Telegram's signing so tests can mint valid `initData` payloads (and, by
+ * mutating them, invalid ones).
  */
 import { createHmac } from 'node:crypto';
 
