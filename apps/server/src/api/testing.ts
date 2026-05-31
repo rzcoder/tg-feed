@@ -63,6 +63,11 @@ export interface BuildTestAppOptions {
    * flow. Defaults to undefined (key absent).
    */
   getEncryptionKey?: () => Buffer | null;
+  /**
+   * Override the SPA static root. Lets the SPA-history-fallback tests point
+   * the server at a temp dir containing a stub index.html.
+   */
+  webDistRoot?: string;
 }
 
 const DEFAULT_TEST_TELEGRAM_STATUS: TelegramStatus = {
@@ -95,6 +100,7 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
     ...(options.getEncryptionKey !== undefined
       ? { getEncryptionKey: options.getEncryptionKey }
       : {}),
+    ...(options.webDistRoot !== undefined ? { webDistRoot: options.webDistRoot } : {}),
   });
 
   return {

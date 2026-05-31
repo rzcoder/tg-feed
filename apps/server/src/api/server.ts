@@ -137,6 +137,13 @@ export interface CreateApiServerDeps {
    * default is fine for both production and the standard test scaffolding.
    */
   sessionStore?: SessionStore;
+  /**
+   * Override the directory the SPA is served from (static root, CSP inline
+   * hashes, and the history fallback below). Defaults to the built
+   * `apps/web/dist`. Tests point this at a temp dir to exercise the SPA
+   * fallback without a real web build.
+   */
+  webDistRoot?: string;
 }
 
 const DEFAULT_TELEGRAM_STATUS: TelegramStatus = {
@@ -191,6 +198,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   } = deps;
   const getTelegramStatus =
     deps.getTelegramStatus ?? ((): TelegramStatus => DEFAULT_TELEGRAM_STATUS);
+  const distRoot = deps.webDistRoot ?? WEB_DIST_ROOT;
 
   const app = Fastify({
     logger: false,
@@ -212,7 +220,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // using the inline-script hash from the built `index.html`. In dev the
   // hash is unknown (Vite serves an unbuilt index.html with HMR scripts), so
   // CSP is left off there — same posture as before this change.
-  const inlineScriptHashes = isProd ? collectInlineScriptHashes(WEB_DIST_ROOT) : [];
+  const inlineScriptHashes = isProd ? collectInlineScriptHashes(distRoot) : [];
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: isProd
       ? {
@@ -250,17 +258,39 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   }
 
   // Plugin requires `root` to exist; create it if absent so dev/test
-  // environments without a built SPA don't fail registration. Until
-  // Ch 9/14 produce a real bundle the directory just stays empty and
-  // every non-API path 404s.
-  mkdirSync(WEB_DIST_ROOT, { recursive: true });
+  // environments without a built SPA don't fail registration. Until a real
+  // bundle exists the directory just stays empty.
+  mkdirSync(distRoot, { recursive: true });
   await app.register(fastifyStatic, {
-    root: WEB_DIST_ROOT,
+    root: distRoot,
     prefix: '/',
     // Refuse to serve dotfiles even if a stray `.env` / `.git/` ends up in
     // the build output — default is `'allow'` which would happily serve them.
     dotfiles: 'deny',
     index: ['index.html'],
+  });
+
+  // SPA history fallback. The web app routes on the client (React Router), so
+  // a hard reload or shared deep link to e.g. /settings reaches the server as
+  // a real `GET /settings` with no matching route. For browser navigations
+  // (GET that accepts HTML, outside `/api`) serve index.html so the SPA boots
+  // and resolves the route client-side. Everything else — API misses, and
+  // asset/XHR requests that don't accept HTML — keeps the JSON 404 so clients
+  // get a real error instead of a surprise HTML body.
+  app.setNotFoundHandler((request, reply) => {
+    const accept = request.headers.accept;
+    const acceptsHtml = (Array.isArray(accept) ? accept.join(',') : (accept ?? '')).includes(
+      'text/html',
+    );
+    const isApi = request.url === '/api' || request.url.startsWith('/api/');
+    if (request.method === 'GET' && !isApi && acceptsHtml) {
+      return reply.sendFile('index.html');
+    }
+    return reply.status(404).send({
+      message: `Route ${request.method}:${request.url} not found`,
+      error: 'Not Found',
+      statusCode: 404,
+    });
   });
 
   app.setErrorHandler(makeErrorHandler(logger));
