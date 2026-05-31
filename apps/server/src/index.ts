@@ -25,8 +25,9 @@ import './lib/loadEnv.js';
 import process from 'node:process';
 import type { TelegramClient } from 'telegram';
 import type { TelegramStatus } from '@tg-feed/shared';
-import { requireWebAuthEnv } from './api/auth.js';
+import { readTelegramAuth, requireWebAuthEnv } from './api/auth.js';
 import { createApiServer } from './api/server.js';
+import { createTgFeedBot, type TgFeedBot } from './bot/bot.js';
 import { config } from './config.js';
 import type { Db } from './db/client.js';
 import { closeDb, getDb } from './db/client.js';
@@ -385,11 +386,16 @@ async function main(): Promise<void> {
   // login route and the prune task see the same set of rows.
   const sessionStore = createSessionStore({ db });
 
+  // Telegram Web App auth config (bot token + admin allowlist). Null when the
+  // bot isn't configured — the API still boots password-only.
+  const telegramAuth = readTelegramAuth(config);
+
   const app = await createApiServer({
     db,
     logger,
     filterRegistry,
     webAuth,
+    telegramAuth,
     isProd: config.NODE_ENV === 'production',
     bus,
     getTelegramStatus: () => statusRef.current,
@@ -420,6 +426,28 @@ async function main(): Promise<void> {
     },
   });
   prunePoller.start();
+
+  // Telegram Web App bot. Best-effort like the gramjs client: if the token is
+  // bad or Telegram is unreachable, the API still serves (password login +
+  // any already-working features). Started after `listen()` so the menu
+  // button points at a server that's actually up.
+  let bot: TgFeedBot | undefined;
+  if (telegramAuth) {
+    bot = createTgFeedBot({
+      token: telegramAuth.botToken,
+      adminIds: telegramAuth.adminIds,
+      publicUrl: config.PUBLIC_URL,
+      logger,
+    });
+    try {
+      await bot.start();
+    } catch (err) {
+      logger.error({ err }, 'bot: failed to start — continuing without it');
+      bot = undefined;
+    }
+  } else {
+    logger.info('Telegram Web App bot disabled (set TG_BOT_TOKEN + TG_BOT_ADMIN_IDS to enable)');
+  }
 
   // Background Telegram bring-up. Errors are caught inside
   // tryStartTelegram; the outer .catch is a belt-and-suspenders for any
@@ -458,6 +486,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'shutting down');
     try {
       prunePoller.stop();
+      if (bot) await bot.stop();
       await app.close();
       // gramjs client.connect() doesn't accept an AbortSignal cleanly, so
       // wait for the in-flight init to settle before tearing down its

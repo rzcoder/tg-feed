@@ -38,10 +38,14 @@ import type { ImportInviteFn } from '../tg/inviteResolver.js';
 import type { JoinChannelFn } from '../tg/joinChannel.js';
 import type { LoginSessionStore } from '../tg/loginSession.js';
 import type { ProfilePhotoFetcher } from '../tg/profilePhoto.js';
-import { makeRequireAuth, type WebAuth } from './auth.js';
+import { makeRequireAuth, type TelegramAuth, type WebAuth } from './auth.js';
 import { createSessionStore, type SessionStore } from './sessionStore.js';
 import { makeErrorHandler } from './errorHandler.js';
-import { registerAuthRoutes, registerLoginRoute } from './routes/auth.js';
+import {
+  registerAuthRoutes,
+  registerLoginRoute,
+  registerTelegramAuthRoute,
+} from './routes/auth.js';
 import { registerDestinationRoutes } from './routes/destinations.js';
 import { registerFilterRoutes } from './routes/filters.js';
 import { registerForwardLogRoutes } from './routes/forwardLog.js';
@@ -63,6 +67,14 @@ export interface CreateApiServerDeps {
   logger: Logger;
   filterRegistry: FilterRegistry;
   webAuth: WebAuth;
+  /**
+   * Telegram Web App auth config (bot token + admin allowlist). When present,
+   * the public `POST /api/auth/telegram` route signs the admin in by their
+   * Telegram account and the CSP is relaxed to allow the Telegram Mini App
+   * SDK + embedding from Telegram's web clients. Null/omitted = password-only
+   * with the strict default CSP.
+   */
+  telegramAuth?: TelegramAuth | null;
   isProd: boolean;
   bus: EventBus;
   /** Override the SSE heartbeat interval — primarily for tests. */
@@ -221,6 +233,18 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
   // hash is unknown (Vite serves an unbuilt index.html with HMR scripts), so
   // CSP is left off there — same posture as before this change.
   const inlineScriptHashes = isProd ? collectInlineScriptHashes(distRoot) : [];
+  // When the Telegram Mini App is enabled, the client loads Telegram's
+  // `telegram-web-app.js` SDK from telegram.org and must be embeddable by
+  // Telegram's web clients (web/webk/webz.telegram.org) — the strict
+  // `frameAncestors 'none'` would otherwise blank the app inside Telegram Web.
+  // Native Telegram clients run the Mini App in a webview not subject to
+  // `frame-ancestors`, but the SDK script still needs the script-src grant.
+  // Password-only deploys keep the tight default.
+  const telegramWebApp = !!deps.telegramAuth;
+  const telegramScriptSrc = telegramWebApp ? ['https://telegram.org'] : [];
+  const frameAncestors = telegramWebApp
+    ? ["'self'", 'https://web.telegram.org', 'https://*.telegram.org']
+    : ["'none'"];
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: isProd
       ? {
@@ -230,14 +254,14 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
             // `data:` covers profile-photo `<img>`s; inline hashes cover the
             // theme bootstrap script in `index.html`.
             imgSrc: ["'self'", 'data:'],
-            scriptSrc: ["'self'", ...inlineScriptHashes],
+            scriptSrc: ["'self'", ...inlineScriptHashes, ...telegramScriptSrc],
             // Vite's CSS pipeline emits some inline styles for runtime
             // theming; `'unsafe-inline'` for styleSrc is the standard
             // pragmatic carve-out.
             styleSrc: ["'self'", "'unsafe-inline'"],
             connectSrc: ["'self'"],
             objectSrc: ["'none'"],
-            frameAncestors: ["'none'"],
+            frameAncestors,
             baseUri: ["'self'"],
             // `upgrade-insecure-requests` is on by default via `useDefaults`.
           },
@@ -295,10 +319,18 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
 
   app.setErrorHandler(makeErrorHandler(logger));
 
-  // Public scope — only the login route. No `requireAuth` preHandler.
+  // Public scope — password login + the Telegram Web App sign-in. No
+  // `requireAuth` preHandler. The Telegram route reports `telegram_auth_disabled`
+  // when the bot isn't configured, so it's always safe to register.
   await app.register(
     async (publicScope) => {
       registerLoginRoute(publicScope, { webAuth, isProd, logger, sessionStore });
+      registerTelegramAuthRoute(publicScope, {
+        telegramAuth: deps.telegramAuth ?? null,
+        isProd,
+        logger,
+        sessionStore,
+      });
     },
     { prefix: '/api' },
   );

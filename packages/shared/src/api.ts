@@ -47,6 +47,17 @@ export const loginResponseSchema = z.object({
 });
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
 
+// Telegram Web App sign-in. The web client running inside Telegram posts the
+// raw `window.Telegram.WebApp.initData` query string; the server verifies its
+// HMAC against the bot token and checks the embedded user against the admin
+// allowlist. Reuses `loginResponseSchema` for the success body. The 8 KiB cap
+// is generous — real initData payloads are a few hundred bytes — and bounds
+// the HMAC work on this unauthenticated route.
+export const telegramAuthRequestSchema = z.object({
+  initData: z.string().min(1).max(8192),
+});
+export type TelegramAuthRequest = z.infer<typeof telegramAuthRequestSchema>;
+
 export const meResponseSchema = z.object({
   authenticated: z.literal(true),
 });

@@ -43,6 +43,11 @@ const REDACT_PATHS = [
   '*.encryptedSessionString',
   'TG_SESSION_ENCRYPTION_KEY',
   '*.TG_SESSION_ENCRYPTION_KEY',
+  // Bot token + Mini App init payload (the latter carries a user-bound HMAC)
+  'TG_BOT_TOKEN',
+  '*.TG_BOT_TOKEN',
+  'initData',
+  '*.initData',
   // Login flow secrets / bearer tokens
   'phoneCode',
   '*.phoneCode',

@@ -29,4 +29,26 @@ describe('parseConfig', () => {
   it('rejects a SESSION_SECRET shorter than 32 chars', () => {
     expect(() => parseConfig({ SESSION_SECRET: 'short' })).toThrow(/SESSION_SECRET/);
   });
+
+  it('defaults TG_BOT_ADMIN_IDS to an empty array when unset', () => {
+    expect(parseConfig({}).TG_BOT_ADMIN_IDS).toEqual([]);
+  });
+
+  it('parses, trims, and dedupes TG_BOT_ADMIN_IDS', () => {
+    const cfg = parseConfig({ TG_BOT_ADMIN_IDS: ' 111, 222 ,111, ,333 ' });
+    expect(cfg.TG_BOT_ADMIN_IDS).toEqual(['111', '222', '333']);
+  });
+
+  it('rejects a non-URL PUBLIC_URL', () => {
+    expect(() => parseConfig({ PUBLIC_URL: 'not-a-url' })).toThrow(/PUBLIC_URL/);
+  });
+
+  it('accepts a valid https PUBLIC_URL and bot token', () => {
+    const cfg = parseConfig({
+      PUBLIC_URL: 'https://tg-feed.example.com',
+      TG_BOT_TOKEN: '123:abc',
+    });
+    expect(cfg.PUBLIC_URL).toBe('https://tg-feed.example.com');
+    expect(cfg.TG_BOT_TOKEN).toBe('123:abc');
+  });
 });

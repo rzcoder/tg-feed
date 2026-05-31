@@ -7,6 +7,14 @@
     <link rel="apple-touch-icon" href="/favicon.png" />
     <title>tg-feed</title>
     <meta name="theme-color" content="#222428" />
+    <!--
+      Telegram Mini App SDK. Populates window.Telegram.WebApp when the client
+      is opened inside Telegram so the app can auto-sign-in via initData. Loads
+      from telegram.org (allowed by the server CSP only when the bot is
+      configured); outside Telegram it's a harmless no-op and the password
+      login is used instead.
+    -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       // Resolve theme before React mounts to avoid flash-of-wrong-theme.
       // Mirrors apps/web/src/lib/useTheme.ts — keep in lockstep.

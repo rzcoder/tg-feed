@@ -18,7 +18,7 @@ import type { ChatResolver } from '../tg/chatResolver.js';
 import type { ImportInviteFn } from '../tg/inviteResolver.js';
 import type { JoinChannelFn } from '../tg/joinChannel.js';
 import type { ProfilePhotoFetcher } from '../tg/profilePhoto.js';
-import { type WebAuth } from './auth.js';
+import { type TelegramAuth, type WebAuth } from './auth.js';
 import { createApiServer } from './server.js';
 
 export const TEST_PASSWORD = 'test-password';
@@ -68,6 +68,11 @@ export interface BuildTestAppOptions {
    * the server at a temp dir containing a stub index.html.
    */
   webDistRoot?: string;
+  /**
+   * Telegram Web App auth config. Default undefined → the
+   * `POST /api/auth/telegram` route reports `telegram_auth_disabled`.
+   */
+  telegramAuth?: TelegramAuth | null;
 }
 
 const DEFAULT_TEST_TELEGRAM_STATUS: TelegramStatus = {
@@ -101,6 +106,7 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
       ? { getEncryptionKey: options.getEncryptionKey }
       : {}),
     ...(options.webDistRoot !== undefined ? { webDistRoot: options.webDistRoot } : {}),
+    ...(options.telegramAuth !== undefined ? { telegramAuth: options.telegramAuth } : {}),
   });
 
   return {

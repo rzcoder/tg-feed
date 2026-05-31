@@ -39,7 +39,12 @@ export interface RequestInitJson<TBody> extends Omit<RequestInit, 'body'> {
   silent401?: boolean;
 }
 
-const AUTH_ROUTES = new Set(['/api/auth/login', '/api/auth/logout', '/api/me']);
+const AUTH_ROUTES = new Set([
+  '/api/auth/login',
+  '/api/auth/telegram',
+  '/api/auth/logout',
+  '/api/me',
+]);
 
 let redirectingToLogin = false;
 

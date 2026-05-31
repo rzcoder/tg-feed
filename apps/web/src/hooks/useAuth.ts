@@ -8,7 +8,7 @@
  * forces a navigate to /login anyway.
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getMe, login, logout } from '@/api/authApi';
+import { getMe, login, loginWithTelegram, logout } from '@/api/authApi';
 import { UnauthorizedError } from '@/api/client';
 
 export const ME_QUERY_KEY = ['me'] as const;
@@ -26,6 +26,21 @@ export function useLogin() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (password: string) => login(password),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
+    },
+  });
+}
+
+/**
+ * Sign in with a Telegram Mini App `initData` payload. Used by the LoginPage
+ * to auto-authenticate when the client is opened inside Telegram. Mirrors
+ * `useLogin` — invalidates `/me` on success so RequireAuth re-resolves.
+ */
+export function useTelegramLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (initData: string) => loginWithTelegram(initData),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ME_QUERY_KEY });
     },

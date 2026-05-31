@@ -60,6 +60,34 @@ single port.
 | `pnpm format` / `pnpm format:check` | Prettier                                   |
 | `pnpm typecheck`                    | `tsc --noEmit` in every workspace          |
 
+## Telegram Web App bot (optional)
+
+You can open the web client directly inside a Telegram bot (as a [Mini
+App](https://core.telegram.org/bots/webapps)) and sign in by your Telegram account
+instead of typing the password. The password login stays available as a fallback.
+
+Setup:
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy its token.
+2. Find your numeric Telegram user id (e.g. via [@userinfobot](https://t.me/userinfobot)).
+3. Set in `.env`:
+
+   ```bash
+   TG_BOT_TOKEN=123456:your-bot-token
+   TG_BOT_ADMIN_IDS=12345678          # comma-separated for multiple admins
+   PUBLIC_URL=https://tg-feed.example.com   # public HTTPS URL of the web client
+   ```
+
+4. Restart the server. On boot the bot sets its menu button + `/start` button to open
+   `PUBLIC_URL`. Tap it in Telegram and you're signed in automatically.
+
+How it works: inside Telegram the client posts the signed `initData` to
+`POST /api/auth/telegram`; the server verifies its HMAC against the bot token and checks
+the user against `TG_BOT_ADMIN_IDS` before minting the same session a password login
+would. Telegram requires **HTTPS** for Mini Apps — front the server with a TLS-terminating
+reverse proxy (see `compose.yaml` notes). Leave `TG_BOT_TOKEN` / `TG_BOT_ADMIN_IDS` blank
+to disable the bot entirely (password-only).
+
 ## Layout
 
 ```

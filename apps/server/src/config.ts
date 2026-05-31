@@ -39,6 +39,37 @@ const envSchema = z.object({
   // --- Web auth (Chapter 7) ---
   WEB_PASSWORD: z.string().min(1).optional(),
   SESSION_SECRET: z.string().min(32).optional(),
+
+  // --- Telegram Web App bot ---
+  // Bot token from @BotFather. When set together with TG_BOT_ADMIN_IDS, the
+  // web client can be opened as a Telegram Mini App and the admin is signed
+  // in by their Telegram account (the password login stays as a fallback).
+  // The bot also runs a long-poll loop that answers /start with a button to
+  // open the web client. Treat the token as a credential — it's never logged.
+  TG_BOT_TOKEN: z.string().min(1).optional(),
+  // Comma-separated Telegram user ids allowed to sign in via the Mini App and
+  // command the bot. Parsed into a deduped string[] (ids are compared as
+  // strings so future 64-bit ids stay lossless). Empty / unset disables the
+  // Telegram-account login path entirely.
+  TG_BOT_ADMIN_IDS: z
+    .string()
+    .optional()
+    .transform((raw) =>
+      raw
+        ? Array.from(
+            new Set(
+              raw
+                .split(',')
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0),
+            ),
+          )
+        : [],
+    ),
+  // Public HTTPS base URL the web client is served from (e.g.
+  // https://tg-feed.example.com). Telegram requires HTTPS for Mini Apps. Used
+  // at boot to point the bot's menu button and /start button at the client.
+  PUBLIC_URL: z.string().url().optional(),
 });
 
 export type Config = z.infer<typeof envSchema>;
