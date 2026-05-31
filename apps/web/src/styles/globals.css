@@ -1,0 +1,192 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* tg-feed — operator UI tokens. Ported from the design's styles.css.
+ * The dark-first :root block is split into [data-theme="dark"] and
+ * [data-theme="light"]; data-theme is set on <html> by the inline script
+ * in index.html before React mounts. */
+
+:root {
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+
+  --font:
+    ui-sans-serif, system-ui, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue',
+    Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Roboto Mono', monospace;
+}
+
+:root[data-theme='dark'],
+:root:not([data-theme]) {
+  --bg: oklch(0.155 0.006 250);
+  --bg-2: oklch(0.185 0.007 250);
+  --surface: oklch(0.205 0.008 250);
+  --surface-2: oklch(0.235 0.009 250);
+  --surface-3: oklch(0.27 0.01 250);
+  --border: oklch(0.295 0.011 250);
+  --border-strong: oklch(0.36 0.013 250);
+  --text: oklch(0.965 0.003 250);
+  --text-2: oklch(0.78 0.005 250);
+  --text-muted: oklch(0.6 0.008 250);
+  --text-faint: oklch(0.45 0.008 250);
+
+  --accent: oklch(0.7 0.12 240);
+  --accent-2: oklch(0.62 0.14 240);
+  --accent-soft: oklch(0.42 0.09 240 / 0.22);
+  --accent-fg: oklch(0.18 0.02 250);
+
+  --success: oklch(0.74 0.13 150);
+  --success-soft: oklch(0.4 0.08 150 / 0.22);
+  --warning: oklch(0.8 0.13 78);
+  --warning-soft: oklch(0.5 0.1 78 / 0.22);
+  --danger: oklch(0.7 0.18 25);
+  --danger-soft: oklch(0.45 0.13 25 / 0.22);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.4), 0 2px 6px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 24px 48px -16px rgba(0, 0, 0, 0.55), 0 8px 20px -8px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: oklch(0.985 0.002 250);
+  --bg-2: oklch(0.97 0.003 250);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.975 0.003 250);
+  --surface-3: oklch(0.95 0.004 250);
+  --border: oklch(0.91 0.005 250);
+  --border-strong: oklch(0.85 0.006 250);
+  --text: oklch(0.18 0.01 250);
+  --text-2: oklch(0.34 0.008 250);
+  --text-muted: oklch(0.5 0.008 250);
+  --text-faint: oklch(0.62 0.008 250);
+
+  --accent: oklch(0.55 0.14 240);
+  --accent-2: oklch(0.5 0.15 240);
+  --accent-soft: oklch(0.85 0.06 240 / 0.5);
+  --accent-fg: oklch(1 0 0);
+
+  --success: oklch(0.5 0.14 150);
+  --success-soft: oklch(0.92 0.06 150);
+  --warning: oklch(0.62 0.15 78);
+  --warning-soft: oklch(0.94 0.07 78);
+  --danger: oklch(0.55 0.2 25);
+  --danger-soft: oklch(0.95 0.05 25);
+
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow: 0 4px 14px -4px rgba(15, 23, 42, 0.1), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
+  --shadow-lg: 0 16px 40px -12px rgba(15, 23, 42, 0.18), 0 6px 16px -6px rgba(15, 23, 42, 0.1);
+
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'ss01', 'cv11';
+  overscroll-behavior: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* ─── scrollbars ──────────────────────────────────────────────── */
+.scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+/* ─── skeleton (shimmer placeholder) ──────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+}
+
+/* ─── flash on new SSE row (Activity feed) ────────────────────── */
+.flash-in {
+  animation: flashIn 600ms ease-out;
+}
+
+/* ─── pulsing live dot (ConnectionPill) ───────────────────────── */
+.pulse-dot {
+  animation: pulse 2s infinite;
+}
+
+/* ─── monospace utility (matches design's `.mono`) ────────────── */
+.font-mono {
+  font-feature-settings: 'tnum';
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@keyframes flashIn {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+    background: var(--accent-soft);
+  }
+  60% {
+    background: var(--accent-soft);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    background: transparent;
+  }
+}
+@keyframes pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px oklch(0.7 0.13 150 / 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 5px oklch(0.7 0.13 150 / 0);
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

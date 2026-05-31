@@ -1,0 +1,71 @@
+{
+  "name": "tg-feed",
+  "version": "0.3.1",
+  "description": "Personal Telegram channel forwarding userbot with web UI for managing subscriptions and filters",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.30.3",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "build": "pnpm -r build",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "pnpm --filter @tg-feed/server db:generate",
+    "db:migrate": "pnpm --filter @tg-feed/server db:migrate",
+    "tg:login": "pnpm --filter @tg-feed/server tg:login",
+    "release": "bash scripts/release.sh",
+    "prepare": "simple-git-hooks || true"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^22.7.5",
+    "eslint": "^9.13.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.11.0",
+    "lint-staged": "^15.2.10",
+    "prettier": "^3.3.3",
+    "simple-git-hooks": "^2.11.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.11.0",
+    "vitest": "^2.1.4"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml,css,html}": [
+      "prettier --write"
+    ]
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "bufferutil",
+      "esbuild",
+      "re2",
+      "simple-git-hooks",
+      "utf-8-validate"
+    ],
+    "ignoredBuiltDependencies": [
+      "core-js",
+      "es5-ext"
+    ],
+    "overrides": {
+      "ws@<8.20.1": ">=8.20.1"
+    }
+  }
+}
