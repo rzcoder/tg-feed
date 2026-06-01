@@ -34,7 +34,7 @@ import type { ForwardFailureKind, ForwardJob, ForwardOutcome } from './types.js'
 export interface ForwarderClient {
   forwardMessages(
     entity: string,
-    params: { messages: number[]; fromPeer: string; silent?: boolean },
+    params: { messages: number[]; fromPeer: string; silent?: boolean; topMsgId?: number },
   ): Promise<ReadonlyArray<{ id?: number } | null | undefined>>;
 }
 
@@ -57,6 +57,11 @@ const PERMANENT_FAILURES: Array<{ code: string; kind: ForwardFailureKind }> = [
   { code: 'CHANNEL_PRIVATE', kind: 'permanent_channel_private' },
   { code: 'USER_BANNED_IN_CHANNEL', kind: 'permanent_user_banned_in_channel' },
   { code: 'CHAT_WRITE_FORBIDDEN', kind: 'permanent_chat_write_forbidden' },
+  // Forum topic gone or closed — the destination's `topicId` is stale; retrying
+  // won't help until the user re-points the destination at a live topic.
+  { code: 'TOPIC_CLOSED', kind: 'permanent_topic_unavailable' },
+  { code: 'TOPIC_DELETED', kind: 'permanent_topic_unavailable' },
+  { code: 'TOPIC_ID_INVALID', kind: 'permanent_topic_unavailable' },
   { code: 'AUTH_KEY_UNREGISTERED', kind: 'fatal_auth_key_unregistered' },
 ];
 
@@ -88,6 +93,7 @@ export function createForwarder(deps: CreateForwarderDeps): Forwarder {
       const sent = await client.forwardMessages(job.destinationChatId, {
         messages: messageIdNums,
         fromPeer: job.sourceChatId,
+        ...(job.destinationTopicId != null ? { topMsgId: Number(job.destinationTopicId) } : {}),
       });
       // gramjs's high-level helper sometimes surfaces non-`Message` entries
       // in the result (MessageEmpty, service updates, occasional null slots

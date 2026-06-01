@@ -61,6 +61,7 @@ import {
   getAlbumDebounceMs,
   getGlobalDelayMs,
 } from '../../forwarding/throttle.js';
+import { getStatsDigestConfig } from '../../forwarding/statsDigestConfig.js';
 import { replaceInlineFilters, replaceLibraryFilterAttachments } from './subscriptions.js';
 
 // Read the app version from the root package.json so exports carry a
@@ -221,6 +222,8 @@ function buildExport(db: Db, sections: Set<ExportSection>): ExportFile {
         name: destinations.name,
         chatId: destinations.chatId,
         note: destinations.note,
+        topicId: destinations.topicId,
+        topicTitle: destinations.topicTitle,
       })
       .from(destinations)
       .all()
@@ -228,6 +231,8 @@ function buildExport(db: Db, sections: Set<ExportSection>): ExportFile {
         name: row.name,
         chatId: row.chatId,
         note: row.note,
+        topicId: row.topicId,
+        topicTitle: row.topicTitle,
       }));
   }
 
@@ -336,9 +341,15 @@ function buildExport(db: Db, sections: Set<ExportSection>): ExportFile {
   }
 
   if (sections.has('appSettings')) {
+    const digest = getStatsDigestConfig(db);
     const settings: ExportedAppSettings = {
       delayMs: getGlobalDelayMs(db),
       albumDebounceMs: getAlbumDebounceMs(db),
+      statsDigestEnabled: digest.enabled,
+      statsDigestFrequency: digest.frequency,
+      statsDigestDayOfWeek: digest.dayOfWeek,
+      statsDigestTime: digest.time,
+      statsDigestTimezone: digest.timezone,
     };
     // v2: include the encrypted Telegram account row when present. The
     // ciphertext + fingerprint travel as-is — the importing host decides
@@ -430,7 +441,11 @@ function applyImport(
         if (existingId !== undefined) {
           if (strategy === 'replace') {
             tx.update(destinations)
-              .set({ note: item.note ?? null })
+              .set({
+                note: item.note ?? null,
+                topicId: item.topicId ?? null,
+                topicTitle: item.topicTitle ?? null,
+              })
               .where(eq(destinations.id, existingId))
               .run();
             touchedDestIds.push(existingId);
@@ -446,6 +461,8 @@ function applyImport(
             name: item.name,
             chatId: item.chatId,
             note: item.note ?? null,
+            topicId: item.topicId ?? null,
+            topicTitle: item.topicTitle ?? null,
           })
           .returning({ id: destinations.id })
           .all();
@@ -576,11 +593,18 @@ function applyImport(
       if (existing && strategy === 'skip') {
         result.appSettings.skipped += 1;
       } else {
+        // Merge onto the existing row rather than replacing it: the export
+        // may omit fields (e.g. an older file with no digest schedule), and a
+        // wholesale overwrite would wipe whatever the row already held.
+        const mergedValue = {
+          ...((existing?.value as Record<string, unknown> | undefined) ?? {}),
+          ...appSettingsValue,
+        };
         tx.insert(appSettings)
-          .values({ key: GLOBAL_SETTINGS_KEY, value: appSettingsValue })
+          .values({ key: GLOBAL_SETTINGS_KEY, value: mergedValue })
           .onConflictDoUpdate({
             target: appSettings.key,
-            set: { value: appSettingsValue },
+            set: { value: mergedValue },
           })
           .run();
         if (existing) {

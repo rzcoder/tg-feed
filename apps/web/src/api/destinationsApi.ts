@@ -2,11 +2,14 @@ import {
   createDestinationRequestSchema,
   destinationDtoSchema,
   destinationListResponseSchema,
+  listForumTopicsRequestSchema,
+  listForumTopicsResponseSchema,
   resolveDestinationRequestSchema,
   resolveDestinationResponseSchema,
   type CreateDestinationRequest,
   type DestinationDto,
   type DestinationListResponse,
+  type ListForumTopicsResponse,
   type ResolveDestinationResponse,
   type UpdateDestinationRequest,
 } from '@tg-feed/shared';
@@ -48,4 +51,13 @@ export async function updateDestination(
 
 export async function deleteDestination(id: number): Promise<void> {
   await apiFetch<void>(`/api/destinations/${id}`, { method: 'DELETE' });
+}
+
+export async function listForumTopics(chatId: string): Promise<ListForumTopicsResponse> {
+  const body = listForumTopicsRequestSchema.parse({ chatId });
+  const res = await apiFetch<unknown, typeof body>('/api/destinations/topics', {
+    method: 'POST',
+    body,
+  });
+  return listForumTopicsResponseSchema.parse(res);
 }

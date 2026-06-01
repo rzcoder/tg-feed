@@ -3,7 +3,9 @@ import {
   createSubscriptionFilterRequestSchema,
   createSubscriptionRequestSchema,
   forwardLogQuerySchema,
+  isValidTimeZone,
   loginRequestSchema,
+  settingsDtoSchema,
   updateSettingsRequestSchema,
   updateSubscriptionFilterRequestSchema,
   updateSubscriptionRequestSchema,
@@ -215,6 +217,59 @@ describe('updateSettingsRequestSchema', () => {
   });
   it('rejects non-integer delayMs', () => {
     expect(updateSettingsRequestSchema.safeParse({ delayMs: 1.5 }).success).toBe(false);
+  });
+  it('accepts a digest-only body', () => {
+    expect(updateSettingsRequestSchema.safeParse({ statsDigestEnabled: true }).success).toBe(true);
+  });
+  it('rejects a malformed digest time', () => {
+    expect(updateSettingsRequestSchema.safeParse({ statsDigestTime: '9:00' }).success).toBe(false);
+    expect(updateSettingsRequestSchema.safeParse({ statsDigestTime: '24:00' }).success).toBe(false);
+  });
+  it('rejects an out-of-range day of week', () => {
+    expect(updateSettingsRequestSchema.safeParse({ statsDigestDayOfWeek: 7 }).success).toBe(false);
+  });
+  it('rejects an invalid time zone', () => {
+    expect(
+      updateSettingsRequestSchema.safeParse({ statsDigestTimezone: 'Not/AZone' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('settingsDtoSchema', () => {
+  it('fills digest defaults for an old payload without digest fields', () => {
+    expect(settingsDtoSchema.parse({ delayMs: 8000, albumDebounceMs: 2000 })).toEqual({
+      delayMs: 8000,
+      albumDebounceMs: 2000,
+      statsDigestEnabled: false,
+      statsDigestFrequency: 'daily',
+      statsDigestDayOfWeek: 1,
+      statsDigestTime: '09:00',
+      statsDigestTimezone: 'UTC',
+    });
+  });
+  it('preserves explicit digest fields', () => {
+    const parsed = settingsDtoSchema.parse({
+      delayMs: 8000,
+      albumDebounceMs: 2000,
+      statsDigestEnabled: true,
+      statsDigestFrequency: 'weekly',
+      statsDigestDayOfWeek: 0,
+      statsDigestTime: '23:30',
+      statsDigestTimezone: 'America/New_York',
+    });
+    expect(parsed.statsDigestFrequency).toBe('weekly');
+    expect(parsed.statsDigestTime).toBe('23:30');
+  });
+});
+
+describe('isValidTimeZone', () => {
+  it('accepts real IANA zones', () => {
+    expect(isValidTimeZone('UTC')).toBe(true);
+    expect(isValidTimeZone('Europe/Moscow')).toBe(true);
+  });
+  it('rejects nonsense', () => {
+    expect(isValidTimeZone('Not/AZone')).toBe(false);
+    expect(isValidTimeZone('')).toBe(false);
   });
 });
 

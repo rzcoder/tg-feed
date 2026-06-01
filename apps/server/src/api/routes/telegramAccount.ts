@@ -38,6 +38,7 @@ import { deleteAccount, getActiveAccount, upsertAccount } from '../../db/telegra
 import { AppError } from '../../lib/errors.js';
 import { encryptSessionString, getKeyFingerprint } from '../../lib/sessionCrypto.js';
 import type { LoginAccountInfo, LoginSessionStore } from '../../tg/loginSession.js';
+import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import { readSessionToken } from '../auth.js';
 
 export interface RegisterTelegramAccountRoutesDeps {
@@ -50,22 +51,76 @@ export interface RegisterTelegramAccountRoutesDeps {
   reloadTelegramSession?: () => Promise<void>;
   /** Lifecycle of the gramjs subsystem (used to compute `present`). */
   getTelegramStatus: () => TelegramStatus;
+  /**
+   * Profile-photo fetcher over the live userbot. Used to fetch the account's
+   * own avatar ("me"); absent when no client is up (tests / disconnected).
+   */
+  getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
+}
+
+// Avatar cache TTL — long enough to avoid re-downloading on every settings
+// poll, short enough that a changed/swapped photo or a transient miss is
+// picked up without a sign-out or restart.
+const AVATAR_TTL_MS = 10 * 60_000;
+const AVATAR_FETCH_TIMEOUT_MS = 2500;
+
+/** Resolves to null after the timeout so a stalled download can't hang the route. */
+function avatarFetchTimeout(): Promise<null> {
+  return new Promise<null>((resolve) => {
+    const t = setTimeout(() => resolve(null), AVATAR_FETCH_TIMEOUT_MS);
+    if (typeof t.unref === 'function') t.unref();
+  });
 }
 
 export function registerTelegramAccountRoutes(
   app: FastifyInstance,
   deps: RegisterTelegramAccountRoutesDeps,
 ): void {
-  const { db, getEncryptionKey, loginSessionStore, reloadTelegramSession, getTelegramStatus } =
-    deps;
+  const {
+    db,
+    getEncryptionKey,
+    loginSessionStore,
+    reloadTelegramSession,
+    getTelegramStatus,
+    getFetchProfilePhoto,
+  } = deps;
 
-  app.get('/tg/account', async (): Promise<TelegramAccountInfo> => {
-    return buildAccountInfo({
+  // The userbot's own avatar, downloaded lazily and cached with a short TTL so
+  // a transient miss or a changed/swapped photo is eventually picked up
+  // without re-downloading on every poll. Cleared outright on sign-in / out.
+  let avatarCache: { key: string; dataUrl: string | null; fetchedAt: number } | null = null;
+
+  async function resolveAvatar(base: TelegramAccountInfo): Promise<string | null> {
+    if (!base.present || getTelegramStatus().state !== 'connected') return null;
+    const key = base.telegramUserId ?? 'me';
+    const nowMs = Date.now();
+    if (avatarCache && avatarCache.key === key && nowMs - avatarCache.fetchedAt < AVATAR_TTL_MS) {
+      return avatarCache.dataUrl;
+    }
+    const fetcher = getFetchProfilePhoto?.();
+    // No live client: keep any same-account cached value rather than dropping it.
+    if (!fetcher) return avatarCache?.key === key ? avatarCache.dataUrl : null;
+    let dataUrl: string | null = null;
+    try {
+      // Don't let a hung gramjs download block this frequently-polled route.
+      dataUrl = await Promise.race([fetcher('me'), avatarFetchTimeout()]);
+    } catch {
+      dataUrl = null;
+    }
+    avatarCache = { key, dataUrl, fetchedAt: nowMs };
+    return dataUrl;
+  }
+
+  async function accountInfo(): Promise<TelegramAccountInfo> {
+    const base = buildAccountInfo({
       db,
       ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
       getTelegramStatus,
     });
-  });
+    return { ...base, avatarDataUrl: await resolveAvatar(base) };
+  }
+
+  app.get('/tg/account', async (): Promise<TelegramAccountInfo> => accountInfo());
 
   app.post(
     '/tg/login/start',
@@ -101,14 +156,14 @@ export function registerTelegramAccountRoutes(
       if ('needsPassword' in result) {
         return { done: false, needsPassword: true };
       }
-      const account = await commitLogin({
+      await commitLogin({
         db,
         ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
         info: result.account,
         ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
-        getTelegramStatus,
       });
-      return { done: true, account };
+      avatarCache = null;
+      return { done: true, account: await accountInfo() };
     },
   );
 
@@ -125,14 +180,14 @@ export function registerTelegramAccountRoutes(
       const body = telegramLoginPasswordRequestSchema.parse(request.body);
       const owner = readSessionToken(request) ?? '';
       const result = await store.verifyPassword(body.sessionId, body.password, owner);
-      const account = await commitLogin({
+      await commitLogin({
         db,
         ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
         info: result.account,
         ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
-        getTelegramStatus,
       });
-      return { done: true, account };
+      avatarCache = null;
+      return { done: true, account: await accountInfo() };
     },
   );
 
@@ -141,14 +196,14 @@ export function registerTelegramAccountRoutes(
     const store = requireStore(loginSessionStore);
     const body = telegramLoginRawRequestSchema.parse(request.body);
     const info = await store.validateRaw(body.sessionString);
-    const account = await commitLogin({
+    await commitLogin({
       db,
       ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
       info,
       ...(reloadTelegramSession !== undefined ? { reloadTelegramSession } : {}),
-      getTelegramStatus,
     });
-    return { done: true, account };
+    avatarCache = null;
+    return { done: true, account: await accountInfo() };
   });
 
   app.post('/tg/login/cancel', async (request): Promise<TelegramLoginCancelResponse> => {
@@ -161,6 +216,7 @@ export function registerTelegramAccountRoutes(
 
   app.delete('/tg/account', async (): Promise<{ ok: true }> => {
     deleteAccount(db);
+    avatarCache = null;
     if (reloadTelegramSession) {
       // Live-swap to env (or degraded) — failures are logged inside
       // `reloadTelegramSession` and don't block the user. The DB row is
@@ -197,6 +253,8 @@ function buildAccountInfo(deps: {
       username: row.username,
       phoneNumber: row.phoneNumber,
       telegramUserId: row.telegramUserId,
+      // Filled by the caller (accountInfo) from the live client.
+      avatarDataUrl: null,
       encryptionKeyConfigured: true,
       keyFingerprintMismatch: false,
     };
@@ -209,6 +267,7 @@ function buildAccountInfo(deps: {
     username: null,
     phoneNumber: null,
     telegramUserId: null,
+    avatarDataUrl: null,
     encryptionKeyConfigured: key !== null,
     keyFingerprintMismatch: row !== null && !rowUsable,
   };
@@ -219,8 +278,7 @@ async function commitLogin(deps: {
   getEncryptionKey?: () => Buffer | null;
   info: LoginAccountInfo;
   reloadTelegramSession?: () => Promise<void>;
-  getTelegramStatus: () => TelegramStatus;
-}): Promise<TelegramAccountInfo> {
+}): Promise<void> {
   const key = deps.getEncryptionKey?.() ?? null;
   if (!key) {
     throw new AppError(
@@ -242,16 +300,11 @@ async function commitLogin(deps: {
     try {
       await deps.reloadTelegramSession();
     } catch {
-      // Live-swap failed; the DB row is still saved. The next process
-      // restart will pick it up. Returning the new account info anyway so
-      // the UI can confirm the save.
+      // Live-swap failed; the DB row is still saved. The next process restart
+      // picks it up. The caller rebuilds the account info regardless so the UI
+      // can confirm the save.
     }
   }
-  return buildAccountInfo({
-    db: deps.db,
-    ...(deps.getEncryptionKey !== undefined ? { getEncryptionKey: deps.getEncryptionKey } : {}),
-    getTelegramStatus: deps.getTelegramStatus,
-  });
 }
 
 function requireKeyConfigured(getEncryptionKey?: () => Buffer | null): void {

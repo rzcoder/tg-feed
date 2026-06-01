@@ -33,6 +33,20 @@ export const destinations = sqliteTable('destinations', {
   chatId: text('chat_id').notNull(),
   note: text('note'),
   /**
+   * Forum topic to forward into, when `chatId` is a forum supergroup. Holds
+   * the topic's `top_msg_id`; stored as text for consistency with the other
+   * 64-bit ids and converted to a number only at the forward boundary. NULL
+   * means "no explicit topic" — the General topic for a forum, or the only
+   * behaviour for a normal chat.
+   */
+  topicId: text('topic_id'),
+  /**
+   * Topic title cached at create/edit time so the list and badges render
+   * without a live `channels.GetForumTopics` round-trip. NULL whenever
+   * `topicId` is NULL.
+   */
+  topicTitle: text('topic_title'),
+  /**
    * Channel/chat profile photo as a `data:image/jpeg;base64,...` URL, or
    * NULL when we haven't fetched one yet (the trigger for the access
    * monitor's lazy backfill). Populated on create when Telegram is

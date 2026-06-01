@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, Check, Plus, Slash } from 'lucide-react';
+import { ChevronLeft, Check, Plus } from 'lucide-react';
 import {
   filterRuleDefaultParams,
   filterRuleParamsSchemas,
@@ -20,7 +20,7 @@ import { useResolveSubscription } from '@/hooks/useSubscriptions';
 import { useSubscriptionFilters } from '@/hooks/useFilters';
 import { useDebouncedResolve } from '@/hooks/useDebouncedResolve';
 import { ResolveCard } from '@/components/domain/ResolveCard';
-import { EntityIcon } from '@/components/domain/EntityIcon';
+import { DestinationOption, NoDestinationOption } from '@/components/domain/DestinationOption';
 import { FilterRow } from '@/components/domain/FilterRow';
 import { RuleForm } from '@/components/domain/RuleForm';
 import { RuleListItem } from '@/components/domain/RuleListItem';
@@ -392,9 +392,9 @@ export function SubSheet({
               Destination <span className="text-text-faint font-normal">(optional)</span>
             </Label>
             <div className="flex flex-col gap-1.5">
-              <DestRadioNone selected={destId === null} onSelect={() => setDestId(null)} />
+              <NoDestinationOption selected={destId === null} onSelect={() => setDestId(null)} />
               {destinations.map((d) => (
-                <DestRadio
+                <DestinationOption
                   key={d.id}
                   destination={d}
                   selected={destId === d.id}
@@ -512,79 +512,6 @@ function LibCheckbox({
         <div className="text-[13px] font-medium tracking-tight">{filter.name}</div>
         <div className="font-mono text-[11px] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">
           {describeFilter({ ruleType: filter.ruleType, params: filter.params })}
-        </div>
-      </div>
-    </button>
-  );
-}
-
-function DestRadioNone({ selected, onSelect }: { selected: boolean; onSelect: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors',
-        selected
-          ? 'bg-warning-soft border border-warning/40'
-          : 'bg-bg border border-border hover:bg-surface-2',
-      )}
-    >
-      <span
-        className={cn(
-          'w-4 h-4 rounded-full border-[1.5px] grid place-items-center flex-shrink-0',
-          selected ? 'border-warning bg-warning' : 'border-border-strong',
-        )}
-      >
-        {selected && <span className="w-1.5 h-1.5 rounded-full bg-warning-fg" />}
-      </span>
-      <span className="grid place-items-center w-9 h-9 rounded-lg bg-bg text-text-faint border border-border flex-shrink-0">
-        <Slash size={14} strokeWidth={2.2} />
-      </span>
-      <div className="flex flex-col flex-1 min-w-0 gap-px">
-        <div className="text-[13px] font-medium tracking-tight">No destination</div>
-        <div className="text-[11px] text-text-muted">Subscription saved but won't forward.</div>
-      </div>
-    </button>
-  );
-}
-
-function DestRadio({
-  destination,
-  selected,
-  onSelect,
-}: {
-  destination: DestinationDto;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors',
-        selected
-          ? 'bg-accent-soft border border-accent'
-          : 'bg-bg border border-border hover:bg-surface-2',
-      )}
-    >
-      <span
-        className={cn(
-          'w-4 h-4 rounded-full border-[1.5px] grid place-items-center flex-shrink-0',
-          selected ? 'border-accent bg-accent' : 'border-border-strong',
-        )}
-      >
-        {selected && <span className="w-1.5 h-1.5 rounded-full bg-accent-fg" />}
-      </span>
-      <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" size="sm" />
-      <div className="flex flex-col flex-1 min-w-0 gap-px">
-        <div className="text-[13px] font-medium tracking-tight truncate">{destination.name}</div>
-        <div className="font-mono text-[11px] text-text-muted truncate">
-          {destination.chatId}
-          {destination.note && (
-            <span className="ml-2 font-sans italic text-text-faint">({destination.note})</span>
-          )}
         </div>
       </div>
     </button>

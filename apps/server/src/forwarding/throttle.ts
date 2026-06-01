@@ -20,7 +20,7 @@ export const GLOBAL_SETTINGS_KEY = 'global';
 export const DEFAULT_DELAY_MS = 8000;
 export const DEFAULT_ALBUM_DEBOUNCE_MS = 2000;
 
-function readGlobalValue(db: Db): Record<string, unknown> | null {
+export function readGlobalValue(db: Db): Record<string, unknown> | null {
   const row = db.select().from(appSettings).where(eq(appSettings.key, GLOBAL_SETTINGS_KEY)).get();
   if (!row) return null;
   const value = row.value;

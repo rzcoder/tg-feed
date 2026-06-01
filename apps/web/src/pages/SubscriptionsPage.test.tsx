@@ -42,6 +42,8 @@ const destination = {
   name: 'ops',
   chatId: '-1009999999999',
   note: null,
+  topicId: null,
+  topicTitle: null,
   iconDataUrl: null,
   usageCount: 1,
   accessStatus: 'ok' as const,

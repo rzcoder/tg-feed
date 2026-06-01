@@ -4,6 +4,7 @@ import {
   CornerDownRight,
   Filter,
   Lock,
+  MessagesSquare,
   Pencil,
   Send,
   ShieldAlert,
@@ -143,6 +144,7 @@ export function ExpandedSubActions({
   destinations,
   library,
   onEdit,
+  onPickDestination,
   onViewFilters,
   onDelete,
 }: {
@@ -150,6 +152,7 @@ export function ExpandedSubActions({
   destinations: DestinationDto[];
   library: LibraryFilterDto[];
   onEdit: () => void;
+  onPickDestination: () => void;
   onViewFilters: () => void;
   onDelete: () => void;
 }) {
@@ -171,7 +174,11 @@ export function ExpandedSubActions({
     <div className="bg-bg-2 border-b border-border px-4.5 pb-3.5 pt-1 flex flex-col gap-3">
       <section className="flex flex-col gap-1.5">
         <SectionLabel>Forwards to</SectionLabel>
-        <DestinationCard destination={destination} accessStatus={sub.destinationAccessStatus} />
+        <DestinationCard
+          destination={destination}
+          accessStatus={sub.destinationAccessStatus}
+          onClick={onPickDestination}
+        />
       </section>
 
       {showFilters && (
@@ -233,13 +240,19 @@ export function ExpandedSubActions({
 function DestinationCard({
   destination,
   accessStatus,
+  onClick,
 }: {
   destination: DestinationDto | null;
   accessStatus: SubscriptionDto['destinationAccessStatus'];
+  onClick: () => void;
 }) {
   if (!destination) {
     return (
-      <div className="flex items-center gap-2 px-2.5 py-2 bg-warning-soft border border-warning/30 rounded-lg">
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex items-center gap-2 px-2.5 py-2 bg-warning-soft border border-warning/30 rounded-lg text-left transition-colors hover:bg-warning-soft/70"
+      >
         <CornerDownRight size={14} className="text-warning flex-shrink-0" />
         <Slash size={13} className="text-warning flex-shrink-0" />
         <div className="flex flex-col flex-1 min-w-0">
@@ -247,15 +260,20 @@ function DestinationCard({
             No destination
           </span>
           <span className="text-[11px] text-text-muted truncate">
-            Edit subscription to attach one.
+            Tap to choose where to forward.
           </span>
         </div>
-      </div>
+        <Pencil size={13} className="text-warning/70 flex-shrink-0" />
+      </button>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 px-2.5 py-2 bg-surface border border-border rounded-lg">
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center gap-2 px-2.5 py-2 bg-surface border border-border rounded-lg text-left transition-colors hover:bg-surface-2 hover:border-border-strong"
+    >
       <CornerDownRight size={14} className="text-text-faint flex-shrink-0" />
       <EntityIcon iconDataUrl={destination.iconDataUrl} fallback="send" size="sm" />
       <div className="flex flex-col flex-1 min-w-0">
@@ -263,6 +281,12 @@ function DestinationCard({
           <span className="text-[12.5px] font-medium tracking-tight truncate">
             {destination.name}
           </span>
+          {destination.topicTitle && (
+            <span className="inline-flex items-center gap-1 text-[10.5px] text-text-muted flex-shrink-0">
+              <MessagesSquare size={10} />
+              <span className="truncate max-w-[120px]">{destination.topicTitle}</span>
+            </span>
+          )}
           <span className="text-[10px] text-text-faint truncate">
             (Chat ID: <span className="font-mono">{destination.chatId}</span>)
           </span>
@@ -282,7 +306,8 @@ function DestinationCard({
           </div>
         )}
       </div>
-    </div>
+      <Pencil size={13} className="text-text-faint flex-shrink-0" />
+    </button>
   );
 }
 

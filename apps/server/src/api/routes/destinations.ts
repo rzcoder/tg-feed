@@ -9,10 +9,12 @@ import { asc, count, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
   createDestinationRequestSchema,
+  listForumTopicsRequestSchema,
   resolveDestinationRequestSchema,
   updateDestinationRequestSchema,
   type DestinationDto,
   type DestinationListResponse,
+  type ListForumTopicsResponse,
   type ResolveDestinationResponse,
   type TelegramStatus,
 } from '@tg-feed/shared';
@@ -26,6 +28,7 @@ import {
   telegramUnavailableError,
 } from '../../lib/errors.js';
 import type { ChatResolver } from '../../tg/chatResolver.js';
+import type { ForumTopicLister } from '../../tg/forumTopics.js';
 import type { ImportInviteFn } from '../../tg/inviteResolver.js';
 import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import { idParamsSchema } from './_params.js';
@@ -35,6 +38,8 @@ interface DestinationRow {
   name: string;
   chatId: string;
   note: string | null;
+  topicId: string | null;
+  topicTitle: string | null;
   iconDataUrl: string | null;
   accessStatus: 'ok' | 'no_access';
   accessCheckedAt: Date | null;
@@ -70,13 +75,25 @@ export interface RegisterDestinationDeps {
    * null and the access monitor's lazy backfill catches it later.
    */
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
+  /**
+   * Lazy lookup for the forum-topic lister backing `POST /destinations/topics`.
+   * Same lifecycle as `getChatResolver`. When undefined the route returns 503.
+   */
+  getListForumTopics?: () => ForumTopicLister | undefined;
 }
 
 export function registerDestinationRoutes(
   app: FastifyInstance,
   deps: RegisterDestinationDeps,
 ): void {
-  const { db, getTelegramStatus, getChatResolver, getImportInvite, getFetchProfilePhoto } = deps;
+  const {
+    db,
+    getTelegramStatus,
+    getChatResolver,
+    getImportInvite,
+    getFetchProfilePhoto,
+    getListForumTopics,
+  } = deps;
 
   app.get('/destinations', async () => {
     const rows = listDestinations(db);
@@ -97,7 +114,19 @@ export function registerDestinationRoutes(
       handle: resolved.handle,
       inviteHash: resolved.inviteHash,
       alreadyMember: resolved.alreadyMember,
+      isForum: resolved.isForum,
     };
+    return response;
+  });
+
+  app.post('/destinations/topics', async (request) => {
+    const listForumTopics = getListForumTopics?.();
+    if (!listForumTopics) {
+      throw telegramUnavailableError(getTelegramStatus());
+    }
+    const body = listForumTopicsRequestSchema.parse(request.body);
+    const { isForum, topics } = await listForumTopics(body.chatId);
+    const response: ListForumTopicsResponse = { isForum, topics };
     return response;
   });
 
@@ -132,6 +161,8 @@ export function registerDestinationRoutes(
         name: body.name,
         chatId,
         note: body.note ?? null,
+        topicId: body.topicId ?? null,
+        topicTitle: body.topicTitle ?? null,
         ...(accessCheckedAt ? { accessStatus: initialAccessStatus, accessCheckedAt } : {}),
       })
       .returning()
@@ -154,6 +185,8 @@ export function registerDestinationRoutes(
       name: row.name,
       chatId: row.chatId,
       note: row.note,
+      topicId: row.topicId,
+      topicTitle: row.topicTitle,
       iconDataUrl,
       accessStatus: row.accessStatus,
       accessCheckedAt: row.accessCheckedAt,
@@ -171,6 +204,8 @@ export function registerDestinationRoutes(
         ...(body.name !== undefined ? { name: body.name } : {}),
         ...(body.chatId !== undefined ? { chatId: body.chatId } : {}),
         ...(body.note !== undefined ? { note: body.note } : {}),
+        ...(body.topicId !== undefined ? { topicId: body.topicId } : {}),
+        ...(body.topicTitle !== undefined ? { topicTitle: body.topicTitle } : {}),
       })
       .where(eq(destinations.id, id))
       .returning()
@@ -182,6 +217,8 @@ export function registerDestinationRoutes(
       name: row.name,
       chatId: row.chatId,
       note: row.note,
+      topicId: row.topicId,
+      topicTitle: row.topicTitle,
       iconDataUrl: row.iconDataUrl,
       accessStatus: row.accessStatus,
       accessCheckedAt: row.accessCheckedAt,
@@ -215,6 +252,8 @@ function listDestinations(db: Db): DestinationRow[] {
       name: destinations.name,
       chatId: destinations.chatId,
       note: destinations.note,
+      topicId: destinations.topicId,
+      topicTitle: destinations.topicTitle,
       iconDataUrl: destinations.iconDataUrl,
       accessStatus: destinations.accessStatus,
       accessCheckedAt: destinations.accessCheckedAt,
@@ -231,6 +270,8 @@ function listDestinations(db: Db): DestinationRow[] {
     name: r.name,
     chatId: r.chatId,
     note: r.note,
+    topicId: r.topicId,
+    topicTitle: r.topicTitle,
     iconDataUrl: r.iconDataUrl,
     accessStatus: r.accessStatus,
     accessCheckedAt: r.accessCheckedAt,
@@ -249,6 +290,8 @@ function toDto(row: DestinationRow): DestinationDto {
     name: row.name,
     chatId: row.chatId,
     note: row.note,
+    topicId: row.topicId,
+    topicTitle: row.topicTitle,
     iconDataUrl: row.iconDataUrl,
     usageCount: row.usageCount,
     accessStatus: row.accessStatus,

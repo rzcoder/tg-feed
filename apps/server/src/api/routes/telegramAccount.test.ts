@@ -76,6 +76,57 @@ describe('telegram account routes', () => {
     expect(body.keyFingerprintMismatch).toBe(false);
   });
 
+  it('GET /api/tg/account returns the self avatar and caches it across requests', async () => {
+    const key = randomBytes(32);
+    let calls = 0;
+    let lastChatId: string | null = null;
+    testApp = await buildTestApp({
+      telegramStatus: CONNECTED,
+      getEncryptionKey: () => key,
+      fetchProfilePhoto: async (chatId) => {
+        calls += 1;
+        lastChatId = chatId;
+        return 'data:image/jpeg;base64,AAAA';
+      },
+    });
+    cookie = await testApp.loginAndGetCookie();
+    const env = encryptSessionString('SESSION', key);
+    const now = new Date();
+    testApp.db
+      .insert(telegramAccount)
+      .values({
+        id: 1,
+        encryptedSessionString: env.ciphertext,
+        keyFingerprint: env.keyFingerprint,
+        phoneNumber: null,
+        displayName: 'Avatar User',
+        username: null,
+        telegramUserId: '7',
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+
+    const first = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/tg/account',
+      headers: { cookie },
+    });
+    expect((first.json() as TelegramAccountInfo).avatarDataUrl).toBe('data:image/jpeg;base64,AAAA');
+    expect(lastChatId).toBe('me');
+
+    const second = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/tg/account',
+      headers: { cookie },
+    });
+    expect((second.json() as TelegramAccountInfo).avatarDataUrl).toBe(
+      'data:image/jpeg;base64,AAAA',
+    );
+    // Downloaded once, then served from the in-memory cache.
+    expect(calls).toBe(1);
+  });
+
   it('GET /api/tg/account flags key fingerprint mismatch when row encrypted by another key', async () => {
     const exportedKey = randomBytes(32);
     const localKey = randomBytes(32);

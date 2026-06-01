@@ -203,6 +203,7 @@ describe('bot config routes', () => {
       handle: '@jane',
       inviteHash: null,
       alreadyMember: true,
+      isForum: false,
     });
   };
 

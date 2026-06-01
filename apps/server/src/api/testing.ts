@@ -16,6 +16,7 @@ import { createEventBus, type EventBus } from '../events/bus.js';
 import { createDefaultRegistry } from '../filters/rules/index.js';
 import { createLogger } from '../lib/logger.js';
 import type { ChatResolver } from '../tg/chatResolver.js';
+import type { ForumTopicLister } from '../tg/forumTopics.js';
 import type { ImportInviteFn } from '../tg/inviteResolver.js';
 import type { JoinChannelFn } from '../tg/joinChannel.js';
 import type { ProfilePhotoFetcher } from '../tg/profilePhoto.js';
@@ -50,6 +51,8 @@ export interface BuildTestAppOptions {
   joinChannel?: JoinChannelFn;
   /** Stub for the best-effort profile photo fetcher fired from both /create endpoints. */
   fetchProfilePhoto?: ProfilePhotoFetcher;
+  /** Stub for the forum-topic lister backing POST /api/destinations/topics. */
+  listForumTopics?: ForumTopicLister;
   /**
    * Override the Telegram status surfaced via `GET /api/system/status` and
    * used by routes to choose between `telegram_initializing` (transient,
@@ -109,6 +112,9 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
     ...(options.joinChannel !== undefined ? { getJoinChannel: () => options.joinChannel } : {}),
     ...(options.fetchProfilePhoto !== undefined
       ? { getFetchProfilePhoto: () => options.fetchProfilePhoto }
+      : {}),
+    ...(options.listForumTopics !== undefined
+      ? { getListForumTopics: () => options.listForumTopics }
       : {}),
     ...(options.getEncryptionKey !== undefined
       ? { getEncryptionKey: options.getEncryptionKey }

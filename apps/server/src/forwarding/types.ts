@@ -17,6 +17,12 @@ export interface RawForwardJob {
   subscriptionId: number;
   sourceChatId: string;
   destinationChatId: string;
+  /**
+   * Forum `top_msg_id` to forward into, or null/undefined for the General
+   * topic / a non-forum chat. Travels alongside `destinationChatId` from the
+   * destinations row to the forwarder, which converts it to `topMsgId`.
+   */
+  destinationTopicId?: string | null;
   sourceMessageId: string;
   groupedId?: string;
   /**
@@ -41,6 +47,8 @@ export interface ForwardJob {
   subscriptionId: number;
   sourceChatId: string;
   destinationChatId: string;
+  /** Forum `top_msg_id` to forward into; null/undefined for General / non-forum. */
+  destinationTopicId?: string | null;
   sourceMessageIds: string[];
   /**
    * Raw message payloads, aligned with `sourceMessageIds`. For an album
@@ -60,6 +68,7 @@ export type ForwardFailureKind =
   | 'permanent_channel_private'
   | 'permanent_user_banned_in_channel'
   | 'permanent_chat_write_forbidden'
+  | 'permanent_topic_unavailable'
   | 'fatal_auth_key_unregistered';
 
 export type ForwardOutcome =

@@ -2,11 +2,15 @@ import type { NewMessageEvent } from 'telegram/events/index.js';
 import type { Subscription } from '../db/schema.js';
 
 /**
- * Subscription with destination chat id resolved via JOIN. The listener
- * needs `destinationChatId` to enqueue forward jobs but the
- * `subscriptions` row only carries a FK now (`destinationId`).
+ * Subscription with destination chat id (and optional forum topic) resolved
+ * via JOIN. The listener needs `destinationChatId` to enqueue forward jobs
+ * but the `subscriptions` row only carries a FK now (`destinationId`);
+ * `destinationTopicId` rides along so forum destinations route to a topic.
  */
-export type ResolvedSubscription = Subscription & { destinationChatId: string };
+export type ResolvedSubscription = Subscription & {
+  destinationChatId: string;
+  destinationTopicId: string | null;
+};
 
 export interface MatchableEvent {
   chatId: string;

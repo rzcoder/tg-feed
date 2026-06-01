@@ -27,13 +27,15 @@ export function DestinationsPage() {
 
   const submit = (data: DestSheetSubmit) => {
     if (sheet.mode === 'edit' && sheet.initial) {
-      // Edit only changes name + note today; chatId is locked in the sheet
-      // and inviteHash is never set in edit mode.
+      // Edit changes name, note, and forum topic; chatId is locked in the
+      // sheet and inviteHash is never set in edit mode.
       updateMut.mutate(
         {
           id: sheet.initial.id,
           body: {
             name: data.name,
+            topicId: data.topicId,
+            topicTitle: data.topicTitle,
             ...(data.note !== undefined ? { note: data.note } : {}),
           },
         },
@@ -51,6 +53,8 @@ export function DestinationsPage() {
           name: data.name,
           // Schema refines exactly one of chatId / inviteHash on the wire.
           ...(data.inviteHash ? { inviteHash: data.inviteHash } : { chatId: data.chatId! }),
+          topicId: data.topicId,
+          topicTitle: data.topicTitle,
           ...(data.note !== undefined ? { note: data.note } : {}),
         },
         {

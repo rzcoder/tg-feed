@@ -62,6 +62,7 @@ interface SubRow {
   id: number;
   sourceChatId: string;
   destinationChatId: string;
+  destinationTopicId: string | null;
 }
 
 interface RawMessage {
@@ -91,6 +92,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
         id: subscriptions.id,
         sourceChatId: subscriptions.sourceChatId,
         destinationChatId: destinations.chatId,
+        destinationTopicId: destinations.topicId,
       })
       .from(subscriptions)
       .innerJoin(destinations, eq(subscriptions.destinationId, destinations.id))
@@ -226,6 +228,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
         subscriptionId: sub.id,
         sourceChatId: sub.sourceChatId,
         destinationChatId: sub.destinationChatId,
+        destinationTopicId: sub.destinationTopicId,
         sourceMessageId,
         text: typeof msg.message === 'string' ? msg.message : '',
         hasMedia: msg.media != null,

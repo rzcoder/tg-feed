@@ -18,6 +18,13 @@ export interface TgFeedBot {
   start(): Promise<void>;
   /** Stop long-polling and wait for the poll loop to unwind. */
   stop(): Promise<void>;
+  /**
+   * DM `text` (HTML) to every admin; returns how many sends succeeded.
+   * Per-admin failures are logged and swallowed so one unreachable admin can't
+   * block the rest — most commonly a 403 because that admin never opened the
+   * bot, so it can't initiate a chat. A return of 0 means nobody received it.
+   */
+  notifyAdmins(text: string): Promise<number>;
 }
 
 export interface CreateBotDeps {
@@ -117,6 +124,19 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
           onStart: (info) => logger.info({ username: info.username }, 'bot: started long-polling'),
         })
         .catch((err) => logger.error({ err }, 'bot: long-polling stopped with error'));
+    },
+
+    async notifyAdmins(text: string) {
+      let delivered = 0;
+      for (const id of adminIds) {
+        try {
+          await bot.api.sendMessage(Number(id), text, { parse_mode: 'HTML' });
+          delivered += 1;
+        } catch (err) {
+          logger.warn({ err, adminId: id }, 'bot: failed to send admin notification');
+        }
+      }
+      return delivered;
     },
 
     async stop() {
