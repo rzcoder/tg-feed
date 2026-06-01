@@ -174,8 +174,14 @@ export function ForwardingSection() {
         >
           Reset
         </Button>
-        <Button variant="primary" size="sm" disabled={!canSave} onClick={save}>
-          {updateMut.isPending ? <Spinner size={14} /> : <Check size={14} strokeWidth={2.5} />}
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<Check size={14} strokeWidth={2.5} />}
+          loading={updateMut.isPending}
+          disabled={!canSave}
+          onClick={save}
+        >
           {updateMut.isPending ? 'Saving…' : 'Save'}
         </Button>
       </CardFooter>

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Filter, Info, Rss } from 'lucide-react';
-import type { FilterRuleType, LibraryFilterDto, SubscriptionFilterDto } from '@tg-feed/shared';
+import type { LibraryFilterDto, SubscriptionFilterDto } from '@tg-feed/shared';
+import { ListState } from '@/components/ui/list-state';
 import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toast';
 import { EmptyState } from '@/components/domain/EmptyState';
@@ -18,8 +19,6 @@ type SubsList = NonNullable<ReturnType<typeof useSubscriptions>['data']>;
 interface PerSubViewProps {
   activeSubId: number | null;
   setSubId: (next: number | null) => void;
-  /** Currently unused — wired in for future filter-type gating. */
-  availableTypes: readonly FilterRuleType[];
   openEditFilter: (f: SubscriptionFilterDto) => void;
   subsLoading: boolean;
   subs: SubsList;
@@ -29,7 +28,6 @@ interface PerSubViewProps {
 export function PerSubView({
   activeSubId,
   setSubId,
-  availableTypes: _availableTypes,
   openEditFilter,
   subsLoading,
   subs,
@@ -107,74 +105,72 @@ export function PerSubView({
       </div>
 
       <div className="scroll flex-1 min-h-0 border-t border-border">
-        {filtersQuery.isPending ? (
-          <div className="grid place-items-center py-8 text-text-muted">
-            <Spinner />
-          </div>
-        ) : total === 0 ? (
-          <div className="px-6 py-8 text-center text-[13px] text-text-muted">
-            No filters yet — add a custom one above, or attach a library filter from the Library
-            tab.
-          </div>
-        ) : (
-          <>
-            {attachedLibrary.map((f) => (
-              <FilterRow
-                key={`lib-${f.id}`}
-                filter={{
-                  id: f.id,
-                  ruleType: f.ruleType,
-                  params: f.params,
-                  name: f.name,
-                  mode: f.mode,
-                }}
-                library
-                onDelete={() =>
-                  detachLibMut.mutate(
-                    { subscriptionId: sub.id, libraryFilterId: f.id },
-                    {
-                      onSuccess: () => toast.show('Library filter detached'),
-                      onError: () => toast.error('Failed to detach'),
-                    },
-                  )
-                }
-                deleteLabel="Detach from subscription"
-              />
-            ))}
-            {own.map((f) => (
-              <FilterRow
-                key={`own-${f.id}`}
-                filter={{
-                  id: f.id,
-                  ruleType: f.ruleType,
-                  params: f.params,
-                  enabled: f.enabled,
-                  mode: f.mode,
-                }}
-                onToggle={() =>
-                  updateMut.mutate(
-                    {
-                      subscriptionId: sub.id,
-                      filterId: f.id,
-                      body: { enabled: !f.enabled },
-                    },
-                    { onError: () => toast.error('Failed to update') },
-                  )
-                }
-                onEdit={() => openEditFilter(f)}
-                onDelete={() =>
-                  deleteMut.mutate(
-                    { subscriptionId: sub.id, filterId: f.id },
-                    {
-                      onSuccess: () => toast.show('Filter removed'),
-                      onError: () => toast.error('Failed to delete'),
-                    },
-                  )
-                }
-              />
-            ))}
-          </>
-        )}
+        <ListState
+          pending={filtersQuery.isPending}
+          isEmpty={total === 0}
+          empty={
+            <div className="px-6 py-8 text-center text-[13px] text-text-muted">
+              No filters yet — add a custom one above, or attach a library filter from the Library
+              tab.
+            </div>
+          }
+        >
+          {attachedLibrary.map((f) => (
+            <FilterRow
+              key={`lib-${f.id}`}
+              filter={{
+                id: f.id,
+                ruleType: f.ruleType,
+                params: f.params,
+                name: f.name,
+                mode: f.mode,
+              }}
+              library
+              onDelete={() =>
+                detachLibMut.mutate(
+                  { subscriptionId: sub.id, libraryFilterId: f.id },
+                  {
+                    onSuccess: () => toast.show('Library filter detached'),
+                    onError: () => toast.error('Failed to detach'),
+                  },
+                )
+              }
+              deleteLabel="Detach from subscription"
+            />
+          ))}
+          {own.map((f) => (
+            <FilterRow
+              key={`own-${f.id}`}
+              filter={{
+                id: f.id,
+                ruleType: f.ruleType,
+                params: f.params,
+                enabled: f.enabled,
+                mode: f.mode,
+              }}
+              onToggle={() =>
+                updateMut.mutate(
+                  {
+                    subscriptionId: sub.id,
+                    filterId: f.id,
+                    body: { enabled: !f.enabled },
+                  },
+                  { onError: () => toast.error('Failed to update') },
+                )
+              }
+              onEdit={() => openEditFilter(f)}
+              onDelete={() =>
+                deleteMut.mutate(
+                  { subscriptionId: sub.id, filterId: f.id },
+                  {
+                    onSuccess: () => toast.show('Filter removed'),
+                    onError: () => toast.error('Failed to delete'),
+                  },
+                )
+              }
+            />
+          ))}
+        </ListState>
       </div>
     </>
   );

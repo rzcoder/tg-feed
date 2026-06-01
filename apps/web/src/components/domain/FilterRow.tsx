@@ -7,6 +7,7 @@ import {
   type FilterLike,
 } from '@/lib/describeFilter';
 import { Button } from '@/components/ui/button';
+import { Toggle } from '@/components/settings/primitives';
 
 export interface FilterRowProps {
   filter: FilterLike & { id: number; enabled?: boolean; name?: string | null };
@@ -68,25 +69,7 @@ export function FilterRow({
           {describeFilter(filter)}
         </div>
       </div>
-      {onToggle && (
-        <button
-          type="button"
-          role="switch"
-          aria-checked={enabled}
-          onClick={onToggle}
-          className={cn(
-            'relative w-[38px] h-[22px] rounded-full border transition-colors flex-shrink-0',
-            enabled ? 'bg-accent border-accent' : 'bg-surface-3 border-border',
-          )}
-        >
-          <span
-            className={cn(
-              'absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-transform',
-              enabled ? 'bg-accent-fg translate-x-4' : 'bg-text',
-            )}
-          />
-        </button>
-      )}
+      {onToggle && <Toggle checked={enabled} onChange={onToggle} />}
       {onEdit && (
         <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Edit filter">
           <Pencil size={14} />

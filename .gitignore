@@ -20,7 +20,7 @@ coverage/
 .env.*.local
 
 # Runtime data
-data/
+/data/
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal

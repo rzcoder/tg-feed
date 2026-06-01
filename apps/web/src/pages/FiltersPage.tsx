@@ -65,7 +65,6 @@ export function FiltersPage() {
         <PerSubView
           activeSubId={subId}
           setSubId={setSubId}
-          availableTypes={availableTypes}
           openEditFilter={(f) => sheet.openEdit('sub', f)}
           subsLoading={subs.isPending}
           subs={subs.data ?? []}

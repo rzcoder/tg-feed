@@ -175,20 +175,13 @@ export function LoginPage() {
             type="submit"
             variant="primary"
             size="lg"
+            icon={<Lock size={15} />}
+            loading={login.isPending}
+            spinnerSize={16}
             disabled={!password || login.isPending}
             className="w-full mt-1"
           >
-            {login.isPending ? (
-              <>
-                <Spinner size={16} />
-                Signing in…
-              </>
-            ) : (
-              <>
-                <Lock size={15} />
-                Unlock
-              </>
-            )}
+            {login.isPending ? 'Signing in…' : 'Unlock'}
           </Button>
         </form>
 

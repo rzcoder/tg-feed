@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, Check, Plus } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { ChevronLeft, Plus } from 'lucide-react';
 import {
-  filterRuleDefaultParams,
-  filterRuleParamsSchemas,
+  inlineFilterInputSchema,
   type DestinationDto,
   type FilterMode,
   type FilterRuleType,
@@ -14,11 +13,12 @@ import { Sheet } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Input, Label, Hint } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
-import { cn } from '@/lib/cn';
+import { CheckboxCard } from '@/components/ui/checkbox-card';
 import { describeFilter } from '@/lib/describeFilter';
 import { useResolveSubscription } from '@/hooks/useSubscriptions';
 import { useSubscriptionFilters } from '@/hooks/useFilters';
 import { useDebouncedResolve } from '@/hooks/useDebouncedResolve';
+import { useFilterDraft } from '@/hooks/useFilterDraft';
 import { ResolveCard } from '@/components/domain/ResolveCard';
 import { DestinationOption, NoDestinationOption } from '@/components/domain/DestinationOption';
 import { FilterRow } from '@/components/domain/FilterRow';
@@ -94,10 +94,20 @@ export function SubSheet({
   const [libIds, setLibIds] = useState<number[]>([]);
   const [inlineFilters, setInlineFilters] = useState<InlineFilterDraft[]>([]);
   const [step, setStep] = useState<SubFilterStep>({ kind: 'list' });
-  // Step-local draft buffer; committed back into `inlineFilters` only on Save.
-  const [draftRule, setDraftRule] = useState<FilterRuleType | null>(null);
-  const [draftParams, setDraftParams] = useState<Record<string, unknown>>({});
-  const [draftMode, setDraftMode] = useState<FilterMode>('include');
+  // Step-local draft buffer (shared with FilterSheet via useFilterDraft);
+  // committed back into `inlineFilters` only on Save.
+  const {
+    ruleType: draftRule,
+    params: draftParams,
+    mode: draftMode,
+    setParams: setDraftParams,
+    setMode: setDraftMode,
+    pickType,
+    load: loadDraft,
+    reset: resetDraft,
+    valid: draftValid,
+    parseParams,
+  } = useFilterDraft();
 
   const {
     mutate: mutateResolve,
@@ -128,10 +138,8 @@ export function SubSheet({
       resetResolve();
     }
     setStep({ kind: 'list' });
-    setDraftRule(null);
-    setDraftParams({});
-    setDraftMode('include');
-  }, [open, isEdit, initial, destinations, resetResolve]);
+    resetDraft();
+  }, [open, isEdit, initial, destinations, resetResolve, resetDraft]);
 
   // Seed inline filters from the server once they land. Ignored on subsequent
   // refetches so the user's in-progress edits aren't clobbered.
@@ -146,7 +154,7 @@ export function SubSheet({
     if (!filtersQuery.data) return;
     setInlineFilters(
       filtersQuery.data.map((f) => ({
-        clientKey: cryptoUuid(),
+        clientKey: newClientKey(),
         ruleType: f.ruleType,
         params: { ...f.params },
         enabled: f.enabled,
@@ -168,11 +176,6 @@ export function SubSheet({
   const resolving = !isEdit && resolvePending;
   const resolveError = !isEdit ? resolveErrorRaw : null;
 
-  const draftValid = useMemo(() => {
-    if (!draftRule) return false;
-    return filterRuleParamsSchemas[draftRule].safeParse(draftParams).success;
-  }, [draftRule, draftParams]);
-
   const canSave = (() => {
     if (submitting) return false;
     if (isEdit) return true;
@@ -181,17 +184,17 @@ export function SubSheet({
 
   const handleSubmit = () => {
     if (!canSave) return;
-    // Each draft was already parsed through `filterRuleParamsSchemas[ruleType]`
-    // before landing in `inlineFilters`, so the runtime shape matches the
-    // discriminated union — TS just can't prove it via dynamic key lookup.
-    const wireInline = inlineFilters.map(
-      (d) =>
-        ({
-          ruleType: d.ruleType,
-          params: d.params,
-          enabled: d.enabled,
-          mode: d.mode,
-        }) as InlineFilterInput,
+    // Validate each draft against the wire schema at the boundary rather than
+    // casting. Inline-edited drafts are already parsed on commit, but ones
+    // seeded from the server are re-checked here, so a schema drift fails
+    // loudly instead of writing a malformed filter.
+    const wireInline: InlineFilterInput[] = inlineFilters.map((d) =>
+      inlineFilterInputSchema.parse({
+        ruleType: d.ruleType,
+        params: d.params,
+        enabled: d.enabled,
+        mode: d.mode,
+      }),
     );
     if (isEdit && initial) {
       onSubmit({
@@ -224,37 +227,31 @@ export function SubSheet({
   };
 
   const startAddInline = () => {
-    setDraftRule(null);
-    setDraftParams({});
-    setDraftMode('include');
+    resetDraft();
     setStep({ kind: 'pick-rule' });
   };
-  const pickInlineRule = useCallback((rt: FilterRuleType) => {
-    setDraftRule(rt);
-    setDraftParams({ ...filterRuleDefaultParams[rt] });
-    setDraftMode('include');
-    setStep({ kind: 'edit-params', index: -1 });
-  }, []);
+  const pickInlineRule = useCallback(
+    (rt: FilterRuleType) => {
+      pickType(rt);
+      setStep({ kind: 'edit-params', index: -1 });
+    },
+    [pickType],
+  );
   const startEditInline = (index: number) => {
     const row = inlineFilters[index]!;
-    setDraftRule(row.ruleType);
-    setDraftParams({ ...row.params });
-    setDraftMode(row.mode);
+    loadDraft(row.ruleType, row.params, row.mode);
     setStep({ kind: 'edit-params', index });
   };
   const commitDraft = () => {
     if (!draftRule || !draftValid) return;
-    const validated = filterRuleParamsSchemas[draftRule].parse(draftParams) as Record<
-      string,
-      unknown
-    >;
+    const validated = parseParams();
     setInlineFilters((prev) => {
       if (step.kind !== 'edit-params') return prev;
       if (step.index === -1) {
         return [
           ...prev,
           {
-            clientKey: cryptoUuid(),
+            clientKey: newClientKey(),
             ruleType: draftRule,
             params: validated,
             enabled: true,
@@ -269,15 +266,11 @@ export function SubSheet({
       );
     });
     setStep({ kind: 'list' });
-    setDraftRule(null);
-    setDraftParams({});
-    setDraftMode('include');
+    resetDraft();
   };
   const cancelDraft = () => {
     setStep({ kind: 'list' });
-    setDraftRule(null);
-    setDraftParams({});
-    setDraftMode('include');
+    resetDraft();
   };
   const removeInline = (index: number) => {
     setInlineFilters((prev) => prev.filter((_, i) => i !== index));
@@ -418,10 +411,12 @@ export function SubSheet({
                 <Hint>No library filters yet — create reusable rules in Filters → Library.</Hint>
               ) : (
                 library.map((l) => (
-                  <LibCheckbox
+                  <CheckboxCard
                     key={l.id}
-                    filter={l}
-                    selected={libIds.includes(l.id)}
+                    label={l.name}
+                    description={describeFilter({ ruleType: l.ruleType, params: l.params })}
+                    descriptionClassName="font-mono whitespace-nowrap overflow-hidden text-ellipsis"
+                    checked={libIds.includes(l.id)}
                     onToggle={() => toggleLib(l.id)}
                   />
                 ))
@@ -473,45 +468,15 @@ export function SubSheet({
   );
 }
 
-function cryptoUuid(): string {
-  if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
-    throw new Error('crypto is not supported in current env');
+let inlineKeyCounter = 0;
+
+// Stable React key for an unsaved inline-filter row. Prefers a UUID but falls
+// back to a counter on insecure contexts (http:// LAN host, where
+// crypto.randomUUID is undefined) — the key only needs to be unique in-sheet.
+function newClientKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
   }
-  return crypto.randomUUID();
-}
-
-interface LibCheckboxProps {
-  filter: LibraryFilterDto;
-  selected: boolean;
-  onToggle: () => void;
-}
-
-function LibCheckbox({ filter, selected, onToggle }: LibCheckboxProps) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={cn(
-        'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors',
-        selected
-          ? 'bg-accent-soft border border-accent'
-          : 'bg-bg border border-border hover:bg-surface-2',
-      )}
-    >
-      <span
-        className={cn(
-          'w-4 h-4 rounded grid place-items-center border-[1.5px] flex-shrink-0',
-          selected ? 'border-accent bg-accent' : 'border-border-strong',
-        )}
-      >
-        {selected && <Check size={11} strokeWidth={3} className="text-accent-fg" />}
-      </span>
-      <div className="flex flex-col flex-1 min-w-0 gap-px">
-        <div className="text-[13px] font-medium tracking-tight">{filter.name}</div>
-        <div className="font-mono text-[11px] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis">
-          {describeFilter({ ruleType: filter.ruleType, params: filter.params })}
-        </div>
-      </div>
-    </button>
-  );
+  inlineKeyCounter += 1;
+  return `inline-${inlineKeyCounter}`;
 }

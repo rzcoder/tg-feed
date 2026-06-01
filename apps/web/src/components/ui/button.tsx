@@ -1,5 +1,6 @@
-import { forwardRef, type ButtonHTMLAttributes } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/cn';
 
 const buttonStyles = cva(
@@ -36,18 +37,40 @@ const buttonStyles = cva(
 );
 
 export interface ButtonProps
-  extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonStyles> {}
+  extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonStyles> {
+  /** Leading icon, rendered before `children`. Swapped for a spinner while loading. */
+  icon?: ReactNode;
+  /** Shows a spinner in the leading slot and disables the button. */
+  loading?: boolean;
+  /** Spinner size while loading. */
+  spinnerSize?: number;
+}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { className, variant, size, type = 'button', ...props },
+  {
+    className,
+    variant,
+    size,
+    type = 'button',
+    icon,
+    loading,
+    spinnerSize = 14,
+    disabled,
+    children,
+    ...props
+  },
   ref,
 ) {
   return (
     <button
       ref={ref}
       type={type}
+      disabled={disabled || loading}
       className={cn(buttonStyles({ variant, size }), className)}
       {...props}
-    />
+    >
+      {loading ? <Spinner size={spinnerSize} /> : icon}
+      {children}
+    </button>
   );
 });

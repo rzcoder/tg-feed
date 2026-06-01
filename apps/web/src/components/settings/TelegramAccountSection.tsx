@@ -177,8 +177,15 @@ interface SignOutButtonProps {
 
 function SignOutButton({ onClick, pending }: SignOutButtonProps) {
   return (
-    <Button variant="ghost" size="sm" onClick={onClick} disabled={pending}>
-      {pending ? <Spinner size={12} /> : <LogOut size={12} />}
+    <Button
+      variant="ghost"
+      size="sm"
+      icon={<LogOut size={12} />}
+      loading={pending}
+      spinnerSize={12}
+      onClick={onClick}
+      disabled={pending}
+    >
       Sign out
     </Button>
   );

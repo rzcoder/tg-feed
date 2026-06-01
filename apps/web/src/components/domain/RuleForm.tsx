@@ -8,8 +8,9 @@
  */
 import { X } from 'lucide-react';
 import { type KeyboardEvent } from 'react';
-import type { FilterMode, FilterRuleType } from '@tg-feed/shared';
+import { filterRuleDefaultParams, type FilterMode, type FilterRuleType } from '@tg-feed/shared';
 import { Input, Label, Hint } from '@/components/ui/input';
+import { Toggle } from '@/components/settings/primitives';
 import { cn } from '@/lib/cn';
 
 interface RuleFormProps {
@@ -111,7 +112,7 @@ export function RuleForm({
             id="filter-min"
             type="number"
             inputMode="numeric"
-            value={String(params.min ?? 50)}
+            value={String(params.min ?? filterRuleDefaultParams['min-length'].min)}
             onChange={(e) => setParams({ ...params, min: parseInt(e.target.value, 10) || 0 })}
             monospace
             autoFocus={!showName}
@@ -214,23 +215,7 @@ function ToggleRow({ label, description, value, onChange }: ToggleRowProps) {
         <span className="text-[13px] font-medium">{label}</span>
         {description && <span className="text-[11.5px] text-text-muted">{description}</span>}
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={value}
-        onClick={() => onChange(!value)}
-        className={cn(
-          'relative w-[38px] h-[22px] rounded-full border transition-colors flex-shrink-0',
-          value ? 'bg-accent border-accent' : 'bg-surface-3 border-border',
-        )}
-      >
-        <span
-          className={cn(
-            'absolute top-0.5 left-0.5 w-4 h-4 rounded-full transition-transform',
-            value ? 'bg-accent-fg translate-x-4' : 'bg-text',
-          )}
-        />
-      </button>
+      <Toggle checked={value} onChange={onChange} />
     </div>
   );
 }

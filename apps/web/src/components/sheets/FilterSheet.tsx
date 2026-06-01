@@ -12,8 +12,6 @@
 import { ChevronLeft } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  filterRuleDefaultParams,
-  filterRuleParamsSchemas,
   type FilterMode,
   type FilterRuleType,
   type LibraryFilterDto,
@@ -26,6 +24,7 @@ import {
   FILTER_RULE_ICONS,
   FILTER_RULE_LABELS,
 } from '@/lib/describeFilter';
+import { useFilterDraft } from '@/hooks/useFilterDraft';
 import { RuleForm } from '@/components/domain/RuleForm';
 import { RuleListItem } from '@/components/domain/RuleListItem';
 
@@ -65,54 +64,55 @@ export function FilterSheet({
   const isLibrary = kind === 'library';
 
   const [step, setStep] = useState<1 | 2>(1);
-  const [type, setType] = useState<FilterRuleType | null>(null);
-  const [params, setParams] = useState<Record<string, unknown>>({});
-  // `mode` is taken by the add/edit prop on this component — disambiguate
-  // the include/exclude state as `filterMode`.
-  const [filterMode, setFilterMode] = useState<FilterMode>('include');
   const [name, setName] = useState('');
+  // The rule draft (type + params + include/exclude mode) and its validation
+  // are shared with SubSheet's inline-filter editor via this hook. `mode` is
+  // taken by the add/edit prop here, so it's exposed as `filterMode`.
+  const {
+    ruleType: type,
+    params,
+    mode: filterMode,
+    setParams,
+    setMode: setFilterMode,
+    pickType,
+    load: loadDraft,
+    reset: resetDraft,
+    valid: paramsValid,
+    parseParams,
+  } = useFilterDraft();
 
   useEffect(() => {
     if (!open) return;
     if (isEdit && initial) {
       setStep(2);
-      setType(initial.ruleType);
-      setParams({ ...initial.params });
-      setFilterMode(initial.mode);
-      const initialName = (initial as LibraryFilterDto).name ?? '';
-      setName(initialName);
+      loadDraft(initial.ruleType, initial.params, initial.mode);
+      setName((initial as LibraryFilterDto).name ?? '');
     } else {
       setStep(1);
-      setType(null);
-      setParams({});
-      setFilterMode('include');
+      resetDraft();
       setName('');
     }
-  }, [open, isEdit, initial]);
+  }, [open, isEdit, initial, loadDraft, resetDraft]);
 
-  const onPickType = useCallback((t: FilterRuleType) => {
-    setType(t);
-    setParams({ ...filterRuleDefaultParams[t] });
-    setFilterMode('include');
-    setStep(2);
-  }, []);
+  const onPickType = useCallback(
+    (t: FilterRuleType) => {
+      pickType(t);
+      setStep(2);
+    },
+    [pickType],
+  );
 
   const canSave = useMemo(() => {
     if (submitting || !type) return false;
     if (isLibrary && !name.trim()) return false;
-    // Validate params against the schema before allowing save — keeps the
-    // server's 400 path for genuine wire-tampering rather than ordinary
-    // form errors.
-    const result = filterRuleParamsSchemas[type].safeParse(params);
-    return result.success;
-  }, [submitting, type, isLibrary, name, params]);
+    return paramsValid;
+  }, [submitting, type, isLibrary, name, paramsValid]);
 
   const handleSubmit = () => {
     if (!canSave || !type) return;
-    const validated = filterRuleParamsSchemas[type].parse(params);
     onSubmit({
       ruleType: type,
-      params: validated as Record<string, unknown>,
+      params: parseParams(),
       mode: filterMode,
       ...(isLibrary ? { name: name.trim() } : {}),
     });

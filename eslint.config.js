@@ -13,7 +13,9 @@ export default tseslint.config(
       '**/coverage/**',
       '**/*.d.ts',
       '**/.idea/**',
-      '**/data/**',
+      // Root runtime data dir only — anchored so it doesn't also ignore
+      // source dirs that happen to be named `data/` (e.g. settings/data/).
+      'data/**',
     ],
   },
   js.configs.recommended,

@@ -126,7 +126,8 @@ export function SourceBadge({ source }: SourceBadgeProps) {
 export interface ToggleProps {
   checked: boolean;
   onChange: (next: boolean) => void;
-  label: string;
+  /** Accessible name. Omit when the switch is labelled by adjacent text. */
+  label?: string;
   disabled?: boolean;
 }
 
@@ -137,7 +138,7 @@ export function Toggle({ checked, onChange, label, disabled }: ToggleProps) {
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      {...(label !== undefined ? { 'aria-label': label } : {})}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(

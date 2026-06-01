@@ -7,9 +7,10 @@
  * work than the assurance is worth at this layer.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { ActivityPage } from './ActivityPage';
 import { StreamProvider } from '@/hooks/useActivityStream';
+import { FORWARD_LOG_KEY } from '@/hooks/useForwardLog';
 import { SUBSCRIPTIONS_KEY } from '@/hooks/useSubscriptions';
 import { renderWithProviders } from '@/test/utils';
 
@@ -18,6 +19,53 @@ function json(status: number, body: unknown): Response {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+const ONE_SUBSCRIPTION = {
+  id: 1,
+  sourceChatId: '1001',
+  sourceTitle: 'Source',
+  handle: '@source',
+  iconDataUrl: null,
+  destinationId: 1,
+  destinationName: 'Dest',
+  destinationChatId: '2002',
+  enabled: true,
+  filterCount: 0,
+  forwardedCount: 0,
+  libraryFilterIds: [],
+  forwardingRestrictedAt: null,
+  sourceAccessStatus: 'ok',
+  sourceAccessCheckedAt: null,
+  destinationAccessStatus: 'ok',
+  createdAt: new Date().toISOString(),
+  hasRawMessage: false,
+};
+
+// One subscription, empty destinations + forward-log — so a live event
+// enriches to the title "Source".
+function mockStreamFetch() {
+  vi.spyOn(global, 'fetch').mockImplementation(((path: string) => {
+    if (path === '/api/subscriptions')
+      return Promise.resolve(json(200, { items: [ONE_SUBSCRIPTION] }));
+    if (path === '/api/destinations') return Promise.resolve(json(200, { items: [] }));
+    if (path.startsWith('/api/forward-log')) {
+      return Promise.resolve(json(200, { items: [], nextOffset: null }));
+    }
+    return Promise.resolve(json(404, { error: { code: 'not_found', message: '' } }));
+  }) as unknown as typeof fetch);
+}
+
+function completedEvent(sourceMessageId: string) {
+  return {
+    type: 'forward.completed',
+    subscriptionId: 1,
+    sourceChatId: '1001',
+    destinationChatId: '2002',
+    sourceMessageIds: [sourceMessageId],
+    destMessageIds: ['999'],
+    occurredAt: new Date().toISOString(),
+  };
 }
 
 class FakeEventSource {
@@ -258,5 +306,106 @@ describe('ActivityPage', () => {
 
     expect(await screen.findByText('@feedtest')).toBeInTheDocument();
     expect(screen.getByText('My Dest')).toBeInTheDocument();
+  });
+
+  // Regression: the provider used to expose only the *latest* event in a
+  // single state slot, so two events dispatched in the same tick collapsed
+  // (React batches the setter) and the first was lost. The subscription
+  // delivers each one synchronously.
+  it('keeps every event that arrives in the same tick', async () => {
+    mockStreamFetch();
+    const { client } = renderWithProviders(
+      <StreamProvider>
+        <ActivityPage />
+      </StreamProvider>,
+    );
+    await waitFor(() => expect(client.getQueryData(SUBSCRIPTIONS_KEY)).toBeDefined());
+    await screen.findByText(/Waiting for activity/i);
+
+    await act(async () => {
+      FakeEventSource.current!.dispatch('forward.completed', completedEvent('500'));
+      FakeEventSource.current!.dispatch('forward.completed', completedEvent('501'));
+    });
+
+    expect(await screen.findAllByText('Source')).toHaveLength(2);
+  });
+
+  // Regression: the prepend effect depended on `paused`, so toggling pause and
+  // back re-ran it with the unchanged last event and prepended a duplicate
+  // (same React key). The handler now reads `paused` from a ref.
+  it('does not duplicate a live event across pause/resume', async () => {
+    mockStreamFetch();
+    renderWithProviders(
+      <StreamProvider>
+        <ActivityPage />
+      </StreamProvider>,
+    );
+    await screen.findByText(/Waiting for activity/i);
+
+    await act(async () => {
+      FakeEventSource.current!.dispatch('forward.completed', completedEvent('500'));
+    });
+    expect(await screen.findAllByText('Source')).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /pause stream/i }));
+    fireEvent.click(screen.getByRole('button', { name: /resume stream/i }));
+
+    expect(screen.getAllByText('Source')).toHaveLength(1);
+  });
+
+  // Regression: a forward-log refetch landing while paused must not mutate the
+  // frozen feed (the throttled refresh is pause-unaware). With a row already
+  // shown, refetching a *different* row while paused must keep the original
+  // and not surface the new one until resume. Asserting on retention (not
+  // absence) makes this fail without the pause gate, where re-hydration would
+  // replace 'Alpha' with 'Beta' while paused.
+  it('keeps the feed frozen when the forward-log refetches while paused', async () => {
+    const logRow = (id: number, title: string) => ({
+      id,
+      subscriptionId: 1,
+      subscriptionTitle: title,
+      sourceHandle: '@source',
+      destinationName: 'Dest',
+      sourceMessageId: String(id),
+      destMessageId: '999',
+      status: 'sent',
+      error: null,
+      createdAt: new Date().toISOString(),
+      hasRawMessage: false,
+    });
+    let logItems: unknown[] = [logRow(1, 'Alpha')];
+    vi.spyOn(global, 'fetch').mockImplementation(((path: string) => {
+      if (path === '/api/subscriptions') return Promise.resolve(json(200, { items: [] }));
+      if (path === '/api/destinations') return Promise.resolve(json(200, { items: [] }));
+      if (path.startsWith('/api/forward-log')) {
+        return Promise.resolve(json(200, { items: logItems, nextOffset: null }));
+      }
+      return Promise.resolve(json(404, { error: { code: 'not_found', message: '' } }));
+    }) as unknown as typeof fetch);
+
+    const { client } = renderWithProviders(
+      <StreamProvider>
+        <ActivityPage />
+      </StreamProvider>,
+    );
+    // Initial hydration shows the first row.
+    expect(await screen.findByText('Alpha')).toBeInTheDocument();
+
+    // Pause, then a refetch lands while paused carrying a different row.
+    fireEvent.click(screen.getByRole('button', { name: /pause stream/i }));
+    logItems = [logRow(2, 'Beta')];
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: FORWARD_LOG_KEY });
+    });
+
+    // Frozen: the new row must not surface while paused. findByText polls, so
+    // if a (buggy) re-hydration ever commits it, the promise resolves and the
+    // assertion fails; with the pause gate it stays absent and rejects.
+    await expect(screen.findByText('Beta', undefined, { timeout: 800 })).rejects.toThrow();
+    expect(screen.getByText('Alpha')).toBeInTheDocument();
+
+    // Resume → the feed catches up to the latest log.
+    fireEvent.click(screen.getByRole('button', { name: /resume stream/i }));
+    expect(await screen.findByText('Beta')).toBeInTheDocument();
   });
 });

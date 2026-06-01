@@ -3,7 +3,7 @@ import { Plus, Rss } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { SubscriptionDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { ListState } from '@/components/ui/list-state';
 import { useToast } from '@/components/ui/toast';
 import { Fab } from '@/components/ui/fab';
 import { ExpandedSubActions, SubRow } from '@/components/domain/SubRow';
@@ -120,22 +120,22 @@ export function SubscriptionsPage() {
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="scroll flex-1 min-h-0">
-        {subs.isPending ? (
-          <div className="grid place-items-center py-12 text-text-muted">
-            <Spinner />
-          </div>
-        ) : (subs.data?.length ?? 0) === 0 ? (
-          <EmptyState
-            icon={<Rss size={22} />}
-            title="No subscriptions yet"
-            body="Add a Telegram channel to start forwarding."
-            cta={
-              <Button variant="primary" size="sm" onClick={sheet.openAdd}>
-                <Plus size={14} /> Add subscription
-              </Button>
-            }
-          />
-        ) : (
+        <ListState
+          pending={subs.isPending}
+          isEmpty={!subs.data?.length}
+          empty={
+            <EmptyState
+              icon={<Rss size={22} />}
+              title="No subscriptions yet"
+              body="Add a Telegram channel to start forwarding."
+              cta={
+                <Button variant="primary" size="sm" onClick={sheet.openAdd}>
+                  <Plus size={14} /> Add subscription
+                </Button>
+              }
+            />
+          }
+        >
           <div className="flex flex-col border-t border-border">
             {(subs.data ?? []).map((s) => (
               <div key={s.id}>
@@ -154,7 +154,7 @@ export function SubscriptionsPage() {
               </div>
             ))}
           </div>
-        )}
+        </ListState>
       </div>
       <Fab onClick={sheet.openAdd} label="Add subscription">
         <Plus size={24} strokeWidth={2.2} />

@@ -1,7 +1,7 @@
 import { Filter, Info, Plus } from 'lucide-react';
 import type { LibraryFilterDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { ListState } from '@/components/ui/list-state';
 import { useToast } from '@/components/ui/toast';
 import { EmptyState } from '@/components/domain/EmptyState';
 import { FilterRow } from '@/components/domain/FilterRow';
@@ -27,22 +27,22 @@ export function LibraryView({ openAdd, openEdit }: LibraryViewProps) {
         </div>
       </div>
       <div className="scroll flex-1 min-h-0 border-t border-border">
-        {library.isPending ? (
-          <div className="grid place-items-center py-12 text-text-muted">
-            <Spinner />
-          </div>
-        ) : (library.data?.length ?? 0) === 0 ? (
-          <EmptyState
-            icon={<Filter size={22} />}
-            title="No library filters"
-            body="Save a filter here once to attach it across many subscriptions."
-            cta={
-              <Button variant="primary" size="sm" onClick={openAdd}>
-                <Plus size={14} /> New library filter
-              </Button>
-            }
-          />
-        ) : (
+        <ListState
+          pending={library.isPending}
+          isEmpty={!library.data?.length}
+          empty={
+            <EmptyState
+              icon={<Filter size={22} />}
+              title="No library filters"
+              body="Save a filter here once to attach it across many subscriptions."
+              cta={
+                <Button variant="primary" size="sm" onClick={openAdd}>
+                  <Plus size={14} /> New library filter
+                </Button>
+              }
+            />
+          }
+        >
           <>
             {(library.data ?? []).map((f) => (
               <FilterRow
@@ -84,7 +84,7 @@ export function LibraryView({ openAdd, openEdit }: LibraryViewProps) {
               Library filters can't be deleted while attached. Detach first from each subscription.
             </div>
           </>
-        )}
+        </ListState>
       </div>
     </>
   );

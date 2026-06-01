@@ -1,9 +1,11 @@
 /**
  * Activity feed — hydrate from forward-log, prepend live SSE events.
  *
- * Hydration: `useForwardLog({ limit: 50 })` runs once on mount and seeds
- * the in-memory list. SSE events arrive via `useLatestActivityEvent` and
- * get prepended (capped at 200 entries to bound memory).
+ * Hydration: `useForwardLog({ limit: 50 })` seeds the in-memory list and is
+ * refreshed (debounced) as forward events arrive, so the persisted history
+ * stays current. Live SSE events arrive via `useForwardEvents` and get
+ * prepended immediately (capped at 200 entries to bound memory), then
+ * reconcile with the refreshed log by `forwardLogId`.
  *
  * Enrichment: hydrated rows already have `subscriptionTitle`, `sourceHandle`,
  * and `destinationName` joined server-side via LEFT JOIN. SSE payloads carry
@@ -15,7 +17,7 @@
  * open). Scroll lock + jump-to-live: when the user has scrolled away from
  * the top, prepends don't yank — show a button to jump back.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDown, Activity as ActivityIcon, Pause, Play } from 'lucide-react';
 import type {
   DestinationDto,
@@ -30,7 +32,7 @@ import { ConnectionPill } from '@/components/domain/ConnectionPill';
 import { ActivityRow, type ActivityEvent } from '@/components/domain/ActivityRow';
 import { EmptyState } from '@/components/domain/EmptyState';
 import { JsonViewSheet } from '@/components/domain/JsonViewSheet';
-import { useConnectionState, useLatestActivityEvent } from '@/hooks/useActivityStream';
+import { useConnectionState, useForwardEvents } from '@/hooks/useActivityStream';
 import { useDestinations } from '@/hooks/useDestinations';
 import { useForwardLog } from '@/hooks/useForwardLog';
 import { useSubscriptions } from '@/hooks/useSubscriptions';
@@ -44,25 +46,32 @@ export function ActivityPage() {
 
   const [paused, setPaused] = useState(false);
   const connectionState = useConnectionState();
-  const lastEvent = useLatestActivityEvent();
 
   const subById = useMemo(() => buildSubMap(subs.data ?? []), [subs.data]);
   const destByChatId = useMemo(() => buildDestMap(dests.data ?? []), [dests.data]);
 
   const [events, setEvents] = useState<ActivityEvent[]>([]);
 
-  // Hydrate from forward-log on first load. Re-runs only if the data ref
-  // changes (TanStack Query memoizes the same shape across refetches).
+  // Hydrate from forward-log, and re-hydrate when it refetches (the stream
+  // provider refreshes it as forward events land). Keep live events the
+  // fetched log doesn't contain yet; drop those it does — matched by the
+  // forward_log row id the event carried — so a row isn't shown twice.
   useEffect(() => {
     if (!forwardLog.data) return;
+    // While paused the feed is frozen — skip re-hydration so a background
+    // log refetch doesn't prepend rows; `paused` is a dep, so it catches up
+    // on resume.
+    if (paused) return;
     setEvents((prev) => {
-      // Don't clobber live events accumulated since mount.
-      const liveIds = new Set(prev.filter((e) => e.id.startsWith('live:')).map((e) => e.id));
       const hydrated = forwardLog.data.items.map((row) => fromForwardLogEntry(row));
-      const live = prev.filter((e) => liveIds.has(e.id));
+      const persistedIds = new Set(forwardLog.data.items.map((row) => row.id));
+      const live = prev.filter(
+        (e) =>
+          e.id.startsWith('live:') && (e.forwardLogId == null || !persistedIds.has(e.forwardLogId)),
+      );
       return [...live, ...hydrated].slice(0, MAX_EVENTS);
     });
-  }, [forwardLog.data]);
+  }, [forwardLog.data, paused]);
 
   // Read sub/dest maps via refs inside the prepend effect — including them
   // in the dep array would re-run the effect (and re-prepend the same SSE
@@ -76,14 +85,24 @@ export function ActivityPage() {
     destByChatIdRef.current = destByChatId;
   });
 
-  // Prepend new SSE events.
+  // Pause is read through a ref so the event handler stays stable (subscribes
+  // once) and isn't re-created when `paused` toggles.
+  const pausedRef = useRef(paused);
   useEffect(() => {
-    if (paused) return;
-    if (!lastEvent) return;
-    const built = fromStreamEvent(lastEvent, subByIdRef.current, destByChatIdRef.current);
+    pausedRef.current = paused;
+  }, [paused]);
+
+  // Prepend live SSE events as they arrive, deduped against the head in case
+  // the server ever re-emits one.
+  const handleForwardEvent = useCallback((event: StreamEvent) => {
+    if (pausedRef.current) return;
+    const built = fromStreamEvent(event, subByIdRef.current, destByChatIdRef.current);
     if (!built) return;
-    setEvents((prev) => [built, ...prev].slice(0, MAX_EVENTS));
-  }, [lastEvent, paused]);
+    setEvents((prev) =>
+      prev.some((e) => e.id === built.id) ? prev : [built, ...prev].slice(0, MAX_EVENTS),
+    );
+  }, []);
+  useForwardEvents(handleForwardEvent);
 
   // Backfill events constructed before subs/dests loaded. Returns the same
   // array reference when nothing needs enrichment, so ActivityRow rows keep
@@ -96,9 +115,9 @@ export function ActivityPage() {
           (e.subscriptionTitle === null || e.sourceHandle === null || e.destinationLabel === null),
       );
       if (!needsEnrich) return prev;
-      return prev.map((e) => enrichEvent(e, subById, destByChatId));
+      return prev.map((e) => enrichEvent(e, subById));
     });
-  }, [subById, destByChatId]);
+  }, [subById]);
 
   const [jsonViewerId, setJsonViewerId] = useState<number | null>(null);
 
@@ -202,11 +221,7 @@ function buildDestMap(dests: DestinationDto[]): Map<string, DestinationDto> {
   return new Map(dests.map((d) => [d.chatId, d]));
 }
 
-function enrichEvent(
-  event: ActivityEvent,
-  subs: Map<number, SubscriptionDto>,
-  _dests: Map<string, DestinationDto>,
-): ActivityEvent {
+function enrichEvent(event: ActivityEvent, subs: Map<number, SubscriptionDto>): ActivityEvent {
   if (event.subscriptionId === null) return event;
   const sub = subs.get(event.subscriptionId);
   if (!sub) return event;

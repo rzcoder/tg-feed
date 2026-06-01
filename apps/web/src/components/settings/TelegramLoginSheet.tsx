@@ -26,7 +26,6 @@ import { apiErrorMessage } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Hint, Input, Label } from '@/components/ui/input';
 import { Sheet } from '@/components/ui/sheet';
-import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
 import {
@@ -325,29 +324,47 @@ interface PrimaryActionProps {
   onClick: () => void;
 }
 
+// Per-step primary-button config in one place: label (idle/pending), which
+// FlowState field gates the button, and the minimum length to enable it.
+// Passwords aren't trimmed (spaces can be significant); the rest are.
+const STEP_ACTIONS: Record<
+  Exclude<Step, 'mode' | 'done'>,
+  {
+    idle: string;
+    pending: string;
+    field: 'phoneNumber' | 'code' | 'password' | 'rawSession';
+    minLength: number;
+    trim: boolean;
+  }
+> = {
+  phone: { idle: 'Send code', pending: 'Sending…', field: 'phoneNumber', minLength: 6, trim: true },
+  code: { idle: 'Verify', pending: 'Verifying…', field: 'code', minLength: 4, trim: true },
+  '2fa': { idle: 'Confirm', pending: 'Confirming…', field: 'password', minLength: 1, trim: false },
+  raw: {
+    idle: 'Validate & save',
+    pending: 'Validating…',
+    field: 'rawSession',
+    minLength: 8,
+    trim: true,
+  },
+};
+
 function PrimaryAction({ state, isPending, onClick }: PrimaryActionProps) {
-  if (state.step === 'mode') return null;
-  const labels: Record<Exclude<Step, 'mode' | 'done'>, { idle: string; pending: string }> = {
-    phone: { idle: 'Send code', pending: 'Sending…' },
-    code: { idle: 'Verify', pending: 'Verifying…' },
-    '2fa': { idle: 'Confirm', pending: 'Confirming…' },
-    raw: { idle: 'Validate & save', pending: 'Validating…' },
-  };
-  const text =
-    state.step === 'phone' || state.step === 'code' || state.step === '2fa' || state.step === 'raw'
-      ? labels[state.step]
-      : null;
-  if (!text) return null;
-  const disabled =
-    isPending ||
-    (state.step === 'phone' && state.phoneNumber.trim().length < 6) ||
-    (state.step === 'code' && state.code.trim().length < 4) ||
-    (state.step === '2fa' && state.password.length < 1) ||
-    (state.step === 'raw' && state.rawSession.trim().length < 8);
+  if (state.step === 'mode' || state.step === 'done') return null;
+  const action = STEP_ACTIONS[state.step];
+  const value = state[action.field];
+  const length = action.trim ? value.trim().length : value.length;
   return (
-    <Button variant="primary" size="sm" disabled={disabled} onClick={onClick}>
-      {isPending ? <Spinner size={13} /> : <ArrowRight size={13} />}
-      {isPending ? text.pending : text.idle}
+    <Button
+      variant="primary"
+      size="sm"
+      icon={<ArrowRight size={13} />}
+      loading={isPending}
+      spinnerSize={13}
+      disabled={isPending || length < action.minLength}
+      onClick={onClick}
+    >
+      {isPending ? action.pending : action.idle}
     </Button>
   );
 }

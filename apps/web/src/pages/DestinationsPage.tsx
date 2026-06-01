@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { Info, Plus, Send } from 'lucide-react';
 import type { DestinationDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
-import { Spinner } from '@/components/ui/spinner';
+import { ListState } from '@/components/ui/list-state';
 import { useToast } from '@/components/ui/toast';
 import { Fab } from '@/components/ui/fab';
 import { DestRow } from '@/components/domain/DestRow';
@@ -94,28 +94,28 @@ export function DestinationsPage() {
         Where matching messages get reposted. Subscriptions pick from this list.
       </div>
       <div className="scroll flex-1 min-h-0">
-        {isPending ? (
-          <div className="grid place-items-center py-12 text-text-muted">
-            <Spinner />
-          </div>
-        ) : (data?.length ?? 0) === 0 ? (
-          <EmptyState
-            icon={<Send size={22} />}
-            title="No destinations yet"
-            body="Add a Telegram chat id to start forwarding into."
-            cta={
-              <Button variant="primary" size="sm" onClick={sheet.openAdd}>
-                <Plus size={14} /> Add destination
-              </Button>
-            }
-          />
-        ) : (
+        <ListState
+          pending={isPending}
+          isEmpty={!data?.length}
+          empty={
+            <EmptyState
+              icon={<Send size={22} />}
+              title="No destinations yet"
+              body="Add a Telegram chat id to start forwarding into."
+              cta={
+                <Button variant="primary" size="sm" onClick={sheet.openAdd}>
+                  <Plus size={14} /> Add destination
+                </Button>
+              }
+            />
+          }
+        >
           <div className="flex flex-col border-t border-border">
-            {data!.map((d) => (
+            {(data ?? []).map((d) => (
               <DestRow key={d.id} destination={d} onEdit={sheet.openEdit} onDelete={handleDelete} />
             ))}
           </div>
-        )}
+        </ListState>
       </div>
       <Fab onClick={sheet.openAdd} label="Add destination">
         <Plus size={24} strokeWidth={2.2} />

@@ -5,24 +5,39 @@
  * (mounted in AppShell). All consumers — sidebar/top-bar connection pill,
  * activity page event feed — read from the same source.
  *
- * The provider exposes two separate contexts so that consumers subscribe
- * only to the slice they care about. `forward.*` events arrive frequently
- * (one per forwarded message) — putting `lastEvent` and `state` in a single
- * context would re-render the connection pill on every event even though
- * `state` is unchanged. Splitting them keeps the layout chrome quiet.
+ * Forward events are delivered through a subscription (`useForwardEvents`)
+ * rather than a "last event" state value: a state slot collapses two events
+ * that arrive in the same tick into one (React batches the setter), and any
+ * consumer effect keyed on it re-runs — and re-delivers the same event — on
+ * unrelated re-renders. A synchronous listener set delivers every event
+ * exactly once. Connection state stays a separate context so the layout
+ * chrome doesn't re-render on every forward event.
  *
  * EventSource auto-reconnects with browser-controlled backoff. We surface
  * readyState transitions as `'reconnect'` while connecting and `'live'`
- * once OPEN. `subscription.changed` events trigger a query invalidation
- * directly on the shared QueryClient.
+ * once OPEN. `subscription.changed`/`destination.changed` events invalidate
+ * the relevant queries directly; forward events also schedule a debounced
+ * refresh of the forward-log so the persisted history reconciles with the
+ * live overlay (otherwise a remount would drop events that only ever lived
+ * in component state).
  */
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { StreamEvent } from '@tg-feed/shared';
 import { DESTINATIONS_KEY } from './useDestinations';
+import { FORWARD_LOG_KEY } from './useForwardLog';
 import { SUBSCRIPTIONS_KEY } from './useSubscriptions';
 
 export type ConnectionState = 'live' | 'reconnect' | 'down';
+export type ForwardEventListener = (event: StreamEvent) => void;
 
 const FORWARD_EVENT_TYPES = new Set([
   'forward.completed',
@@ -31,8 +46,13 @@ const FORWARD_EVENT_TYPES = new Set([
   'forward.filtered',
 ]);
 
+// Coalesce bursts of forward events into a single forward-log refetch.
+const FORWARD_LOG_REFRESH_MS = 3000;
+
 const ConnectionStateContext = createContext<ConnectionState | null>(null);
-const LastEventContext = createContext<StreamEvent | null>(null);
+const ForwardEventsContext = createContext<((listener: ForwardEventListener) => () => void) | null>(
+  null,
+);
 
 export interface StreamProviderProps {
   children: ReactNode;
@@ -41,19 +61,38 @@ export interface StreamProviderProps {
 
 export function StreamProvider({ children, url = '/api/stream' }: StreamProviderProps) {
   const [state, setState] = useState<ConnectionState>('reconnect');
-  const [lastEvent, setLastEvent] = useState<StreamEvent | null>(null);
   const qc = useQueryClient();
   const sourceRef = useRef<EventSource | null>(null);
+  const listenersRef = useRef<Set<ForwardEventListener>>(new Set());
+
+  const subscribe = useCallback((listener: ForwardEventListener) => {
+    listenersRef.current.add(listener);
+    return () => {
+      listenersRef.current.delete(listener);
+    };
+  }, []);
 
   useEffect(() => {
     const es = new EventSource(url, { withCredentials: true });
     sourceRef.current = es;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     es.onopen = () => setState('live');
     es.onerror = () => {
       // EventSource sets readyState to 0 (CONNECTING) during reconnect or
       // 2 (CLOSED) on permanent failure. Treat 0 as reconnect, 2 as down.
       setState(es.readyState === EventSource.CLOSED ? 'down' : 'reconnect');
+    };
+
+    const scheduleForwardLogRefresh = (): void => {
+      // Throttle, not debounce: a resettable debounce would never fire on a
+      // sustained stream (each event re-arms it). Arm once and let it run, so
+      // the log refreshes at most once per window but is guaranteed to.
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        qc.invalidateQueries({ queryKey: FORWARD_LOG_KEY });
+      }, FORWARD_LOG_REFRESH_MS);
     };
 
     const dispatch = (raw: MessageEvent): void => {
@@ -83,14 +122,14 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
         return;
       }
       if (FORWARD_EVENT_TYPES.has(parsed.type)) {
-        setLastEvent(parsed);
+        listenersRef.current.forEach((listener) => listener(parsed));
+        scheduleForwardLogRefresh();
       }
     };
 
     // Server sends named events (`event: <type>`); EventSource needs an
     // explicit listener per event name. Subscribe to all known types.
     const types = [
-      'forward.started',
       'forward.completed',
       'forward.failed',
       'forward.flood_wait',
@@ -105,6 +144,7 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
       // sourceRef before the second one runs, so guard against the redundant
       // call to keep this idempotent.
       if (!sourceRef.current) return;
+      if (refreshTimer) clearTimeout(refreshTimer);
       types.forEach((t) => es.removeEventListener(t, dispatch));
       es.close();
       sourceRef.current = null;
@@ -113,7 +153,7 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
 
   return (
     <ConnectionStateContext.Provider value={state}>
-      <LastEventContext.Provider value={lastEvent}>{children}</LastEventContext.Provider>
+      <ForwardEventsContext.Provider value={subscribe}>{children}</ForwardEventsContext.Provider>
     </ConnectionStateContext.Provider>
   );
 }
@@ -126,9 +166,20 @@ export function useConnectionState(): ConnectionState {
   return ctx;
 }
 
-export function useLatestActivityEvent(): StreamEvent | null {
-  // Note: provider always wraps with both contexts; `null` is a valid value
-  // (no event yet), so we don't throw on null here. To enforce being inside
-  // the provider, use `useConnectionState` alongside this hook.
-  return useContext(LastEventContext);
+/**
+ * Subscribe to live forward events. The listener fires once per event,
+ * synchronously as it arrives — so no event is dropped between renders and
+ * unrelated re-renders never re-deliver an old one. Pass a stable callback
+ * (e.g. `useCallback`) that reads any changing values through refs.
+ */
+export function useForwardEvents(onEvent: ForwardEventListener): void {
+  const subscribe = useContext(ForwardEventsContext);
+  if (!subscribe) {
+    throw new Error('useForwardEvents must be used inside <StreamProvider>');
+  }
+  const handlerRef = useRef(onEvent);
+  useEffect(() => {
+    handlerRef.current = onEvent;
+  });
+  useEffect(() => subscribe((event) => handlerRef.current(event)), [subscribe]);
 }
