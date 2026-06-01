@@ -63,7 +63,7 @@ export function LibraryView({ openAdd, openEdit }: LibraryViewProps) {
                         deleteMut.mutate(f.id, {
                           onSuccess: () => toast.show('Library filter removed'),
                           onError: (err) =>
-                            toast.show(
+                            toast.error(
                               err instanceof ApiError && err.code === 'library_filter_in_use'
                                 ? `In use by ${f.usageCount} subscription${
                                     f.usageCount === 1 ? '' : 's'

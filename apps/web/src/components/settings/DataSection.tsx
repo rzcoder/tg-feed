@@ -135,7 +135,7 @@ function ExportSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
           toast.show('Export downloaded');
           onClose();
         },
-        onError: (err) => toast.show(apiErrorMessage(err, 'Export failed')),
+        onError: (err) => toast.error(apiErrorMessage(err, 'Export failed')),
       },
     );
   };
@@ -285,7 +285,7 @@ function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
           setResult(r);
           toast.show('Import complete');
         },
-        onError: (err) => toast.show(apiErrorMessage(err, 'Import failed')),
+        onError: (err) => toast.error(apiErrorMessage(err, 'Import failed')),
       },
     );
   };
@@ -594,7 +594,7 @@ function WipeSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
           toast.show(`Deleted ${total} item${total === 1 ? '' : 's'}`);
           closeSheet();
         },
-        onError: (err) => toast.show(apiErrorMessage(err, 'Delete failed')),
+        onError: (err) => toast.error(apiErrorMessage(err, 'Delete failed')),
       },
     );
   };

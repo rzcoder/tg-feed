@@ -172,7 +172,7 @@ export function BotSettingsCard() {
       { token: null },
       {
         onSuccess: () => toast.show('Bot token reset to .env'),
-        onError: (err) => toast.show(apiErrorMessage(err, 'Failed to reset')),
+        onError: (err) => toast.error(apiErrorMessage(err, 'Failed to reset')),
       },
     );
 
@@ -227,8 +227,8 @@ export function BotSettingsCard() {
 
     const failed = jobs.filter((_, i) => results[i]?.status === 'rejected').map((j) => j.half);
     if (failed.length === 0) toast.show('Settings saved');
-    else if (failed.length === jobs.length) toast.show('Failed to save');
-    else toast.show(`Saved, but ${failed.join(' & ')} settings failed`);
+    else if (failed.length === jobs.length) toast.error('Failed to save');
+    else toast.error(`Saved, but ${failed.join(' & ')} settings failed`);
   };
 
   const existingAdminIds = new Set(admins.map((a) => a.id));
@@ -441,7 +441,7 @@ export function BotSettingsCard() {
               onClick={() =>
                 delMut.mutate(undefined, {
                   onSuccess: () => toast.show('Reset to environment'),
-                  onError: (err) => toast.show(apiErrorMessage(err, 'Failed to reset')),
+                  onError: (err) => toast.error(apiErrorMessage(err, 'Failed to reset')),
                 })
               }
             >

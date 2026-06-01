@@ -39,7 +39,7 @@ export function TelegramAccountSection() {
   const signOut = () =>
     del.mutate(undefined, {
       onSuccess: () => toast.show('Signed out'),
-      onError: (err) => toast.show(apiErrorMessage(err, 'Sign out failed')),
+      onError: (err) => toast.error(apiErrorMessage(err, 'Sign out failed')),
     });
 
   // Pick the status pill + body. Order matters: a key mismatch is the most

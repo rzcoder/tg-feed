@@ -41,7 +41,7 @@ export function FilterSheetController({
               toast.show('Library filter updated');
               onClose();
             },
-            onError: () => toast.show('Failed to update'),
+            onError: () => toast.error('Failed to update'),
           },
         );
       } else {
@@ -60,7 +60,7 @@ export function FilterSheetController({
               toast.show('Library filter added');
               onClose();
             },
-            onError: () => toast.show('Failed to add'),
+            onError: () => toast.error('Failed to add'),
           },
         );
       }
@@ -78,7 +78,7 @@ export function FilterSheetController({
               toast.show('Filter updated');
               onClose();
             },
-            onError: () => toast.show('Failed to update'),
+            onError: () => toast.error('Failed to update'),
           },
         );
       } else {
@@ -96,7 +96,7 @@ export function FilterSheetController({
               toast.show('Filter added');
               onClose();
             },
-            onError: () => toast.show('Failed to add'),
+            onError: () => toast.error('Failed to add'),
           },
         );
       }

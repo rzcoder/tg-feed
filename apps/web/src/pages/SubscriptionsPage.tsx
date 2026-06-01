@@ -47,7 +47,7 @@ export function SubscriptionsPage() {
           toast.show('Destination updated');
           setDestPickerSub(null);
         },
-        onError: (err) => toast.show(apiErrorMessage(err, 'Failed to update destination')),
+        onError: (err) => toast.error(apiErrorMessage(err, 'Failed to update destination')),
       },
     );
   };
@@ -68,7 +68,7 @@ export function SubscriptionsPage() {
             toast.show('Subscription updated');
             sheet.close();
           },
-          onError: (err) => toast.show(apiErrorMessage(err, 'Failed to update')),
+          onError: (err) => toast.error(apiErrorMessage(err, 'Failed to update')),
         },
       );
     } else {
@@ -91,7 +91,7 @@ export function SubscriptionsPage() {
             toast.show('Subscription added');
             sheet.close();
           },
-          onError: (err) => toast.show(apiErrorMessage(err, 'Failed to add')),
+          onError: (err) => toast.error(apiErrorMessage(err, 'Failed to add')),
         },
       );
     }
@@ -103,7 +103,7 @@ export function SubscriptionsPage() {
         toast.show('Subscription removed');
         if (openId === s.id) setOpenId(null);
       },
-      onError: (err) => toast.show(apiErrorMessage(err, 'Failed to delete')),
+      onError: (err) => toast.error(apiErrorMessage(err, 'Failed to delete')),
     });
   };
 

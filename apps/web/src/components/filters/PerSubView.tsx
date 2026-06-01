@@ -128,7 +128,7 @@ export function PerSubView({
                     { subscriptionId: sub.id, libraryFilterId: f.id },
                     {
                       onSuccess: () => toast.show('Library filter detached'),
-                      onError: () => toast.show('Failed to detach'),
+                      onError: () => toast.error('Failed to detach'),
                     },
                   )
                 }
@@ -152,7 +152,7 @@ export function PerSubView({
                       filterId: f.id,
                       body: { enabled: !f.enabled },
                     },
-                    { onError: () => toast.show('Failed to update') },
+                    { onError: () => toast.error('Failed to update') },
                   )
                 }
                 onEdit={() => openEditFilter(f)}
@@ -161,7 +161,7 @@ export function PerSubView({
                     { subscriptionId: sub.id, filterId: f.id },
                     {
                       onSuccess: () => toast.show('Filter removed'),
-                      onError: () => toast.show('Failed to delete'),
+                      onError: () => toast.error('Failed to delete'),
                     },
                   )
                 }

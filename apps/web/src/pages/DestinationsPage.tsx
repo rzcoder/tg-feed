@@ -44,7 +44,7 @@ export function DestinationsPage() {
             toast.show('Destination updated');
             sheet.close();
           },
-          onError: (err) => toast.show(apiErrorMessage(err, 'Failed to update destination')),
+          onError: (err) => toast.error(apiErrorMessage(err, 'Failed to update destination')),
         },
       );
     } else {
@@ -62,7 +62,7 @@ export function DestinationsPage() {
             toast.show('Destination added');
             sheet.close();
           },
-          onError: (err) => toast.show(apiErrorMessage(err, 'Failed to add destination')),
+          onError: (err) => toast.error(apiErrorMessage(err, 'Failed to add destination')),
         },
       );
     }
@@ -73,10 +73,10 @@ export function DestinationsPage() {
       onSuccess: () => toast.show('Destination removed'),
       onError: (err) => {
         if (err instanceof ApiError && err.code === 'destination_in_use') {
-          toast.show('Destination is in use by a subscription');
+          toast.error('Destination is in use by a subscription');
           return;
         }
-        toast.show(apiErrorMessage(err, 'Failed to delete destination'));
+        toast.error(apiErrorMessage(err, 'Failed to delete destination'));
       },
     });
   };

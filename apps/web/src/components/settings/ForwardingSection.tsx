@@ -61,7 +61,7 @@ export function ForwardingSection() {
     if (albumDirty) body.albumDebounceMs = albumDraft;
     updateMut.mutate(body as { delayMs: number } | { albumDebounceMs: number }, {
       onSuccess: () => toast.show('Settings saved'),
-      onError: () => toast.show('Failed to save'),
+      onError: () => toast.error('Failed to save'),
     });
   };
 
