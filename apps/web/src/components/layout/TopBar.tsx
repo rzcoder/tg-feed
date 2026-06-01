@@ -1,7 +1,12 @@
 import type { LucideIcon } from 'lucide-react';
 import { IconBadge, LogoBadge } from '@/components/domain/Logo';
 
-export function TopBar({ title, icon }: { title: string; icon?: LucideIcon | undefined }) {
+export interface TopBarProps {
+  title: string;
+  icon?: LucideIcon | undefined;
+}
+
+export function TopBar({ title, icon }: TopBarProps) {
   return (
     <header
       className="flex items-center h-[52px] flex-shrink-0 px-4 border-b border-border bg-bg z-10 relative"

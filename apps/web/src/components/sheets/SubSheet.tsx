@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, Check, Plus } from 'lucide-react';
 import {
   filterRuleDefaultParams,
@@ -229,12 +229,12 @@ export function SubSheet({
     setDraftMode('include');
     setStep({ kind: 'pick-rule' });
   };
-  const pickInlineRule = (rt: FilterRuleType) => {
+  const pickInlineRule = useCallback((rt: FilterRuleType) => {
     setDraftRule(rt);
     setDraftParams({ ...filterRuleDefaultParams[rt] });
     setDraftMode('include');
     setStep({ kind: 'edit-params', index: -1 });
-  };
+  }, []);
   const startEditInline = (index: number) => {
     const row = inlineFilters[index]!;
     setDraftRule(row.ruleType);
@@ -334,7 +334,7 @@ export function SubSheet({
       {step.kind === 'pick-rule' && (
         <div className="border border-border rounded-[10px] overflow-hidden bg-bg">
           {availableTypes.map((rt) => (
-            <RuleListItem key={rt} ruleType={rt} onClick={() => pickInlineRule(rt)} />
+            <RuleListItem key={rt} ruleType={rt} onSelect={pickInlineRule} />
           ))}
         </div>
       )}
@@ -398,7 +398,7 @@ export function SubSheet({
                   key={d.id}
                   destination={d}
                   selected={destId === d.id}
-                  onSelect={() => setDestId(d.id)}
+                  onSelect={setDestId}
                 />
               ))}
               {destinations.length === 0 && (
@@ -480,15 +480,13 @@ function cryptoUuid(): string {
   return crypto.randomUUID();
 }
 
-function LibCheckbox({
-  filter,
-  selected,
-  onToggle,
-}: {
+interface LibCheckboxProps {
   filter: LibraryFilterDto;
   selected: boolean;
   onToggle: () => void;
-}) {
+}
+
+function LibCheckbox({ filter, selected, onToggle }: LibCheckboxProps) {
   return (
     <button
       type="button"

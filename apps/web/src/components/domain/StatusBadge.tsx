@@ -11,7 +11,11 @@ const CONFIG: Record<ActivityKind, { cls: string; label: string; Icon: typeof Ch
   failed: { cls: 'bg-danger-soft text-danger', label: 'failed', Icon: X },
 };
 
-export function StatusBadge({ kind }: { kind: ActivityKind }) {
+export interface StatusBadgeProps {
+  kind: ActivityKind;
+}
+
+export function StatusBadge({ kind }: StatusBadgeProps) {
   const c = CONFIG[kind] ?? { cls: '', label: kind, Icon: Circle };
   return (
     <span

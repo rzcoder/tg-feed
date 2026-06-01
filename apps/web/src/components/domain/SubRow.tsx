@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import {
   ChevronRight,
   CornerDownRight,
@@ -19,19 +19,17 @@ import { EntityIcon } from '@/components/domain/EntityIcon';
 import { FilterRow } from '@/components/domain/FilterRow';
 import { useSubscriptionFilters } from '@/hooks/useFilters';
 
-export function SubRow({
-  sub,
-  expanded,
-  onTap,
-}: {
+export interface SubRowProps {
   sub: SubscriptionDto;
   expanded: boolean;
-  onTap: () => void;
-}) {
+  onToggle: (id: number) => void;
+}
+
+export const SubRow = memo(function SubRow({ sub, expanded, onToggle }: SubRowProps) {
   return (
     <button
       type="button"
-      onClick={onTap}
+      onClick={() => onToggle(sub.id)}
       className={cn(
         'w-full flex items-center gap-2.5 px-4.5 py-3 text-left bg-bg border-b border-border min-h-[60px]',
         'transition-colors',
@@ -55,9 +53,13 @@ export function SubRow({
       />
     </button>
   );
+});
+
+interface SubMetaProps {
+  sub: SubscriptionDto;
 }
 
-function SubMeta({ sub }: { sub: SubscriptionDto }) {
+function SubMeta({ sub }: SubMetaProps) {
   return (
     <div className="flex items-center gap-2 text-[11.5px] text-text-muted min-w-0">
       <span className="font-mono text-[11px] flex-shrink-0">
@@ -95,7 +97,11 @@ function SubMeta({ sub }: { sub: SubscriptionDto }) {
   );
 }
 
-function NoForwardsBadge({ at }: { at: string }) {
+interface NoForwardsBadgeProps {
+  at: string;
+}
+
+function NoForwardsBadge({ at }: NoForwardsBadgeProps) {
   // Telegram returns CHAT_FORWARDS_RESTRICTED when the source channel has
   // "Restrict Saving Content" enabled. The forwarder stamps this timestamp;
   // it stays set until a forward succeeds again. Surfacing it inline tells
@@ -139,6 +145,16 @@ function NoAccessBadge() {
   );
 }
 
+export interface ExpandedSubActionsProps {
+  sub: SubscriptionDto;
+  destinations: DestinationDto[];
+  library: LibraryFilterDto[];
+  onEdit: () => void;
+  onPickDestination: () => void;
+  onViewFilters: () => void;
+  onDelete: () => void;
+}
+
 export function ExpandedSubActions({
   sub,
   destinations,
@@ -147,15 +163,7 @@ export function ExpandedSubActions({
   onPickDestination,
   onViewFilters,
   onDelete,
-}: {
-  sub: SubscriptionDto;
-  destinations: DestinationDto[];
-  library: LibraryFilterDto[];
-  onEdit: () => void;
-  onPickDestination: () => void;
-  onViewFilters: () => void;
-  onDelete: () => void;
-}) {
+}: ExpandedSubActionsProps) {
   const filtersQuery = useSubscriptionFilters(sub.id);
   const destination =
     sub.destinationId !== null
@@ -237,15 +245,13 @@ export function ExpandedSubActions({
   );
 }
 
-function DestinationCard({
-  destination,
-  accessStatus,
-  onClick,
-}: {
+interface DestinationCardProps {
   destination: DestinationDto | null;
   accessStatus: SubscriptionDto['destinationAccessStatus'];
   onClick: () => void;
-}) {
+}
+
+function DestinationCard({ destination, accessStatus, onClick }: DestinationCardProps) {
   if (!destination) {
     return (
       <button
@@ -311,7 +317,11 @@ function DestinationCard({
   );
 }
 
-function SectionLabel({ children }: { children: ReactNode }) {
+interface SectionLabelProps {
+  children: ReactNode;
+}
+
+function SectionLabel({ children }: SectionLabelProps) {
   return (
     <div className="text-[10px] font-semibold tracking-wide uppercase text-text-faint">
       {children}

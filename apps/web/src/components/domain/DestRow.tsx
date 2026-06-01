@@ -1,17 +1,16 @@
+import { memo } from 'react';
 import { MessagesSquare, Pencil, Trash } from 'lucide-react';
 import type { DestinationDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
 import { EntityIcon } from '@/components/domain/EntityIcon';
 
-export function DestRow({
-  destination,
-  onEdit,
-  onDelete,
-}: {
+export interface DestRowProps {
   destination: DestinationDto;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
+  onEdit: (destination: DestinationDto) => void;
+  onDelete: (destination: DestinationDto) => void;
+}
+
+export const DestRow = memo(function DestRow({ destination, onEdit, onDelete }: DestRowProps) {
   const inUse = destination.usageCount > 0;
   return (
     <div className="flex items-center gap-3 px-4.5 py-3 bg-bg border-b border-border min-h-[60px]">
@@ -49,7 +48,7 @@ export function DestRow({
       <Button
         variant="ghost"
         size="icon-sm"
-        onClick={onEdit}
+        onClick={() => onEdit(destination)}
         aria-label={`Edit ${destination.name}`}
       >
         <Pencil size={14} />
@@ -57,7 +56,7 @@ export function DestRow({
       <Button
         variant="ghost"
         size="icon-sm"
-        onClick={onDelete}
+        onClick={() => onDelete(destination)}
         disabled={inUse}
         title={inUse ? 'In use — reassign first' : 'Delete'}
         aria-label={`Delete ${destination.name}`}
@@ -66,4 +65,4 @@ export function DestRow({
       </Button>
     </div>
   );
-}
+});

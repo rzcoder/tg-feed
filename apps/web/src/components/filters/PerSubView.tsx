@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Filter, Info, Rss } from 'lucide-react';
 import type { FilterRuleType, LibraryFilterDto, SubscriptionFilterDto } from '@tg-feed/shared';
 import { Spinner } from '@/components/ui/spinner';
@@ -41,6 +42,14 @@ export function PerSubView({
   const detachLibMut = useDetachLibraryFilter();
   const toast = useToast();
 
+  const attachedLibrary = useMemo(
+    () =>
+      (sub?.libraryFilterIds ?? [])
+        .map((id) => librarySource.find((l) => l.id === id))
+        .filter((l): l is LibraryFilterDto => Boolean(l)),
+    [sub?.libraryFilterIds, librarySource],
+  );
+
   if (subsLoading) {
     return (
       <div className="grid place-items-center py-12 text-text-muted">
@@ -59,9 +68,6 @@ export function PerSubView({
   }
 
   const own = filtersQuery.data ?? [];
-  const attachedLibrary = (sub.libraryFilterIds ?? [])
-    .map((id) => librarySource.find((l) => l.id === id))
-    .filter((l): l is LibraryFilterDto => Boolean(l));
   const total = own.length + attachedLibrary.length;
 
   return (

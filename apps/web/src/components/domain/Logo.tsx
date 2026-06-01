@@ -5,7 +5,12 @@ import { cn } from '@/lib/cn';
 /**
  * Logo glyph — the design's hand-rolled SVG path. Sized by parent.
  */
-export function Logo({ size = 22, className }: { size?: number; className?: string }) {
+export interface LogoProps {
+  size?: number;
+  className?: string;
+}
+
+export function Logo({ size = 22, className }: LogoProps) {
   return (
     <svg
       width={size}
@@ -24,15 +29,13 @@ export function Logo({ size = 22, className }: { size?: number; className?: stri
   );
 }
 
-function BadgeFrame({
-  size,
-  className,
-  children,
-}: {
+interface BadgeFrameProps {
   size: number;
   className?: string | undefined;
   children: ReactNode;
-}) {
+}
+
+function BadgeFrame({ size, className, children }: BadgeFrameProps) {
   return (
     <span
       className={cn(
@@ -49,7 +52,12 @@ function BadgeFrame({
   );
 }
 
-export function LogoBadge({ size = 16, className }: { size?: number; className?: string }) {
+export interface LogoBadgeProps {
+  size?: number;
+  className?: string;
+}
+
+export function LogoBadge({ size = 16, className }: LogoBadgeProps) {
   return (
     <BadgeFrame size={size} className={className}>
       <Logo size={size} />
@@ -58,15 +66,13 @@ export function LogoBadge({ size = 16, className }: { size?: number; className?:
 }
 
 /** Same badge frame as the brand logo, but renders an arbitrary lucide icon. */
-export function IconBadge({
-  icon: Icon,
-  size = 16,
-  className,
-}: {
+export interface IconBadgeProps {
   icon: LucideIcon;
   size?: number;
   className?: string;
-}) {
+}
+
+export function IconBadge({ icon: Icon, size = 16, className }: IconBadgeProps) {
   return (
     <BadgeFrame size={size} className={className}>
       <Icon size={size} aria-hidden />

@@ -110,7 +110,12 @@ export function DataSection() {
 
 // --- Export sheet ----------------------------------------------------------
 
-function ExportSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+interface ExportSheetProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function ExportSheet({ open, onClose }: ExportSheetProps) {
   const toast = useToast();
   const exportMut = useExportData();
   const [selected, setSelected] = useState<Set<ExportSection>>(new Set(EXPORT_SECTIONS));
@@ -191,7 +196,12 @@ interface ParsedFile {
   fileSize: number;
 }
 
-function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+interface ImportSheetProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function ImportSheet({ open, onClose }: ImportSheetProps) {
   const toast = useToast();
   const importMut = useImportData();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -411,7 +421,12 @@ function ImportSheet({ open, onClose }: { open: boolean; onClose: () => void }) 
   );
 }
 
-function FilePreview({ parsed, onClear }: { parsed: ParsedFile; onClear: () => void }) {
+interface FilePreviewProps {
+  parsed: ParsedFile;
+  onClear: () => void;
+}
+
+function FilePreview({ parsed, onClear }: FilePreviewProps) {
   return (
     <div className="flex items-center gap-2.5 p-2.5 rounded-lg border border-border bg-bg">
       <span className="grid place-items-center w-8 h-8 rounded-lg bg-accent-soft text-accent border border-accent/30 flex-shrink-0">
@@ -431,7 +446,11 @@ function FilePreview({ parsed, onClear }: { parsed: ParsedFile; onClear: () => v
   );
 }
 
-function ImportResultBlock({ result }: { result: ImportResult }) {
+interface ImportResultBlockProps {
+  result: ImportResult;
+}
+
+function ImportResultBlock({ result }: ImportResultBlockProps) {
   const sections: ExportSection[] = [
     'destinations',
     'libraryFilters',
@@ -495,15 +514,13 @@ function ImportResultBlock({ result }: { result: ImportResult }) {
   );
 }
 
-function ResultPill({
-  label,
-  value,
-  tone,
-}: {
+interface ResultPillProps {
   label: string;
   value: number;
   tone: 'ok' | 'muted' | 'accent';
-}) {
+}
+
+function ResultPill({ label, value, tone }: ResultPillProps) {
   if (value === 0) return null;
   return (
     <span
@@ -546,7 +563,12 @@ const WIPE_SIDE_EFFECTS: Record<WipeSection, string> = {
   libraryFilters: 'Subscriptions using them as filters will simply lose those filters.',
 };
 
-function WipeSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+interface WipeSheetProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+function WipeSheet({ open, onClose }: WipeSheetProps) {
   const toast = useToast();
   const wipeMut = useWipeData();
   const subs = useSubscriptions();
@@ -671,17 +693,14 @@ function WipeSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
 
 // --- Shared subcomponents --------------------------------------------------
 
-function SectionCheckbox({
-  label,
-  description,
-  checked,
-  onToggle,
-}: {
+interface SectionCheckboxProps {
   label: string;
   description: string;
   checked: boolean;
   onToggle: () => void;
-}) {
+}
+
+function SectionCheckbox({ label, description, checked, onToggle }: SectionCheckboxProps) {
   return (
     <button
       type="button"
@@ -709,6 +728,15 @@ function SectionCheckbox({
   );
 }
 
+interface WipeCheckboxProps {
+  label: string;
+  count: number;
+  description: string;
+  checked: boolean;
+  disabled: boolean;
+  onToggle: () => void;
+}
+
 function WipeCheckbox({
   label,
   count,
@@ -716,14 +744,7 @@ function WipeCheckbox({
   checked,
   disabled,
   onToggle,
-}: {
-  label: string;
-  count: number;
-  description: string;
-  checked: boolean;
-  disabled: boolean;
-  onToggle: () => void;
-}) {
+}: WipeCheckboxProps) {
   return (
     <button
       type="button"
@@ -756,15 +777,13 @@ function WipeCheckbox({
   );
 }
 
-function StrategyRadio({
-  label,
-  checked,
-  onSelect,
-}: {
+interface StrategyRadioProps {
   label: string;
   checked: boolean;
   onSelect: () => void;
-}) {
+}
+
+function StrategyRadio({ label, checked, onSelect }: StrategyRadioProps) {
   return (
     <button
       type="button"

@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { Info, Plus, Send } from 'lucide-react';
 import type { DestinationDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
@@ -68,18 +69,23 @@ export function DestinationsPage() {
     }
   };
 
-  const onDelete = (d: DestinationDto) => {
-    deleteMut.mutate(d.id, {
-      onSuccess: () => toast.show('Destination removed'),
-      onError: (err) => {
-        if (err instanceof ApiError && err.code === 'destination_in_use') {
-          toast.error('Destination is in use by a subscription');
-          return;
-        }
-        toast.error(apiErrorMessage(err, 'Failed to delete destination'));
-      },
-    });
-  };
+  // Stable across renders so the memoized DestRow rows don't re-render on
+  // every parent render (deleteMut/toast are themselves stable references).
+  const handleDelete = useCallback(
+    (d: DestinationDto) => {
+      deleteMut.mutate(d.id, {
+        onSuccess: () => toast.show('Destination removed'),
+        onError: (err) => {
+          if (err instanceof ApiError && err.code === 'destination_in_use') {
+            toast.error('Destination is in use by a subscription');
+            return;
+          }
+          toast.error(apiErrorMessage(err, 'Failed to delete destination'));
+        },
+      });
+    },
+    [deleteMut, toast],
+  );
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -106,12 +112,7 @@ export function DestinationsPage() {
         ) : (
           <div className="flex flex-col border-t border-border">
             {data!.map((d) => (
-              <DestRow
-                key={d.id}
-                destination={d}
-                onEdit={() => sheet.openEdit(d)}
-                onDelete={() => onDelete(d)}
-              />
+              <DestRow key={d.id} destination={d} onEdit={sheet.openEdit} onDelete={handleDelete} />
             ))}
           </div>
         )}

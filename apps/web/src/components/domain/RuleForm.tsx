@@ -163,13 +163,12 @@ export function RuleForm({
   );
 }
 
-function ModeToggle({
-  value,
-  onChange,
-}: {
+interface ModeToggleProps {
   value: FilterMode;
   onChange: (next: FilterMode) => void;
-}) {
+}
+
+function ModeToggle({ value, onChange }: ModeToggleProps) {
   const options: { v: FilterMode; l: string; d: string }[] = [
     { v: 'include', l: 'Include', d: 'Forward only when this rule matches.' },
     { v: 'exclude', l: 'Exclude', d: 'Drop the message when this rule matches.' },
@@ -201,17 +200,14 @@ function ModeToggle({
   );
 }
 
-function ToggleRow({
-  label,
-  description,
-  value,
-  onChange,
-}: {
+interface ToggleRowProps {
   label: string;
   description?: string;
   value: boolean;
   onChange: (next: boolean) => void;
-}) {
+}
+
+function ToggleRow({ label, description, value, onChange }: ToggleRowProps) {
   return (
     <div className="flex items-center gap-2.5 justify-between">
       <div className="flex flex-col gap-0.5">
@@ -239,13 +235,12 @@ function ToggleRow({
   );
 }
 
-function SenderAllowlistInput({
-  params,
-  setParams,
-}: {
+interface SenderAllowlistInputProps {
   params: Record<string, unknown>;
   setParams: (next: Record<string, unknown>) => void;
-}) {
+}
+
+function SenderAllowlistInput({ params, setParams }: SenderAllowlistInputProps) {
   const usernames = ((params.usernames as string[]) ?? []).slice();
   const onAdd = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return;

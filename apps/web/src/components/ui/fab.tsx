@@ -1,22 +1,19 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
+export interface FabProps {
+  onClick: () => void;
+  label: string;
+  children: ReactNode;
+  className?: string | undefined;
+}
+
 /**
  * Floating action button — anchored to the bottom-right of the nearest
  * positioned ancestor (the app's <main>), so it floats above the page
  * content and clears the mobile tab bar.
  */
-export function Fab({
-  onClick,
-  label,
-  children,
-  className,
-}: {
-  onClick: () => void;
-  label: string;
-  children: ReactNode;
-  className?: string | undefined;
-}) {
+export function Fab({ onClick, label, children, className }: FabProps) {
   return (
     <button
       type="button"

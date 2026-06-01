@@ -61,7 +61,12 @@ const INITIAL: FlowState = {
   error: null,
 };
 
-export function TelegramLoginSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export interface TelegramLoginSheetProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function TelegramLoginSheet({ open, onClose }: TelegramLoginSheetProps) {
   const [state, setState] = useState<FlowState>(INITIAL);
   const toast = useToast();
 
@@ -314,15 +319,13 @@ export function TelegramLoginSheet({ open, onClose }: { open: boolean; onClose: 
   );
 }
 
-function PrimaryAction({
-  state,
-  isPending,
-  onClick,
-}: {
+interface PrimaryActionProps {
   state: FlowState;
   isPending: boolean;
   onClick: () => void;
-}) {
+}
+
+function PrimaryAction({ state, isPending, onClick }: PrimaryActionProps) {
   if (state.step === 'mode') return null;
   const labels: Record<Exclude<Step, 'mode' | 'done'>, { idle: string; pending: string }> = {
     phone: { idle: 'Send code', pending: 'Sending…' },
@@ -349,7 +352,11 @@ function PrimaryAction({
   );
 }
 
-function BackLink({ onClick }: { onClick: () => void }) {
+interface BackLinkProps {
+  onClick: () => void;
+}
+
+function BackLink({ onClick }: BackLinkProps) {
   return (
     <button
       type="button"
@@ -361,17 +368,14 @@ function BackLink({ onClick }: { onClick: () => void }) {
   );
 }
 
-function ModeOption({
-  label,
-  description,
-  icon,
-  onSelect,
-}: {
+interface ModeOptionProps {
   label: string;
   description: string;
   icon: React.ReactNode;
   onSelect: () => void;
-}) {
+}
+
+function ModeOption({ label, description, icon, onSelect }: ModeOptionProps) {
   return (
     <button
       type="button"
@@ -392,7 +396,11 @@ function ModeOption({
   );
 }
 
-function DoneCard({ account }: { account: TelegramAccountInfo }) {
+interface DoneCardProps {
+  account: TelegramAccountInfo;
+}
+
+function DoneCard({ account }: DoneCardProps) {
   const subtitle = [account.username ? `@${account.username}` : null, account.phoneNumber]
     .filter(Boolean)
     .join(' · ');

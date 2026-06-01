@@ -10,7 +10,7 @@
  * - kind='library' add/edit: same flow plus a Name field
  */
 import { ChevronLeft } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   filterRuleDefaultParams,
   filterRuleParamsSchemas,
@@ -90,14 +90,14 @@ export function FilterSheet({
     }
   }, [open, isEdit, initial]);
 
-  const onPickType = (t: FilterRuleType) => {
+  const onPickType = useCallback((t: FilterRuleType) => {
     setType(t);
     setParams({ ...filterRuleDefaultParams[t] });
     setFilterMode('include');
     setStep(2);
-  };
+  }, []);
 
-  const canSave = (() => {
+  const canSave = useMemo(() => {
     if (submitting || !type) return false;
     if (isLibrary && !name.trim()) return false;
     // Validate params against the schema before allowing save — keeps the
@@ -105,7 +105,7 @@ export function FilterSheet({
     // form errors.
     const result = filterRuleParamsSchemas[type].safeParse(params);
     return result.success;
-  })();
+  }, [submitting, type, isLibrary, name, params]);
 
   const handleSubmit = () => {
     if (!canSave || !type) return;
@@ -153,12 +153,7 @@ export function FilterSheet({
       {step === 1 && !isEdit && (
         <div className="border border-border rounded-[10px] overflow-hidden bg-bg">
           {availableTypes.map((rt) => (
-            <RuleListItem
-              key={rt}
-              ruleType={rt}
-              selected={type === rt}
-              onClick={() => onPickType(rt)}
-            />
+            <RuleListItem key={rt} ruleType={rt} selected={type === rt} onSelect={onPickType} />
           ))}
         </div>
       )}
@@ -182,7 +177,11 @@ export function FilterSheet({
   );
 }
 
-function RulePreviewCard({ ruleType }: { ruleType: FilterRuleType }) {
+interface RulePreviewCardProps {
+  ruleType: FilterRuleType;
+}
+
+function RulePreviewCard({ ruleType }: RulePreviewCardProps) {
   const Icon = FILTER_RULE_ICONS[ruleType];
   return (
     <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-surface-2 border border-border">

@@ -462,15 +462,13 @@ export function BotSettingsCard() {
   );
 }
 
-function AdminLookup({
-  existingIds,
-  disabled,
-  onAdd,
-}: {
+interface AdminLookupProps {
   existingIds: Set<string>;
   disabled: boolean;
   onAdd: (admin: BotAdmin) => void;
-}) {
+}
+
+function AdminLookup({ existingIds, disabled, onAdd }: AdminLookupProps) {
   const [query, setQuery] = useState('');
   const resolve = useResolveBotAdmin();
   const { mutate: resolveMutate, reset: resolveReset } = resolve;

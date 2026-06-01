@@ -3,12 +3,16 @@ import { useTheme, type UseThemeResult } from './useTheme';
 
 const ThemeContext = createContext<UseThemeResult | null>(null);
 
+export interface ThemeProviderProps {
+  children: ReactNode;
+}
+
 /**
  * Hosts a single theme instance at the app root so the resolved theme is
  * applied (and system changes are tracked) for the whole session — not just
  * while a particular page that happens to read the theme is mounted.
  */
-export function ThemeProvider({ children }: { children: ReactNode }) {
+export function ThemeProvider({ children }: ThemeProviderProps) {
   const theme = useTheme();
   return <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>;
 }

@@ -1,16 +1,13 @@
 import type { ReactNode } from 'react';
 
-export function EmptyState({
-  icon,
-  title,
-  body,
-  cta,
-}: {
+export interface EmptyStateProps {
   icon: ReactNode;
   title: string;
   body: string;
   cta?: ReactNode;
-}) {
+}
+
+export function EmptyState({ icon, title, body, cta }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center text-center text-text-muted h-full px-8 py-12">
       <span className="grid place-items-center w-12 h-12 mb-3.5 rounded-xl bg-surface-2 border border-border text-text-muted">

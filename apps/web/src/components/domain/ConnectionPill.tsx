@@ -20,15 +20,13 @@ const CONFIG: Record<ConnectionState, { cls: string; dot: string; label: string 
   },
 };
 
-export function ConnectionPill({
-  state,
-  compact,
-  className,
-}: {
+export interface ConnectionPillProps {
   state: ConnectionState;
   compact?: boolean;
   className?: string;
-}) {
+}
+
+export function ConnectionPill({ state, compact, className }: ConnectionPillProps) {
   const cfg = CONFIG[state];
   return (
     <span

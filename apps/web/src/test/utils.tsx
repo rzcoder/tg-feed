@@ -21,11 +21,15 @@ export interface RenderWithProvidersOptions {
 
 export type RenderWithProvidersResult = RenderResult & { client: QueryClient };
 
+interface WrapperProps {
+  children: ReactNode;
+}
+
 export function renderWithProviders(
   ui: ReactElement,
   { client = makeQueryClient(), initialEntries = ['/'] }: RenderWithProvidersOptions = {},
 ): RenderWithProvidersResult {
-  function Wrapper({ children }: { children: ReactNode }) {
+  function Wrapper({ children }: WrapperProps) {
     return (
       <QueryClientProvider client={client}>
         <ThemeProvider>

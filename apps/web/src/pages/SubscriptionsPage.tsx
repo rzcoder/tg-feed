@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Plus, Rss } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { SubscriptionDto } from '@tg-feed/shared';
@@ -34,6 +34,12 @@ export function SubscriptionsPage() {
   const navigate = useNavigate();
 
   const [openId, setOpenId] = useState<number | null>(null);
+  // Functional updater keeps deps empty so the handler stays stable across
+  // renders — the memoized SubRow only re-renders when its own sub/expanded change.
+  const handleToggle = useCallback(
+    (id: number) => setOpenId((cur) => (cur === id ? null : id)),
+    [],
+  );
   const sheet = useSheetState<SubscriptionDto>();
   // Subscription whose destination is being re-picked via the Forwards-to card.
   const [destPickerSub, setDestPickerSub] = useState<SubscriptionDto | null>(null);
@@ -133,11 +139,7 @@ export function SubscriptionsPage() {
           <div className="flex flex-col border-t border-border">
             {(subs.data ?? []).map((s) => (
               <div key={s.id}>
-                <SubRow
-                  sub={s}
-                  expanded={openId === s.id}
-                  onTap={() => setOpenId(openId === s.id ? null : s.id)}
-                />
+                <SubRow sub={s} expanded={openId === s.id} onToggle={handleToggle} />
                 {openId === s.id && (
                   <ExpandedSubActions
                     sub={s}

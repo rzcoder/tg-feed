@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { MessagesSquare, Slash } from 'lucide-react';
 import type { DestinationDto } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
@@ -9,19 +10,21 @@ import { EntityIcon } from '@/components/domain/EntityIcon';
  * forum topic (when set — this is what distinguishes two destinations that
  * point at the same forum but different topics), and the note.
  */
-export function DestinationOption({
+export interface DestinationOptionProps {
+  destination: DestinationDto;
+  selected: boolean;
+  onSelect: (id: DestinationDto['id']) => void;
+}
+
+export const DestinationOption = memo(function DestinationOption({
   destination,
   selected,
   onSelect,
-}: {
-  destination: DestinationDto;
-  selected: boolean;
-  onSelect: () => void;
-}) {
+}: DestinationOptionProps) {
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={() => onSelect(destination.id)}
       className={cn(
         'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left transition-colors',
         selected
@@ -55,15 +58,14 @@ export function DestinationOption({
       </div>
     </button>
   );
-}
+});
 
-export function NoDestinationOption({
-  selected,
-  onSelect,
-}: {
+export interface NoDestinationOptionProps {
   selected: boolean;
   onSelect: () => void;
-}) {
+}
+
+export function NoDestinationOption({ selected, onSelect }: NoDestinationOptionProps) {
   return (
     <button
       type="button"

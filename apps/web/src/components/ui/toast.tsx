@@ -36,7 +36,11 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-export function ToastProvider({ children }: { children: ReactNode }) {
+export interface ToastProviderProps {
+  children: ReactNode;
+}
+
+export function ToastProvider({ children }: ToastProviderProps) {
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const show = useCallback((message: string) => setToast({ message, tone: 'success' }), []);

@@ -108,7 +108,11 @@ export const ActivityRow = memo(function ActivityRow({ event, onViewJson }: Acti
   );
 });
 
-function RelativeTime({ occurredAt }: { occurredAt: number }) {
+interface RelativeTimeProps {
+  occurredAt: number;
+}
+
+function RelativeTime({ occurredAt }: RelativeTimeProps) {
   const now = useNowTick();
   const ageSec = Math.max(0, (now - occurredAt) / 1000);
   const [hover, setHover] = useState(false);
@@ -141,7 +145,11 @@ function parseReason(reason: string): ParsedReason {
   return { library: null, text: reason };
 }
 
-function ReasonChips({ reasons }: { reasons: string[] }) {
+interface ReasonChipsProps {
+  reasons: string[];
+}
+
+function ReasonChips({ reasons }: ReasonChipsProps) {
   return (
     <div className="flex flex-wrap gap-1.5">
       {reasons.map((r, i) => {

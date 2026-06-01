@@ -18,7 +18,11 @@ export const NAV_TABS: readonly NavTab[] = [
   { to: '/settings', icon: Settings, label: 'Settings', full: 'Settings', end: false },
 ];
 
-export function TabBar({ className }: { className?: string }) {
+export interface TabBarProps {
+  className?: string;
+}
+
+export function TabBar({ className }: TabBarProps) {
   return (
     <nav
       aria-label="Primary"

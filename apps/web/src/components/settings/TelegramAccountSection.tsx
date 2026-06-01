@@ -131,7 +131,11 @@ export function TelegramAccountSection() {
   );
 }
 
-function AccountAvatar({ src }: { src: string | null }) {
+interface AccountAvatarProps {
+  src: string | null;
+}
+
+function AccountAvatar({ src }: AccountAvatarProps) {
   if (src) {
     return (
       <img
@@ -148,15 +152,13 @@ function AccountAvatar({ src }: { src: string | null }) {
   );
 }
 
-function Banner({
-  icon: Icon,
-  title,
-  children,
-}: {
+interface BannerProps {
   icon: LucideIcon;
   title: string;
   children: React.ReactNode;
-}) {
+}
+
+function Banner({ icon: Icon, title, children }: BannerProps) {
   return (
     <div role="alert" className="flex items-start gap-2.5 text-warning">
       <Icon size={14} strokeWidth={2.2} className="flex-shrink-0 mt-0.5" />
@@ -168,7 +170,12 @@ function Banner({
   );
 }
 
-function SignOutButton({ onClick, pending }: { onClick: () => void; pending: boolean }) {
+interface SignOutButtonProps {
+  onClick: () => void;
+  pending: boolean;
+}
+
+function SignOutButton({ onClick, pending }: SignOutButtonProps) {
   return (
     <Button variant="ghost" size="sm" onClick={onClick} disabled={pending}>
       {pending ? <Spinner size={12} /> : <LogOut size={12} />}
@@ -177,13 +184,12 @@ function SignOutButton({ onClick, pending }: { onClick: () => void; pending: boo
   );
 }
 
-function SignInButton({
-  encryptionKeyConfigured,
-  onClick,
-}: {
+interface SignInButtonProps {
   encryptionKeyConfigured: boolean;
   onClick: () => void;
-}) {
+}
+
+function SignInButton({ encryptionKeyConfigured, onClick }: SignInButtonProps) {
   if (!encryptionKeyConfigured) {
     return (
       <div className="flex items-center gap-2">

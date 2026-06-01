@@ -12,7 +12,12 @@ import { ChevronDown, Lock, Zap } from 'lucide-react';
 import type { BotConfigSource } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
 
-export function SettingsCard({ children, className }: { children: ReactNode; className?: string }) {
+export interface SettingsCardProps {
+  children: ReactNode;
+  className?: string;
+}
+
+export function SettingsCard({ children, className }: SettingsCardProps) {
   return (
     <div
       className={cn(
@@ -25,16 +30,14 @@ export function SettingsCard({ children, className }: { children: ReactNode; cla
   );
 }
 
-/** Card header: icon badge + title on the left, an optional pill/toggle on the right. */
-export function CardHeader({
-  icon,
-  title,
-  right,
-}: {
+export interface CardHeaderProps {
   icon: ReactNode;
   title: ReactNode;
   right?: ReactNode;
-}) {
+}
+
+/** Card header: icon badge + title on the left, an optional pill/toggle on the right. */
+export function CardHeader({ icon, title, right }: CardHeaderProps) {
   return (
     <div className="flex items-center justify-between gap-2.5 px-4 py-3 border-b border-border bg-bg-2">
       <div className="flex items-center gap-2.5 min-w-0">
@@ -48,8 +51,13 @@ export function CardHeader({
   );
 }
 
+export interface CardFooterProps {
+  left?: ReactNode;
+  children: ReactNode;
+}
+
 /** Card footer on a tinted bar. `left` is pinned to the start (e.g. a danger reset). */
-export function CardFooter({ left, children }: { left?: ReactNode; children: ReactNode }) {
+export function CardFooter({ left, children }: CardFooterProps) {
   return (
     <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-bg-2">
       {left && <div className="mr-auto">{left}</div>}
@@ -58,16 +66,14 @@ export function CardFooter({ left, children }: { left?: ReactNode; children: Rea
   );
 }
 
-/** A labelled group within a card body; `right` sits opposite the label (e.g. a toggle). */
-export function PanelSection({
-  label,
-  right,
-  children,
-}: {
+export interface PanelSectionProps {
   label: string;
   right?: ReactNode;
   children: ReactNode;
-}) {
+}
+
+/** A labelled group within a card body; `right` sits opposite the label (e.g. a toggle). */
+export function PanelSection({ label, right, children }: PanelSectionProps) {
   return (
     <div className="flex flex-col gap-3.5">
       <div className="flex items-center justify-between pt-0.5">
@@ -81,8 +87,13 @@ export function PanelSection({
   );
 }
 
+export interface FieldHeadProps {
+  label: string;
+  source?: BotConfigSource | null;
+}
+
 /** Field label paired with its source badge. */
-export function FieldHead({ label, source }: { label: string; source?: BotConfigSource | null }) {
+export function FieldHead({ label, source }: FieldHeadProps) {
   return (
     <div className="flex items-baseline justify-between mb-1.5">
       <span className="text-xs font-medium text-text-2 tracking-[0.005em]">{label}</span>
@@ -91,8 +102,12 @@ export function FieldHead({ label, source }: { label: string; source?: BotConfig
   );
 }
 
+export interface SourceBadgeProps {
+  source: BotConfigSource | null;
+}
+
 /** Small uppercase pill showing where a value resolves from: database / .env / not set. */
-export function SourceBadge({ source }: { source: BotConfigSource | null }) {
+export function SourceBadge({ source }: SourceBadgeProps) {
   if (!source) return <span className="text-[10.5px] text-text-faint">not set</span>;
   const isDb = source === 'db';
   return (
@@ -108,18 +123,15 @@ export function SourceBadge({ source }: { source: BotConfigSource | null }) {
   );
 }
 
-/** Accessible on/off switch matching the design's `.toggle`. */
-export function Toggle({
-  checked,
-  onChange,
-  label,
-  disabled,
-}: {
+export interface ToggleProps {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
   disabled?: boolean;
-}) {
+}
+
+/** Accessible on/off switch matching the design's `.toggle`. */
+export function Toggle({ checked, onChange, label, disabled }: ToggleProps) {
   return (
     <button
       type="button"
@@ -160,8 +172,13 @@ const DOT_TONES: Record<PillTone, string> = {
   neutral: 'bg-text-faint',
 };
 
+export interface StatusPillProps {
+  tone: PillTone;
+  children: ReactNode;
+}
+
 /** Rounded status pill with a leading dot, matching the design's `.pill`. */
-export function StatusPill({ tone, children }: { tone: PillTone; children: ReactNode }) {
+export function StatusPill({ tone, children }: StatusPillProps) {
   return (
     <span
       className={cn(
@@ -175,6 +192,14 @@ export function StatusPill({ tone, children }: { tone: PillTone; children: React
   );
 }
 
+export interface InlineSelectProps<T extends string> {
+  value: T;
+  onChange: (next: T) => void;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  disabled?: boolean;
+  ariaLabel?: string;
+}
+
 /** Compact styled native <select> for the inline-sentence digest config. */
 export function InlineSelect<T extends string>({
   value,
@@ -182,13 +207,7 @@ export function InlineSelect<T extends string>({
   options,
   disabled,
   ariaLabel,
-}: {
-  value: T;
-  onChange: (next: T) => void;
-  options: ReadonlyArray<{ value: T; label: string }>;
-  disabled?: boolean;
-  ariaLabel?: string;
-}) {
+}: InlineSelectProps<T>) {
   return (
     <span className="relative inline-flex">
       <select

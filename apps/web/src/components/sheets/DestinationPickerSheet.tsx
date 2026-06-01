@@ -62,7 +62,7 @@ export function DestinationPickerSheet({
             key={d.id}
             destination={d}
             selected={selected === d.id}
-            onSelect={() => setSelected(d.id)}
+            onSelect={setSelected}
           />
         ))}
         {destinations.length === 0 && (

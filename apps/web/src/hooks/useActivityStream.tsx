@@ -34,13 +34,12 @@ const FORWARD_EVENT_TYPES = new Set([
 const ConnectionStateContext = createContext<ConnectionState | null>(null);
 const LastEventContext = createContext<StreamEvent | null>(null);
 
-export function StreamProvider({
-  children,
-  url = '/api/stream',
-}: {
+export interface StreamProviderProps {
   children: ReactNode;
   url?: string;
-}) {
+}
+
+export function StreamProvider({ children, url = '/api/stream' }: StreamProviderProps) {
   const [state, setState] = useState<ConnectionState>('reconnect');
   const [lastEvent, setLastEvent] = useState<StreamEvent | null>(null);
   const qc = useQueryClient();

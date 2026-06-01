@@ -3,7 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useMe, UnauthorizedError } from '@/hooks/useAuth';
 import { Spinner } from '@/components/ui/spinner';
 
-export function RequireAuth({ children }: { children: ReactNode }) {
+export interface RequireAuthProps {
+  children: ReactNode;
+}
+
+export function RequireAuth({ children }: RequireAuthProps) {
   const me = useMe();
   const navigate = useNavigate();
   const location = useLocation();

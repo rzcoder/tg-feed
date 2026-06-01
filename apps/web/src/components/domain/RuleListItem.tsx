@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { FilterRuleType } from '@tg-feed/shared';
 import {
@@ -10,15 +11,19 @@ import { cn } from '@/lib/cn';
 export interface RuleListItemProps {
   ruleType: FilterRuleType;
   selected?: boolean;
-  onClick: () => void;
+  onSelect: (ruleType: FilterRuleType) => void;
 }
 
-export function RuleListItem({ ruleType, selected, onClick }: RuleListItemProps) {
+export const RuleListItem = memo(function RuleListItem({
+  ruleType,
+  selected,
+  onSelect,
+}: RuleListItemProps) {
   const Icon = FILTER_RULE_ICONS[ruleType];
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => onSelect(ruleType)}
       className={cn(
         'w-full flex items-center gap-3 px-3.5 py-3 text-left border-t border-border first:border-t-0 transition-colors',
         selected ? 'bg-accent-soft' : 'bg-bg hover:bg-surface-2',
@@ -43,4 +48,4 @@ export function RuleListItem({ ruleType, selected, onClick }: RuleListItemProps)
       <ChevronRight size={16} className={selected ? 'text-accent' : 'text-text-faint'} />
     </button>
   );
-}
+});

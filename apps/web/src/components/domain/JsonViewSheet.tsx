@@ -13,7 +13,7 @@
  * own Tailwind colour tokens with `!important` so the palette follows our
  * oklch CSS variables (dark + light theme are handled automatically).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Check, Copy } from 'lucide-react';
 import { JsonView, defaultStyles } from 'react-json-view-lite';
 import 'react-json-view-lite/dist/index.css';
@@ -86,7 +86,8 @@ export function JsonViewSheet({ open, forwardLogId, onOpenChange }: JsonViewShee
   }, [copied]);
 
   const raw = query.data?.rawMessage ?? null;
-  const formatted = raw !== null ? JSON.stringify(raw, null, 2) : null;
+  // JSON.stringify of potentially-large album payloads (array of gramjs Messages).
+  const formatted = useMemo(() => (raw !== null ? JSON.stringify(raw, null, 2) : null), [raw]);
 
   const onCopy = async () => {
     if (!formatted) return;

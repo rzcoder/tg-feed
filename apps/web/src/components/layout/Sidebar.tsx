@@ -8,7 +8,11 @@ import { useLogout } from '@/hooks/useAuth';
 import { useConnectionState } from '@/hooks/useActivityStream';
 import { NAV_TABS } from './TabBar';
 
-export function Sidebar({ className }: { className?: string }) {
+export interface SidebarProps {
+  className?: string;
+}
+
+export function Sidebar({ className }: SidebarProps) {
   const logout = useLogout();
   const state = useConnectionState();
 
