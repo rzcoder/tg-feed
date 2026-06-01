@@ -48,6 +48,76 @@ describe('destination routes', () => {
     expect(typeof body.createdAt).toBe('string');
   });
 
+  it('POST /api/destinations persists and returns a forum topic', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations',
+      headers: { cookie },
+      payload: { name: 'forum', chatId: '-1009374102931', topicId: '42', topicTitle: 'Releases' },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as DestinationDto;
+    expect(body.topicId).toBe('42');
+    expect(body.topicTitle).toBe('Releases');
+    const [row] = testApp.db.select().from(destinations).all();
+    expect(row).toMatchObject({ topicId: '42', topicTitle: 'Releases' });
+  });
+
+  it('PATCH /api/destinations/:id re-targets and clears the topic', async () => {
+    const [d] = testApp.db
+      .insert(destinations)
+      .values({ name: 'forum', chatId: '-1001111111111', topicId: '42', topicTitle: 'Releases' })
+      .returning({ id: destinations.id })
+      .all();
+
+    const retarget = await testApp.app.inject({
+      method: 'PATCH',
+      url: `/api/destinations/${d!.id}`,
+      headers: { cookie },
+      payload: { topicId: '7', topicTitle: 'Random' },
+    });
+    expect((retarget.json() as DestinationDto).topicId).toBe('7');
+    expect((retarget.json() as DestinationDto).topicTitle).toBe('Random');
+
+    const clear = await testApp.app.inject({
+      method: 'PATCH',
+      url: `/api/destinations/${d!.id}`,
+      headers: { cookie },
+      payload: { topicId: null, topicTitle: null },
+    });
+    expect((clear.json() as DestinationDto).topicId).toBeNull();
+    expect((clear.json() as DestinationDto).topicTitle).toBeNull();
+  });
+
+  it('POST /api/destinations/topics returns the lister result', async () => {
+    const listForumTopics = vi.fn().mockResolvedValue({
+      isForum: true,
+      topics: [{ id: '42', title: 'Releases' }],
+    });
+    const app = await buildTestApp({ listForumTopics });
+    const c = await app.loginAndGetCookie();
+    const res = await app.app.inject({
+      method: 'POST',
+      url: '/api/destinations/topics',
+      headers: { cookie: c },
+      payload: { chatId: '-1001234567890' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ isForum: true, topics: [{ id: '42', title: 'Releases' }] });
+    expect(listForumTopics).toHaveBeenCalledWith('-1001234567890');
+    await app.close();
+  });
+
+  it('POST /api/destinations/topics returns 503 when Telegram is unavailable', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/destinations/topics',
+      headers: { cookie },
+      payload: { chatId: '-1001234567890' },
+    });
+    expect(res.statusCode).toBe(503);
+  });
+
   it('POST /api/destinations rejects non-numeric chatId', async () => {
     const res = await testApp.app.inject({
       method: 'POST',
@@ -215,6 +285,7 @@ describe('POST /api/destinations/resolve', () => {
       handle: '@anthropic_ai',
       inviteHash: null,
       alreadyMember: true,
+      isForum: false,
     });
     const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();
@@ -231,6 +302,7 @@ describe('POST /api/destinations/resolve', () => {
       handle: '@anthropic_ai',
       inviteHash: null,
       alreadyMember: true,
+      isForum: false,
     });
     await testApp.close();
   });
@@ -242,6 +314,7 @@ describe('POST /api/destinations/resolve', () => {
       handle: null,
       inviteHash: 'LtdmkRfh24oxZjYy',
       alreadyMember: false,
+      isForum: false,
     });
     const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();

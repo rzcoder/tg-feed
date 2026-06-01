@@ -80,11 +80,26 @@ export const telegramChatIdSchema = z
   .min(1)
   .regex(/^-?\d{6,}$/, 'expected a numeric Telegram chat id');
 
+// Forum topic's `top_msg_id` in storage form — a positive integer string,
+// kept as text for parity with the other Telegram ids.
+export const forumTopicIdSchema = z
+  .string()
+  .min(1)
+  .regex(/^\d{1,19}$/, 'expected a numeric forum topic id');
+
 export const destinationDtoSchema = z.object({
   id: z.number().int(),
   name: z.string(),
   chatId: z.string(),
   note: z.string().nullable(),
+  /**
+   * Forum topic this destination forwards into, or null for "no explicit
+   * topic" — the General topic on a forum supergroup, or any non-forum
+   * chat. `topicId` is the topic's `top_msg_id`; `topicTitle` is cached at
+   * create/edit time so the UI renders without a live topics lookup.
+   */
+  topicId: z.string().nullable(),
+  topicTitle: z.string().nullable(),
   /**
    * Channel/chat profile photo as a `data:image/jpeg;base64,...` URL.
    * Null when not yet fetched (e.g. fresh migrations, Telegram-less boots,
@@ -128,6 +143,9 @@ export const createDestinationRequestSchema = z
     chatId: telegramChatIdSchema.optional(),
     inviteHash: telegramInviteHashSchema.optional(),
     note: z.string().max(200).optional(),
+    /** Forum topic to forward into; omit or null for the General topic / a non-forum chat. */
+    topicId: forumTopicIdSchema.nullable().optional(),
+    topicTitle: z.string().max(200).nullable().optional(),
   })
   .refine((b) => (b.chatId ? 1 : 0) + (b.inviteHash ? 1 : 0) === 1, {
     message: 'exactly one of chatId or inviteHash is required',
@@ -151,6 +169,12 @@ export const resolveDestinationResponseSchema = z.object({
   /** non-null for `t.me/+HASH` inputs; carries to the create endpoint. */
   inviteHash: z.string().nullable(),
   alreadyMember: z.boolean(),
+  /**
+   * Whether the resolved chat is a forum supergroup (has topics). Drives the
+   * topic picker in the Add-destination UI. False for not-yet-joined private
+   * invites — the chat is unknown until the userbot joins.
+   */
+  isForum: z.boolean(),
 });
 export type ResolveDestinationResponse = z.infer<typeof resolveDestinationResponseSchema>;
 
@@ -159,11 +183,35 @@ export const updateDestinationRequestSchema = z
     name: z.string().min(1).max(80).optional(),
     chatId: telegramChatIdSchema.optional(),
     note: z.string().max(200).nullable().optional(),
+    /** Re-target the forum topic; null clears it back to General / no topic. */
+    topicId: forumTopicIdSchema.nullable().optional(),
+    topicTitle: z.string().max(200).nullable().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'at least one field must be provided',
   });
 export type UpdateDestinationRequest = z.infer<typeof updateDestinationRequestSchema>;
+
+// `POST /api/destinations/topics` — list a forum supergroup's topics so the
+// UI can offer a picker. Read-only; takes a resolved numeric chat id.
+export const listForumTopicsRequestSchema = z.object({
+  chatId: telegramChatIdSchema,
+});
+export type ListForumTopicsRequest = z.infer<typeof listForumTopicsRequestSchema>;
+
+export const forumTopicSchema = z.object({
+  /** The topic's `top_msg_id` in storage form. */
+  id: z.string(),
+  title: z.string(),
+});
+export type ForumTopic = z.infer<typeof forumTopicSchema>;
+
+export const listForumTopicsResponseSchema = z.object({
+  /** False when the chat isn't a forum — the UI then hides the picker. */
+  isForum: z.boolean(),
+  topics: z.array(forumTopicSchema),
+});
+export type ListForumTopicsResponse = z.infer<typeof listForumTopicsResponseSchema>;
 
 // --- Subscriptions ----------------------------------------------------
 
@@ -503,27 +551,76 @@ export type FilterRuleCatalogResponse = z.infer<typeof filterRuleCatalogResponse
 
 // --- Settings ---------------------------------------------------------
 
-export const settingsDtoSchema = z.object({
-  delayMs: z.number().int().positive(),
-  /**
-   * Window (ms) the album debouncer waits for additional members of a
-   * Telegram media group before forwarding. Increase on slow links where
-   * album members arrive >2 s apart and end up fragmented; lower if you
-   * want forwards to happen sooner.
-   */
-  albumDebounceMs: z.number().int().positive(),
+export const statsDigestFrequencySchema = z.enum(['daily', 'weekly']);
+export type StatsDigestFrequency = z.infer<typeof statsDigestFrequencySchema>;
+
+// 24h clock, e.g. "09:00" / "23:30".
+export const statsDigestTimeSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM (24-hour)');
+
+/** Whether a string is a time zone the runtime's Intl knows about. */
+export function isValidTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const statsDigestTimezoneSchema = z.string().min(1).refine(isValidTimeZone, {
+  message: 'invalid IANA time zone',
 });
+
+/**
+ * The five stats-digest knobs. `.catch(default)` per field means a missing OR
+ * malformed value reads back as the documented default — so this one schema
+ * doubles as the server's defensive reader for the (possibly hand-edited) DB
+ * row and as the shape that fills older settings payloads. When enabled, the
+ * bot DMs admins a forwarded/filtered/error summary once a day or week at
+ * `statsDigestTime` on the chosen day, interpreted in `statsDigestTimezone`.
+ */
+export const statsDigestSettingsSchema = z.object({
+  statsDigestEnabled: z.boolean().catch(false),
+  statsDigestFrequency: statsDigestFrequencySchema.catch('daily'),
+  /** 0 = Sunday … 6 = Saturday. Used only when frequency is 'weekly'. */
+  statsDigestDayOfWeek: z.number().int().min(0).max(6).catch(1),
+  statsDigestTime: statsDigestTimeSchema.catch('09:00'),
+  /** IANA zone the time is read in. Set automatically by the web (the
+   * operator's browser zone); 'UTC' is only the pre-first-save fallback. */
+  statsDigestTimezone: statsDigestTimezoneSchema.catch('UTC'),
+});
+export type StatsDigestSettings = z.infer<typeof statsDigestSettingsSchema>;
+
+export const settingsDtoSchema = z
+  .object({
+    delayMs: z.number().int().positive(),
+    /**
+     * Window (ms) the album debouncer waits for additional members of a
+     * Telegram media group before forwarding. Increase on slow links where
+     * album members arrive >2 s apart and end up fragmented; lower if you
+     * want forwards to happen sooner.
+     */
+    albumDebounceMs: z.number().int().positive(),
+  })
+  .merge(statsDigestSettingsSchema);
 export type SettingsDto = z.infer<typeof settingsDtoSchema>;
 
-// Both fields optional so the client can update one without overwriting the
-// other — the server merges into the existing row.
+// Every field optional so the client can update one knob without overwriting
+// the others — the server merges into the existing row.
 export const updateSettingsRequestSchema = z
   .object({
     delayMs: z.number().int().positive().optional(),
     albumDebounceMs: z.number().int().positive().optional(),
+    statsDigestEnabled: z.boolean().optional(),
+    statsDigestFrequency: statsDigestFrequencySchema.optional(),
+    statsDigestDayOfWeek: z.number().int().min(0).max(6).optional(),
+    statsDigestTime: statsDigestTimeSchema.optional(),
+    statsDigestTimezone: statsDigestTimezoneSchema.optional(),
   })
-  .refine((d) => d.delayMs !== undefined || d.albumDebounceMs !== undefined, {
-    message: 'at least one of delayMs / albumDebounceMs must be provided',
+  .refine((d) => Object.keys(d).length > 0, {
+    message: 'at least one field must be provided',
   });
 export type UpdateSettingsRequest = z.infer<typeof updateSettingsRequestSchema>;
 

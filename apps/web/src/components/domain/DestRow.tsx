@@ -1,4 +1,4 @@
-import { Pencil, Trash } from 'lucide-react';
+import { MessagesSquare, Pencil, Trash } from 'lucide-react';
 import type { DestinationDto } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
 import { EntityIcon } from '@/components/domain/EntityIcon';
@@ -29,6 +29,15 @@ export function DestRow({
           <span>
             {destination.usageCount} sub{destination.usageCount === 1 ? '' : 's'}
           </span>
+          {destination.topicTitle && (
+            <>
+              <span className="text-text-faint">·</span>
+              <span className="flex items-center gap-1 min-w-0 truncate" title="Forum topic">
+                <MessagesSquare size={11} className="flex-shrink-0" />
+                <span className="truncate">{destination.topicTitle}</span>
+              </span>
+            </>
+          )}
           {destination.note && (
             <>
               <span className="text-text-faint">·</span>

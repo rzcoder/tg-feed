@@ -28,6 +28,7 @@ import type { TelegramStatus } from '@tg-feed/shared';
 import { requireWebAuthEnv } from './api/auth.js';
 import { createApiServer } from './api/server.js';
 import { createTgFeedBot, type TgFeedBot } from './bot/bot.js';
+import { createStatsDigestScheduler } from './bot/statsDigest.js';
 import { resolvePublicUrl, resolveTelegramAuth } from './bot/botConfig.js';
 import { config } from './config.js';
 import type { Db } from './db/client.js';
@@ -47,6 +48,7 @@ import {
   type ForwardingPipeline,
 } from './forwarding/index.js';
 import { createHistoryPoller, type HistoryPoller } from './forwarding/historyPoller.js';
+import { createForwarderClient } from './forwarding/forwarderClient.js';
 import { logger } from './lib/logger.js';
 import { createPoller } from './lib/poller.js';
 import { loadEncryptionKey } from './lib/sessionCrypto.js';
@@ -54,6 +56,7 @@ import { pruneForwardLog } from './forwarding/retention.js';
 import { createSessionStore } from './api/sessionStore.js';
 import { createAccessMonitor, type AccessMonitor } from './tg/accessMonitor.js';
 import { createChatResolver, type ChatResolver } from './tg/chatResolver.js';
+import { createForumTopicLister, type ForumTopicLister } from './tg/forumTopics.js';
 import { createTelegramClient, disconnectClient, resolveTelegramEnv } from './tg/client.js';
 import { createDialogsKeepalive, type DialogsKeepalive } from './tg/dialogsKeepalive.js';
 import { createHealthMonitor, type HealthMonitor } from './tg/healthMonitor.js';
@@ -76,6 +79,7 @@ interface TelegramRuntime {
   accessMonitor?: AccessMonitor;
   joinChannel?: JoinChannelFn;
   fetchProfilePhoto?: ProfilePhotoFetcher;
+  listForumTopics?: ForumTopicLister;
   status: TelegramStatus;
 }
 
@@ -163,7 +167,12 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
     logger.warn(
       'Telegram catch-up is not available in gramjs 2.26.x; messages delivered while offline will be missed',
     );
-    const pipeline = createForwardingPipeline({ client, db, logger, bus });
+    const pipeline = createForwardingPipeline({
+      client: createForwarderClient(client),
+      db,
+      logger,
+      bus,
+    });
     const debouncer = createAlbumDebouncer({
       downstream: pipeline,
       filterEvaluator,
@@ -190,6 +199,7 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
     const importInvite = createImportInvite(client, logger);
     const joinChannel = createJoinChannel(client, logger);
     const fetchProfilePhoto = createProfilePhotoFetcher(client, logger);
+    const listForumTopics = createForumTopicLister(client, logger);
     const healthMonitor = createHealthMonitor({
       client,
       logger,
@@ -215,6 +225,7 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
       importInvite,
       joinChannel,
       fetchProfilePhoto,
+      listForumTopics,
       healthMonitor,
       accessMonitor,
       status: { state: 'connected', connected: true },
@@ -447,6 +458,7 @@ async function main(): Promise<void> {
     getImportInvite: () => tgRuntime.importInvite,
     getJoinChannel: () => tgRuntime.joinChannel,
     getFetchProfilePhoto: () => tgRuntime.fetchProfilePhoto,
+    getListForumTopics: () => tgRuntime.listForumTopics,
     getEncryptionKey: () => loadEncryptionKey(config),
     loginSessionStore,
     reloadTelegramSession,
@@ -475,6 +487,13 @@ async function main(): Promise<void> {
   // (password login still works). Started after `listen()`. `reloadBot`
   // resolves the config DB-over-env and starts the bot when one is configured.
   await reloadBot();
+
+  // Stats digest: a minute-tick scheduler that DMs admins a forwarded/
+  // filtered/error summary on the configured daily/weekly cadence. `getBot`
+  // reads the live `bot` ref so it always sees the current bot across reloads;
+  // when the digest is disabled (the default) every tick is a cheap no-op.
+  const statsDigest = createStatsDigestScheduler({ db, getBot: () => bot, logger });
+  statsDigest.start();
 
   // Background Telegram bring-up. Errors are caught inside
   // tryStartTelegram; the outer .catch is a belt-and-suspenders for any
@@ -513,6 +532,7 @@ async function main(): Promise<void> {
     logger.info({ signal }, 'shutting down');
     try {
       prunePoller.stop();
+      statsDigest.stop();
       // Let any in-flight bot reload settle before stopping the bot, so a
       // reload triggered moments before SIGTERM can't leave a poll loop running.
       if (botReloadPending) await botReloadPending.catch(() => {});

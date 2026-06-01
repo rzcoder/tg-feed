@@ -108,6 +108,32 @@ describe('createForwarder', () => {
     });
   });
 
+  it('passes topMsgId when the job targets a forum topic, omits it otherwise', async () => {
+    const sub = seedSubscription(handle);
+    const forwardMessages = vi
+      .fn<ForwarderClient['forwardMessages']>()
+      .mockResolvedValue([{ id: 999 }]);
+    const forwarder = createForwarder({
+      client: { forwardMessages },
+      db: handle.db,
+      logger,
+      bus: makeStubBus(),
+    });
+
+    await forwarder({ ...makeJob(sub, ['42']), destinationTopicId: '7' });
+    expect(forwardMessages).toHaveBeenLastCalledWith('-100DEST', {
+      messages: [42],
+      fromPeer: '-100SOURCE',
+      topMsgId: 7,
+    });
+
+    await forwarder({ ...makeJob(sub, ['43']), destinationTopicId: null });
+    expect(forwardMessages).toHaveBeenLastCalledWith('-100DEST', {
+      messages: [43],
+      fromPeer: '-100SOURCE',
+    });
+  });
+
   it('forwards an album in one call and writes one log row per source id, paired with dest ids by index', async () => {
     const sub = seedSubscription(handle);
     const forwardMessages = vi

@@ -17,6 +17,13 @@ export const telegramAccountInfoSchema = z.object({
   username: z.string().nullable(),
   phoneNumber: z.string().nullable(),
   telegramUserId: z.string().nullable(),
+  /**
+   * Account profile photo as a `data:image/jpeg;base64,...` URL, fetched
+   * lazily from the live userbot ("me") and cached. null when unavailable —
+   * no photo, not connected, or no live client. Defaulted so payloads
+   * without the field still parse.
+   */
+  avatarDataUrl: z.string().nullable().default(null),
   /** Whether `TG_SESSION_ENCRYPTION_KEY` is configured. */
   encryptionKeyConfigured: z.boolean(),
   /**

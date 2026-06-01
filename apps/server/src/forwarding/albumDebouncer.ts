@@ -84,6 +84,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
       subscriptionId: first.subscriptionId,
       sourceChatId: first.sourceChatId,
       destinationChatId: first.destinationChatId,
+      destinationTopicId: first.destinationTopicId ?? null,
       sourceMessageIds,
       rawMessage: albumRawMessage,
     };
@@ -112,6 +113,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
           subscriptionId: raw.subscriptionId,
           sourceChatId: raw.sourceChatId,
           destinationChatId: raw.destinationChatId,
+          destinationTopicId: raw.destinationTopicId ?? null,
           sourceMessageIds: [raw.sourceMessageId],
           rawMessage: raw.rawMessage ?? null,
         });

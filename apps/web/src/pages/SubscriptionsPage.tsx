@@ -9,6 +9,7 @@ import { Fab } from '@/components/ui/fab';
 import { ExpandedSubActions, SubRow } from '@/components/domain/SubRow';
 import { EmptyState } from '@/components/domain/EmptyState';
 import { SubSheet, type SubSheetSubmit } from '@/components/sheets/SubSheet';
+import { DestinationPickerSheet } from '@/components/sheets/DestinationPickerSheet';
 import { useDestinations } from '@/hooks/useDestinations';
 import { useFilterCatalog, useLibraryFilters } from '@/hooks/useFilters';
 import { useSheetState } from '@/hooks/useSheetState';
@@ -34,6 +35,22 @@ export function SubscriptionsPage() {
 
   const [openId, setOpenId] = useState<number | null>(null);
   const sheet = useSheetState<SubscriptionDto>();
+  // Subscription whose destination is being re-picked via the Forwards-to card.
+  const [destPickerSub, setDestPickerSub] = useState<SubscriptionDto | null>(null);
+
+  const pickDestination = (destinationId: number | null) => {
+    if (!destPickerSub) return;
+    updateMut.mutate(
+      { id: destPickerSub.id, body: { destinationId } },
+      {
+        onSuccess: () => {
+          toast.show('Destination updated');
+          setDestPickerSub(null);
+        },
+        onError: (err) => toast.show(apiErrorMessage(err, 'Failed to update destination')),
+      },
+    );
+  };
 
   const submit = (data: SubSheetSubmit) => {
     if (sheet.mode === 'edit' && sheet.initial) {
@@ -127,6 +144,7 @@ export function SubscriptionsPage() {
                     destinations={dests.data ?? []}
                     library={library.data ?? []}
                     onEdit={() => sheet.openEdit(s)}
+                    onPickDestination={() => setDestPickerSub(s)}
                     onViewFilters={() => goToFilters(s)}
                     onDelete={() => onDelete(s)}
                   />
@@ -149,6 +167,14 @@ export function SubscriptionsPage() {
         onClose={sheet.close}
         onSubmit={submit}
         submitting={createMut.isPending || updateMut.isPending}
+      />
+      <DestinationPickerSheet
+        open={destPickerSub !== null}
+        currentDestinationId={destPickerSub?.destinationId ?? null}
+        destinations={dests.data ?? []}
+        onClose={() => setDestPickerSub(null)}
+        onPick={pickDestination}
+        submitting={updateMut.isPending}
       />
     </div>
   );

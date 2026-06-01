@@ -35,6 +35,7 @@ import type { EventBus } from '../events/bus.js';
 import type { FilterRegistry } from '../filters/registry.js';
 import type { Logger } from '../lib/logger.js';
 import type { ChatResolver } from '../tg/chatResolver.js';
+import type { ForumTopicLister } from '../tg/forumTopics.js';
 import type { ImportInviteFn } from '../tg/inviteResolver.js';
 import type { JoinChannelFn } from '../tg/joinChannel.js';
 import type { LoginSessionStore } from '../tg/loginSession.js';
@@ -127,6 +128,11 @@ export interface CreateApiServerDeps {
    * monitor's lazy backfill catches them.
    */
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
+  /**
+   * Lazy lookup for the forum-topic lister backing `POST /destinations/topics`.
+   * Same lifecycle as `getChatResolver`.
+   */
+  getListForumTopics?: () => ForumTopicLister | undefined;
   /**
    * Live getter for the Telegram subsystem state. Surfaced via
    * `GET /api/system/status` so the web UI can warn the operator when
@@ -223,6 +229,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
     getImportInvite,
     getJoinChannel,
     getFetchProfilePhoto,
+    getListForumTopics,
   } = deps;
   const getTelegramStatus =
     deps.getTelegramStatus ?? ((): TelegramStatus => DEFAULT_TELEGRAM_STATUS);
@@ -362,6 +369,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
         ...(getChatResolver !== undefined ? { getChatResolver } : {}),
         ...(getImportInvite !== undefined ? { getImportInvite } : {}),
         ...(getFetchProfilePhoto !== undefined ? { getFetchProfilePhoto } : {}),
+        ...(getListForumTopics !== undefined ? { getListForumTopics } : {}),
       });
       registerLibraryFilterRoutes(authedScope, { db });
       registerSubscriptionRoutes(authedScope, {
@@ -401,6 +409,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
           ? { reloadTelegramSession: deps.reloadTelegramSession }
           : {}),
         getTelegramStatus,
+        ...(getFetchProfilePhoto !== undefined ? { getFetchProfilePhoto } : {}),
       });
       registerBotConfigRoutes(authedScope, {
         cfg,

@@ -33,6 +33,7 @@ export function attachNewMessageListener(
         handle: subscriptions.handle,
         destinationId: subscriptions.destinationId,
         destinationChatId: destinations.chatId,
+        destinationTopicId: destinations.topicId,
         enabled: subscriptions.enabled,
         createdAt: subscriptions.createdAt,
       })
@@ -64,6 +65,7 @@ export function attachNewMessageListener(
       subscriptionId: matched.id,
       sourceChatId: matched.sourceChatId,
       destinationChatId: matched.destinationChatId,
+      destinationTopicId: matched.destinationTopicId,
       sourceMessageId: matchable.messageId,
       text: matchable.text,
       hasMedia: matchable.hasMedia,

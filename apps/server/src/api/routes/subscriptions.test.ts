@@ -464,6 +464,7 @@ describe('POST /api/subscriptions/resolve', () => {
       handle: '@anthropic_ai',
       inviteHash: null,
       alreadyMember: true,
+      isForum: false,
     });
     const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();
@@ -492,6 +493,7 @@ describe('POST /api/subscriptions/resolve', () => {
       handle: null,
       inviteHash: 'LtdmkRfh24oxZjYy',
       alreadyMember: false,
+      isForum: false,
     });
     const testApp = await buildTestApp({ chatResolver: resolver });
     const cookie = await testApp.loginAndGetCookie();

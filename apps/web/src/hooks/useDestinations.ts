@@ -3,12 +3,14 @@ import {
   createDestination,
   deleteDestination,
   listDestinations,
+  listForumTopics,
   resolveDestination,
   updateDestination,
 } from '@/api/destinationsApi';
 import type {
   CreateDestinationRequest,
   DestinationDto,
+  ListForumTopicsResponse,
   ResolveDestinationResponse,
   UpdateDestinationRequest,
 } from '@tg-feed/shared';
@@ -50,5 +52,19 @@ export function useDeleteDestination() {
 export function useResolveDestination() {
   return useMutation<ResolveDestinationResponse, Error, string>({
     mutationFn: resolveDestination,
+  });
+}
+
+/**
+ * Lists a forum chat's topics for the destination picker. Enabled only once
+ * we know the chat is a forum (and have its id), so non-forum destinations
+ * never trigger the lookup. Keyed by chatId so switching chats refetches.
+ */
+export function useForumTopics(chatId: string | null, enabled: boolean) {
+  return useQuery<ListForumTopicsResponse>({
+    queryKey: ['forum-topics', chatId],
+    queryFn: () => listForumTopics(chatId!),
+    enabled: enabled && !!chatId,
+    staleTime: 60_000,
   });
 }

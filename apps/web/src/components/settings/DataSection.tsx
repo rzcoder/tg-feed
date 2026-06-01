@@ -16,7 +16,7 @@
  * call joinChannel; the access monitor's sweep refreshes status afterwards.
  */
 import { useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, Download, Trash, Upload, X } from 'lucide-react';
+import { AlertTriangle, Check, Database, Download, Trash, Upload, X } from 'lucide-react';
 import {
   EXPORT_SECTIONS,
   WIPE_SECTIONS,
@@ -33,6 +33,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/cn';
+import { CardFooter, CardHeader, SettingsCard } from './primitives';
 import { useDestinations } from '@/hooks/useDestinations';
 import { useExportData, useImportData, useWipeData } from '@/hooks/useExportImport';
 import { useLibraryFilters } from '@/hooks/useFilters';
@@ -64,38 +65,41 @@ export function DataSection() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-[var(--radius)] border border-border bg-surface p-4 flex flex-col gap-3">
-        <div className="flex flex-col gap-px">
-          <div className="text-[13px] font-medium tracking-tight">Import / Export</div>
-          <div className="text-[11.5px] text-text-muted leading-tight">
+      <SettingsCard>
+        <CardHeader icon={<Database size={14} />} title="Import / Export" />
+        <div className="p-4">
+          <p className="text-[12px] text-text-muted leading-relaxed">
             Back up or transfer your configuration as a versioned JSON file.
-          </div>
+          </p>
         </div>
-        <div className="flex justify-end gap-2">
+        <CardFooter>
           <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
             <Upload size={14} /> Import…
           </Button>
           <Button variant="secondary" size="sm" onClick={() => setExportOpen(true)}>
             <Download size={14} /> Export…
           </Button>
-        </div>
-      </div>
+        </CardFooter>
+      </SettingsCard>
 
-      <div className="rounded-[var(--radius)] border border-danger/30 bg-danger-soft/40 p-4 flex flex-col gap-3">
-        <div className="flex flex-col gap-px">
-          <div className="text-[13px] font-medium tracking-tight text-danger inline-flex items-center gap-1.5">
-            <AlertTriangle size={13} className="text-danger" /> Danger zone
-          </div>
-          <div className="text-[11.5px] text-text-muted leading-tight">
-            Bulk-delete subscriptions, destinations, or library filters. Cannot be undone.
-          </div>
+      <SettingsCard className="border-danger/30">
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-danger/20 bg-danger-soft/40">
+          <span className="grid place-items-center w-[26px] h-[26px] rounded-[7px] bg-danger-soft text-danger border border-danger/30 flex-shrink-0">
+            <AlertTriangle size={14} />
+          </span>
+          <span className="text-[14px] font-semibold tracking-tight text-danger">Danger zone</span>
         </div>
-        <div className="flex justify-end">
+        <div className="p-4">
+          <p className="text-[12px] text-text-muted leading-relaxed">
+            Bulk-delete subscriptions, destinations, or library filters. Cannot be undone.
+          </p>
+        </div>
+        <CardFooter>
           <Button variant="danger" size="sm" onClick={() => setWipeOpen(true)}>
             <Trash size={14} /> Delete data…
           </Button>
-        </div>
-      </div>
+        </CardFooter>
+      </SettingsCard>
 
       <ExportSheet open={exportOpen} onClose={() => setExportOpen(false)} />
       <ImportSheet open={importOpen} onClose={() => setImportOpen(false)} />

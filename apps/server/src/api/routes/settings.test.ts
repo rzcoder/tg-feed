@@ -10,6 +10,16 @@ import {
 } from '../../forwarding/throttle.js';
 import { buildTestApp, type TestApp } from '../testing.js';
 
+// Digest knobs share the 'global' row and the GET/PUT responses now carry
+// them; absent stored fields read back as these documented defaults.
+const DIGEST_DEFAULTS = {
+  statsDigestEnabled: false,
+  statsDigestFrequency: 'daily',
+  statsDigestDayOfWeek: 1,
+  statsDigestTime: '09:00',
+  statsDigestTimezone: 'UTC',
+} as const;
+
 describe('settings routes', () => {
   let testApp: TestApp;
   let cookie: string;
@@ -32,6 +42,7 @@ describe('settings routes', () => {
     expect(res.json()).toEqual({
       delayMs: DEFAULT_DELAY_MS,
       albumDebounceMs: DEFAULT_ALBUM_DEBOUNCE_MS,
+      ...DIGEST_DEFAULTS,
     });
   });
 
@@ -46,6 +57,7 @@ describe('settings routes', () => {
     expect(res.json()).toEqual({
       delayMs: 5000,
       albumDebounceMs: DEFAULT_ALBUM_DEBOUNCE_MS,
+      ...DIGEST_DEFAULTS,
     });
 
     const row = testApp.db
@@ -53,7 +65,11 @@ describe('settings routes', () => {
       .from(appSettings)
       .where(eq(appSettings.key, GLOBAL_SETTINGS_KEY))
       .get();
-    expect(row?.value).toEqual({ delayMs: 5000, albumDebounceMs: DEFAULT_ALBUM_DEBOUNCE_MS });
+    expect(row?.value).toEqual({
+      delayMs: 5000,
+      albumDebounceMs: DEFAULT_ALBUM_DEBOUNCE_MS,
+      ...DIGEST_DEFAULTS,
+    });
   });
 
   it('PUT /api/settings upserts when row already exists', async () => {
@@ -69,7 +85,7 @@ describe('settings routes', () => {
       payload: { delayMs: 12000 },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ delayMs: 12000, albumDebounceMs: 2000 });
+    expect(res.json()).toEqual({ delayMs: 12000, albumDebounceMs: 2000, ...DIGEST_DEFAULTS });
   });
 
   it('PUT merges: updating one knob preserves the other', async () => {
@@ -92,7 +108,7 @@ describe('settings routes', () => {
       url: '/api/settings',
       headers: { cookie },
     });
-    expect(res.json()).toEqual({ delayMs: 9000, albumDebounceMs: 3500 });
+    expect(res.json()).toEqual({ delayMs: 9000, albumDebounceMs: 3500, ...DIGEST_DEFAULTS });
   });
 
   it('PUT /api/settings accepts albumDebounceMs alone', async () => {
@@ -106,6 +122,7 @@ describe('settings routes', () => {
     expect(res.json()).toEqual({
       delayMs: DEFAULT_DELAY_MS,
       albumDebounceMs: 4000,
+      ...DIGEST_DEFAULTS,
     });
   });
 
@@ -121,7 +138,7 @@ describe('settings routes', () => {
       url: '/api/settings',
       headers: { cookie },
     });
-    expect(res.json()).toEqual({ delayMs: 7777, albumDebounceMs: 1500 });
+    expect(res.json()).toEqual({ delayMs: 7777, albumDebounceMs: 1500, ...DIGEST_DEFAULTS });
   });
 
   it('after PUT, getGlobalDelayMs and getAlbumDebounceMs reflect the new value', async () => {
@@ -161,6 +178,85 @@ describe('settings routes', () => {
       url: '/api/settings',
       headers: { cookie },
       payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('PUT persists digest fields and GET reflects them', async () => {
+    const res = await testApp.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie },
+      payload: {
+        statsDigestEnabled: true,
+        statsDigestFrequency: 'weekly',
+        statsDigestDayOfWeek: 3,
+        statsDigestTime: '18:30',
+        statsDigestTimezone: 'Europe/Berlin',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const get = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie },
+    });
+    expect(get.json()).toEqual({
+      delayMs: DEFAULT_DELAY_MS,
+      albumDebounceMs: DEFAULT_ALBUM_DEBOUNCE_MS,
+      statsDigestEnabled: true,
+      statsDigestFrequency: 'weekly',
+      statsDigestDayOfWeek: 3,
+      statsDigestTime: '18:30',
+      statsDigestTimezone: 'Europe/Berlin',
+    });
+  });
+
+  it('PUT digest fields and throttle knobs do not clobber each other', async () => {
+    await testApp.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie },
+      payload: { delayMs: 6000, albumDebounceMs: 1500 },
+    });
+    await testApp.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie },
+      payload: { statsDigestEnabled: true, statsDigestTime: '07:15' },
+    });
+    const get = await testApp.app.inject({
+      method: 'GET',
+      url: '/api/settings',
+      headers: { cookie },
+    });
+    expect(get.json()).toEqual({
+      delayMs: 6000,
+      albumDebounceMs: 1500,
+      statsDigestEnabled: true,
+      statsDigestFrequency: 'daily',
+      statsDigestDayOfWeek: 1,
+      statsDigestTime: '07:15',
+      statsDigestTimezone: 'UTC',
+    });
+  });
+
+  it('PUT rejects a malformed digest time', async () => {
+    const res = await testApp.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie },
+      payload: { statsDigestTime: '25:00' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('PUT rejects an invalid time zone', async () => {
+    const res = await testApp.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: { cookie },
+      payload: { statsDigestTimezone: 'Not/AZone' },
     });
     expect(res.statusCode).toBe(400);
   });

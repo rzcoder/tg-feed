@@ -24,6 +24,7 @@ import {
   getAlbumDebounceMs,
   getGlobalDelayMs,
 } from '../../forwarding/throttle.js';
+import { getStatsDigestConfig } from '../../forwarding/statsDigestConfig.js';
 
 export interface RegisterSettingsDeps {
   db: Db;
@@ -33,9 +34,15 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RegisterSetti
   const { db } = deps;
 
   app.get('/settings', async () => {
+    const digest = getStatsDigestConfig(db);
     const response: SettingsDto = {
       delayMs: getGlobalDelayMs(db),
       albumDebounceMs: getAlbumDebounceMs(db),
+      statsDigestEnabled: digest.enabled,
+      statsDigestFrequency: digest.frequency,
+      statsDigestDayOfWeek: digest.dayOfWeek,
+      statsDigestTime: digest.time,
+      statsDigestTimezone: digest.timezone,
     };
     return response;
   });
@@ -43,11 +50,18 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RegisterSetti
   app.put('/settings', async (request) => {
     const body = updateSettingsRequestSchema.parse(request.body);
     // Merge: read current values (with defaults for missing/malformed rows),
-    // overlay any fields the client supplied, write the unified row back.
-    // Keeps callers that only know about one knob from clobbering the other.
+    // overlay any fields the client supplied, write the unified row back. The
+    // throttle and digest knobs share this one row, so the merge keeps a
+    // caller that only knows about one of them from clobbering the others.
+    const digest = getStatsDigestConfig(db);
     const merged = {
       delayMs: body.delayMs ?? getGlobalDelayMs(db),
       albumDebounceMs: body.albumDebounceMs ?? getAlbumDebounceMs(db),
+      statsDigestEnabled: body.statsDigestEnabled ?? digest.enabled,
+      statsDigestFrequency: body.statsDigestFrequency ?? digest.frequency,
+      statsDigestDayOfWeek: body.statsDigestDayOfWeek ?? digest.dayOfWeek,
+      statsDigestTime: body.statsDigestTime ?? digest.time,
+      statsDigestTimezone: body.statsDigestTimezone ?? digest.timezone,
     };
     db.insert(appSettings)
       .values({ key: GLOBAL_SETTINGS_KEY, value: merged })

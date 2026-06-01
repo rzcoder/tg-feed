@@ -128,7 +128,9 @@ describe('system export/import/wipe routes', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as ExportFile;
-    expect(body.destinations).toEqual([{ name: 'main', chatId: '-1001000000001', note: null }]);
+    expect(body.destinations).toEqual([
+      { name: 'main', chatId: '-1001000000001', note: null, topicId: null, topicTitle: null },
+    ]);
     expect(body.libraryFilters).toHaveLength(1);
     expect(body.libraryFilters![0]).toMatchObject({
       name: 'short',
@@ -290,6 +292,34 @@ describe('system export/import/wipe routes', () => {
     const result = res.json() as ImportResult;
     expect(result.destinations.created).toBe(1);
     expect(testApp.db.select().from(destinations).all()).toHaveLength(2);
+  });
+
+  it('POST /api/system/import round-trips a destination forum topic', async () => {
+    const data: ExportFile = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: '2026-05-10T00:00:00.000Z',
+      appVersion: '0.1.0',
+      destinations: [
+        {
+          name: 'forum',
+          chatId: '-1001000000001',
+          note: null,
+          topicId: '42',
+          topicTitle: 'Releases',
+        },
+      ],
+    };
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/import',
+      headers: { cookie },
+      payload: { sections: ['destinations'], conflictStrategy: 'skip', data },
+    });
+    expect((res.json() as ImportResult).destinations.created).toBe(1);
+    expect(testApp.db.select().from(destinations).all()[0]).toMatchObject({
+      topicId: '42',
+      topicTitle: 'Releases',
+    });
   });
 
   // --- Import: warnings ----------------------------------------------------
@@ -457,6 +487,60 @@ describe('system export/import/wipe routes', () => {
       .where(eq(appSettings.key, GLOBAL_SETTINGS_KEY))
       .get();
     expect((row!.value as { delayMs: number }).delayMs).toBe(12000);
+  });
+
+  it('round-trips the stats-digest schedule and import merges instead of clobbering it', async () => {
+    testApp.db
+      .insert(appSettings)
+      .values({
+        key: GLOBAL_SETTINGS_KEY,
+        value: {
+          delayMs: 8000,
+          albumDebounceMs: 2000,
+          statsDigestEnabled: true,
+          statsDigestFrequency: 'weekly',
+          statsDigestDayOfWeek: 3,
+          statsDigestTime: '18:30',
+          statsDigestTimezone: 'Europe/Berlin',
+        },
+      })
+      .run();
+
+    // Export carries the digest fields.
+    const exp = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/export',
+      headers: { cookie },
+      payload: { sections: ['appSettings'] },
+    });
+    const exported = exp.json() as { appSettings: Record<string, unknown> };
+    expect(exported.appSettings.statsDigestEnabled).toBe(true);
+    expect(exported.appSettings.statsDigestFrequency).toBe('weekly');
+    expect(exported.appSettings.statsDigestTime).toBe('18:30');
+
+    // Importing an older file with no digest fields must NOT wipe the schedule.
+    const data: ExportFile = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: '2026-05-10T00:00:00.000Z',
+      appVersion: '0.1.0',
+      appSettings: { delayMs: 9000, albumDebounceMs: 2500 },
+    };
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/import',
+      headers: { cookie },
+      payload: { sections: ['appSettings'], conflictStrategy: 'replace', data },
+    });
+    expect(res.statusCode).toBe(200);
+    const row = testApp.db
+      .select()
+      .from(appSettings)
+      .where(eq(appSettings.key, GLOBAL_SETTINGS_KEY))
+      .get();
+    const value = row!.value as Record<string, unknown>;
+    expect(value.delayMs).toBe(9000); // imported field applied
+    expect(value.statsDigestEnabled).toBe(true); // digest preserved via merge
+    expect(value.statsDigestFrequency).toBe('weekly');
   });
 
   // --- Wipe ---------------------------------------------------------------

@@ -11,6 +11,11 @@
  */
 import { z } from 'zod';
 import {
+  statsDigestFrequencySchema,
+  statsDigestTimeSchema,
+  statsDigestTimezoneSchema,
+} from './api.js';
+import {
   filterModeSchema,
   hasMediaParamsSchema,
   minLengthParamsSchema,
@@ -33,6 +38,9 @@ export const exportedDestinationSchema = z.object({
   name: z.string().min(1).max(80),
   chatId: z.string().min(1).max(64),
   note: z.string().max(200).nullable().optional(),
+  /** Forum topic routing; null/omitted for General / non-forum chats. */
+  topicId: z.string().min(1).max(19).nullable().optional(),
+  topicTitle: z.string().max(200).nullable().optional(),
 });
 export type ExportedDestination = z.infer<typeof exportedDestinationSchema>;
 
@@ -180,6 +188,16 @@ export const exportedAppSettingsSchema = z.object({
    * match this row's, emit a warning and skip just the account write.
    */
   telegramAccount: exportedTelegramAccountSchema.optional(),
+  /**
+   * Optional v3 addition: the stats-digest schedule. Each field is optional
+   * so older files omit them; the importer merges only the present fields
+   * onto the existing `global` row, never clobbering an unspecified one.
+   */
+  statsDigestEnabled: z.boolean().optional(),
+  statsDigestFrequency: statsDigestFrequencySchema.optional(),
+  statsDigestDayOfWeek: z.number().int().min(0).max(6).optional(),
+  statsDigestTime: statsDigestTimeSchema.optional(),
+  statsDigestTimezone: statsDigestTimezoneSchema.optional(),
 });
 export type ExportedAppSettings = z.infer<typeof exportedAppSettingsSchema>;
 

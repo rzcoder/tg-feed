@@ -21,6 +21,8 @@ export interface ChatResolveResult {
   handle: string | null;
   inviteHash: string | null;
   alreadyMember: boolean;
+  /** True when the resolved chat is a forum supergroup (has topics). */
+  isForum: boolean;
 }
 
 export type ChatResolver = (input: string) => Promise<ChatResolveResult>;
@@ -62,6 +64,9 @@ export function createChatResolver(client: ChatResolverClient): ChatResolver {
         handle: null,
         inviteHash: parsed.hash,
         alreadyMember: preview.alreadyMember,
+        // The chat isn't joined yet, so its forum status is unknown — the
+        // user sets the topic later via the edit sheet once joined.
+        isForum: false,
       };
     }
 
@@ -79,6 +84,7 @@ export function createChatResolver(client: ChatResolverClient): ChatResolver {
         handle: resolved.handle,
         inviteHash: null,
         alreadyMember: true,
+        isForum: (entity as { forum?: boolean }).forum === true,
       };
     }
 
@@ -96,6 +102,7 @@ export function createChatResolver(client: ChatResolverClient): ChatResolver {
       firstName?: string;
       lastName?: string;
       username?: string;
+      forum?: boolean;
     };
     const fullName = [e.firstName, e.lastName].filter(Boolean).join(' ').trim();
     const title = e.title ?? (fullName !== '' ? fullName : parsed.value);
@@ -105,6 +112,7 @@ export function createChatResolver(client: ChatResolverClient): ChatResolver {
       handle: e.username ? `@${e.username}` : null,
       inviteHash: null,
       alreadyMember: true,
+      isForum: e.forum === true,
     };
   };
 }

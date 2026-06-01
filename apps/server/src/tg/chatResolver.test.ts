@@ -29,8 +29,24 @@ describe('createChatResolver', () => {
       handle: '@anthropic_ai',
       inviteHash: null,
       alreadyMember: true,
+      isForum: false,
     });
     expect(getEntity).toHaveBeenCalledWith('anthropic_ai');
+  });
+
+  it('handle path: reports isForum when the resolved channel is a forum', async () => {
+    const getEntity = vi.fn().mockResolvedValue({
+      id: { toString: () => '1234567890' },
+      title: 'Forum Group',
+      username: 'forum_group',
+      className: 'Channel',
+      forum: true,
+    });
+    const resolver = createChatResolver(
+      makeStub({ getEntity: getEntity as unknown as ChatResolverClient['getEntity'] }),
+    );
+    const result = await resolver('https://t.me/forum_group');
+    expect(result.isForum).toBe(true);
   });
 
   it('chatId path: uses input as the storage id, fills title from getEntity', async () => {
@@ -68,6 +84,7 @@ describe('createChatResolver', () => {
       handle: null,
       inviteHash: 'LtdmkRfh24oxZjYy',
       alreadyMember: true,
+      isForum: false,
     });
   });
 
