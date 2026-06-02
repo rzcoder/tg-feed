@@ -50,6 +50,13 @@ you manage subscriptions, attach filters, and watch activity live from your phon
   `pnpm tg:login` + env, or sign in by phone number right on the Settings page (stored
   encrypted in the DB).
 
+## Quickstart — Docker
+
+```bash
+cp .env.example .env          # fill values
+docker compose up -d --build
+```
+
 ## Concepts
 
 - **Subscription** — a _source_ channel/chat plus an optional _destination_ and a set of
@@ -59,13 +66,15 @@ you manage subscriptions, attach filters, and watch activity live from your phon
 - **Filter** — a single rule (e.g. "text contains X") in include or exclude mode. Inline
   filters belong to one subscription; library filters are reusable across many.
 
-## Requirements
+## Quickstart — local dev
+
+### Requirements
 
 - Node.js ≥ 20 (tested on 24.x)
 - pnpm ≥ 10
 - Docker (for production run)
 
-## Quickstart — local dev
+### Local launch
 
 ```bash
 pnpm install
@@ -81,8 +90,37 @@ pnpm tg:login                 # interactive: phone → code → 2FA → prints s
 pnpm dev                      # boots server + web in parallel
 ```
 
+### Scripts
+
+| Script                              | What it does                               |
+| ----------------------------------- | ------------------------------------------ |
+| `pnpm dev`                          | Run all workspaces in dev mode in parallel |
+| `pnpm build`                        | Build all workspaces                       |
+| `pnpm test`                         | Run Vitest across all workspaces           |
+| `pnpm test:watch`                   | Vitest watch mode                          |
+| `pnpm lint` / `pnpm lint:fix`       | ESLint                                     |
+| `pnpm format` / `pnpm format:check` | Prettier                                   |
+| `pnpm typecheck`                    | `tsc --noEmit` in every workspace          |
+
 > `pnpm tg:login` reads `TG_API_ID` / `TG_API_HASH` from `.env` if present and prompts
 > for them otherwise. Run it on the **forwarding account** — not your main one.
+
+## Configuration
+
+Configuration comes from environment variables — see [.env.example](.env.example) for the
+full annotated list (Telegram credentials, web auth, optional bot, port, DB path).
+
+Some settings can also be managed from the web UI's **Settings** page, which stores them in
+the database. **A value set there takes priority over the matching env var** and applies
+without restarting:
+
+- **Telegram account** (Settings → Telegram account) — sign in by phone instead of setting
+  `TG_SESSION_STRING`.
+- **Bot** (Settings → Bot) — bot token, admin allowlist (added by `@username` lookup), and
+  public URL, instead of `TG_BOT_TOKEN` / `TG_BOT_ADMIN_IDS` / `PUBLIC_URL`.
+
+Storing a secret from the UI (the forwarding session or the bot token) requires
+`TG_SESSION_ENCRYPTION_KEY` to be set — it encrypts them at rest.
 
 ## Connecting the forwarding account
 
@@ -105,46 +143,10 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"
 When a DB-stored account is present it takes precedence over `TG_SESSION_STRING`. Without
 the encryption key the app stays env-only and won't persist an account from the UI.
 
-## Quickstart — Docker
-
-```bash
-cp .env.example .env          # fill values
-docker compose up -d --build
-```
-
 The image runs the server and serves the built web UI on a single port. Each GitHub
 release also publishes a prebuilt multi-arch image to
 `ghcr.io/rzcoder/tg-feed` — point `compose.yaml` at `ghcr.io/rzcoder/tg-feed:latest` to
 run it without a local build.
-
-## Configuration
-
-Configuration comes from environment variables — see [.env.example](.env.example) for the
-full annotated list (Telegram credentials, web auth, optional bot, port, DB path).
-
-Some settings can also be managed from the web UI's **Settings** page, which stores them in
-the database. **A value set there takes priority over the matching env var** and applies
-without restarting:
-
-- **Telegram account** (Settings → Telegram account) — sign in by phone instead of setting
-  `TG_SESSION_STRING`.
-- **Bot** (Settings → Bot) — bot token, admin allowlist (added by `@username` lookup), and
-  public URL, instead of `TG_BOT_TOKEN` / `TG_BOT_ADMIN_IDS` / `PUBLIC_URL`.
-
-Storing a secret from the UI (the forwarding session or the bot token) requires
-`TG_SESSION_ENCRYPTION_KEY` to be set — it encrypts them at rest.
-
-## Scripts
-
-| Script                              | What it does                               |
-| ----------------------------------- | ------------------------------------------ |
-| `pnpm dev`                          | Run all workspaces in dev mode in parallel |
-| `pnpm build`                        | Build all workspaces                       |
-| `pnpm test`                         | Run Vitest across all workspaces           |
-| `pnpm test:watch`                   | Vitest watch mode                          |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint                                     |
-| `pnpm format` / `pnpm format:check` | Prettier                                   |
-| `pnpm typecheck`                    | `tsc --noEmit` in every workspace          |
 
 ## Telegram Web App bot (optional)
 
@@ -179,15 +181,7 @@ would. Telegram requires **HTTPS** for Mini Apps — front the server with a TLS
 reverse proxy (see `compose.yaml` notes). Leave `TG_BOT_TOKEN` / `TG_BOT_ADMIN_IDS` blank
 to disable the bot entirely (password-only).
 
-## Layout
-
-```
-apps/server     # Telegram client + Fastify API + SSE
-apps/web        # React SPA
-packages/shared # DTOs, zod schemas, cross-net types
-Dockerfile      # production image (server + built web UI)
-compose.yaml    # Docker Compose for production
-```
+## Contributing
 
 To set up a dev environment and contribute, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
