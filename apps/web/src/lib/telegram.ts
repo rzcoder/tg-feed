@@ -1,19 +1,11 @@
-/**
- * Telegram Mini App helpers.
- *
- * The Telegram SDK script (loaded in index.html) injects
- * `window.Telegram.WebApp` when the page runs inside a Telegram client. These
- * read the signed `initData` string (posted to `/api/auth/telegram`) and the
- * color scheme, and drive the viewport lifecycle. Outside Telegram the global
- * is absent and the getters return null.
- */
+// Telegram Mini App helpers. The SDK injects window.Telegram.WebApp inside a Telegram client; outside it the global is absent and getters return null.
 
 interface TelegramWebApp {
-  /** Signed init payload. Empty string when not launched from Telegram. */
+  // Empty string when not launched from Telegram.
   initData: string;
-  /** Signals to Telegram that the app is ready to be shown. */
+  // UNVERIFIED — cosmetic hints only, never for authorization (use signed initData server-side).
+  initDataUnsafe?: { user?: { id: number } };
   ready: () => void;
-  /** Expands the Mini App to full height. */
   expand: () => void;
   colorScheme?: 'light' | 'dark';
 }
@@ -35,27 +27,23 @@ export function getTelegramWebApp(): TelegramWebApp | null {
   return window.Telegram?.WebApp ?? null;
 }
 
-/**
- * The signed initData string, or null when not running inside Telegram (the
- * SDK leaves `initData` as an empty string outside a Telegram client).
- */
 export function getTelegramInitData(): string | null {
   const webApp = getTelegramWebApp();
   if (!webApp || !webApp.initData) return null;
   return webApp.initData;
 }
 
-/** True when the app is being rendered inside a Telegram client. */
 export function isInsideTelegram(): boolean {
   return getTelegramInitData() !== null;
 }
 
-/**
- * Best-effort detection of a Telegram launch that works BEFORE the (async)
- * SDK script has populated `window.Telegram.WebApp`. Native clients expose
- * `TelegramWebviewProxy`; web clients put the launch params in the URL hash
- * as `tgWebAppData`. Used to decide whether it's worth waiting for the SDK.
- */
+// From unverified initDataUnsafe — cosmetic hints only, never authorization.
+export function getTelegramUserId(): string | null {
+  const id = getTelegramWebApp()?.initDataUnsafe?.user?.id;
+  return typeof id === 'number' ? String(id) : null;
+}
+
+// Detects a launch BEFORE the async SDK populates window.Telegram.WebApp (via TelegramWebviewProxy or the tgWebAppData hash).
 export function detectTelegramLaunch(): boolean {
   if (typeof window === 'undefined') return false;
   if (getTelegramInitData() !== null) return true;
@@ -63,12 +51,7 @@ export function detectTelegramLaunch(): boolean {
   return window.location.hash.includes('tgWebAppData');
 }
 
-/**
- * Resolve the signed initData. Returns it immediately when already present,
- * null when this isn't a Telegram launch, or — when it is a launch but the
- * async SDK hasn't populated it yet — polls every `intervalMs` up to
- * `timeoutMs` before falling back to null.
- */
+// Resolves initData now if present, null if not a launch, else polls up to timeoutMs while the async SDK populates it.
 export function waitForTelegramInitData(timeoutMs = 3000, intervalMs = 50): Promise<string | null> {
   const immediate = getTelegramInitData();
   if (immediate) return Promise.resolve(immediate);
@@ -85,20 +68,13 @@ export function waitForTelegramInitData(timeoutMs = 3000, intervalMs = 50): Prom
   });
 }
 
-/**
- * Telegram's current light/dark scheme, or null when not in Telegram / the
- * SDK isn't loaded. Lets the app's `system` theme preference follow the
- * surrounding Telegram chrome instead of the OS `prefers-color-scheme`.
- */
+// Lets the `system` theme follow Telegram chrome instead of OS prefers-color-scheme.
 export function getTelegramColorScheme(): 'light' | 'dark' | null {
   const scheme = getTelegramWebApp()?.colorScheme;
   return scheme === 'light' || scheme === 'dark' ? scheme : null;
 }
 
-/**
- * Tell Telegram the Mini App is ready and expand it to full height. Safe to
- * call unconditionally — a no-op outside Telegram.
- */
+// No-op outside Telegram, safe to call unconditionally.
 export function initTelegramViewport(): void {
   const webApp = getTelegramWebApp();
   if (!webApp) return;
@@ -106,6 +82,6 @@ export function initTelegramViewport(): void {
     webApp.ready();
     webApp.expand();
   } catch {
-    // SDK present but a call failed (old client). Non-fatal.
+    // Non-fatal: SDK present but a call failed (old client).
   }
 }
