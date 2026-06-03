@@ -18,13 +18,6 @@ don't admin — into a destination of your choice, with per-source filter rules.
 dedicated forwarding account (userbot) reads the source via MTProto; a small web UI lets
 you manage subscriptions, attach filters, and watch activity live from your phone.
 
-- **Server** — gramjs (MTProto) client + Fastify API + SSE, runs on a dedicated forwarding
-  Telegram account separate from your main one.
-- **Web** — Vite + React + Tailwind + shadcn/ui SPA for managing subscriptions, attaching
-  parameterised filter rules, configuring throttle/delay, and watching live activity.
-- **DB** — SQLite (better-sqlite3 + drizzle-orm).
-- **Monorepo** — pnpm workspaces; shared types in `packages/shared`.
-
 > [!WARNING]
 > Automating a user account over MTProto is against Telegram's Terms of Service and can
 > get the account limited or banned. Run this **only** on a dedicated throwaway forwarding
@@ -50,13 +43,6 @@ you manage subscriptions, attach filters, and watch activity live from your phon
   `pnpm tg:login` + env, or sign in by phone number right on the Settings page (stored
   encrypted in the DB).
 
-## Quickstart — Docker
-
-```bash
-cp .env.example .env          # fill values
-docker compose up -d --build
-```
-
 ## Concepts
 
 - **Subscription** — a _source_ channel/chat plus an optional _destination_ and a set of
@@ -65,6 +51,13 @@ docker compose up -d --build
   destination is saved but stays inactive.
 - **Filter** — a single rule (e.g. "text contains X") in include or exclude mode. Inline
   filters belong to one subscription; library filters are reusable across many.
+
+## Quickstart — Docker
+
+```bash
+cp .env.example .env          # fill values
+docker compose up -d --build
+```
 
 ## Quickstart — local dev
 
@@ -180,6 +173,14 @@ the user against `TG_BOT_ADMIN_IDS` before minting the same session a password l
 would. Telegram requires **HTTPS** for Mini Apps — front the server with a TLS-terminating
 reverse proxy (see `compose.yaml` notes). Leave `TG_BOT_TOKEN` / `TG_BOT_ADMIN_IDS` blank
 to disable the bot entirely (password-only).
+
+## Tech stack
+
+- **Server** — gramjs (MTProto) client + Fastify API + SSE.
+- **Web** — Vite + React + Tailwind + shadcn/ui SPA for managing subscriptions, attaching
+  parameterised filter rules, configuring throttle/delay, and watching live activity.
+- **DB** — SQLite (better-sqlite3 + drizzle-orm).
+- **Monorepo** — pnpm workspaces.
 
 ## Contributing
 
