@@ -1,31 +1,4 @@
-/**
- * Album / grouped-media debouncer + filter gate.
- *
- * Telegram delivers album members (photos/videos sharing a `groupedId`) as N
- * independent `NewMessage` events arriving milliseconds apart. Without
- * debouncing they would be forwarded as N separate messages — fragmenting the
- * album in the destination and burning N throttle slots.
- *
- * This module sits between the listener (which produces one `RawForwardJob`
- * per event) and the per-destination pipeline (which consumes one
- * `ForwardJob` carrying the full id list). For ungrouped messages the
- * debouncer evaluates filters and either passes the job through or drops it.
- * For grouped messages it buffers by `${sourceChatId}:${groupedId}` for
- * `ALBUM_DEBOUNCE_MS`, picks the caption-bearing member at flush time
- * (longest text; ties broken by lowest message id), and evaluates filters
- * once against that member's content — so an album passes or fails as a
- * unit. Source ids in the emitted `ForwardJob` are sorted ascending and
- * de-duplicated.
- *
- * On filter rejection the evaluator writes one `forward_log` row per source
- * id with `status='filtered'` and the joined reasons in `error`. The
- * debouncer itself never touches `forward_log`.
- *
- * `stop()` cancels pending timers and drops their buffered jobs (matches the
- * pipeline's "ignore enqueue after stop" behavior in `queue.ts`). The
- * listener doesn't persist incoming messages anywhere, so a missed album
- * member at shutdown is no different from any other miss while offline.
- */
+// Albums arrive as N NewMessage events sharing a groupedId; buffer per `${subscriptionId}:${groupedId}` to forward+filter as one (per-sub so a fan-out source keeps each subscription's album separate).
 import type { FilterEvaluator } from '../filters/evaluate.js';
 import type { MessageContext } from '../filters/types.js';
 import type { Logger } from '../lib/logger.js';
@@ -40,12 +13,7 @@ export interface AlbumDebouncerDeps {
   downstream: ForwardingHandle;
   filterEvaluator: FilterEvaluator;
   logger: Logger;
-  /**
-   * Live-reads the debounce window from app_settings on each new album.
-   * Wired up to `getAlbumDebounceMs(db)` in production; tests pass a
-   * constant. Read per-album rather than per-debouncer so the Settings
-   * UI takes effect on the next album without a restart.
-   */
+  // Read per-album so a Settings change to the window takes effect without a restart.
   getWindowMs: () => number;
 }
 
@@ -66,11 +34,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
     const first = group.jobs[0]!;
     const sourceMessageIds = dedupeAndSort(group.jobs.map((j) => j.sourceMessageId));
     const captionMember = pickCaptionBearingMember(group.jobs);
-    // Build the per-album raw payload as an array aligned with
-    // `sourceMessageIds` (ascending numeric id, deduplicated). Both arrays
-    // are constructed from the same ordering so positions match — the
-    // forwarder stores this array verbatim onto every row of the album so
-    // any row can stand alone in the JSON viewer.
+    // Aligned 1:1 with sourceMessageIds; stored on every album row so any row can stand alone.
     const albumRawMessage = collectAlbumRawMessages(group.jobs, sourceMessageIds);
     const context: MessageContext = {
       ...toContext(captionMember),
@@ -120,7 +84,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
         return;
       }
 
-      const key = `${raw.sourceChatId}:${raw.groupedId}`;
+      const key = `${raw.subscriptionId}:${raw.groupedId}`;
       const existing = pending.get(key);
       if (existing) {
         existing.jobs.push(raw);
@@ -155,14 +119,7 @@ function toContext(job: RawForwardJob): MessageContext {
   };
 }
 
-/**
- * Map each entry in `sourceMessageIds` (sorted ascending) to the matching
- * job's `rawMessage`. Duplicate ids — possible if the listener and history
- * poller both observe the same album member before the debouncer flushes —
- * collapse to the first occurrence so the array length matches
- * `sourceMessageIds` exactly. Jobs whose `rawMessage` is missing fall back
- * to `null`, keeping array positions stable.
- */
+// Aligned 1:1 with sourceMessageIds; dup ids collapse to first, missing → null.
 function collectAlbumRawMessages(
   jobs: readonly RawForwardJob[],
   sourceMessageIds: readonly string[],
@@ -176,11 +133,7 @@ function collectAlbumRawMessages(
   return sourceMessageIds.map((id) => bySourceId.get(id) ?? null);
 }
 
-/**
- * Telegram puts the caption on a single album member (typically the first by
- * message id). Pick the longest-text member; ties go to the lowest message id
- * for determinism. Falls back to the first job if all members have empty text.
- */
+// Telegram puts the caption on one member: pick longest text, ties to lowest message id.
 function pickCaptionBearingMember(jobs: readonly RawForwardJob[]): RawForwardJob {
   let best = jobs[0]!;
   for (const candidate of jobs.slice(1)) {

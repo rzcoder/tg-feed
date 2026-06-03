@@ -54,6 +54,27 @@ describe('parseInput', () => {
     });
   });
 
+  it('classifies legacy joinchat/<hash> links as { kind: "invite" }', () => {
+    expect(parseInput('https://t.me/joinchat/AAAAAEHbZQ')).toEqual({
+      kind: 'invite',
+      hash: 'AAAAAEHbZQ',
+    });
+    expect(parseInput('t.me/joinchat/AAAAAEHbZQ')).toEqual({
+      kind: 'invite',
+      hash: 'AAAAAEHbZQ',
+    });
+    expect(parseInput('joinchat/AAAAAEHbZQ')).toEqual({ kind: 'invite', hash: 'AAAAAEHbZQ' });
+    // Trailing path/query after the hash is stripped.
+    expect(parseInput('https://t.me/joinchat/AAAAAEHbZQ/extra?q=1')).toEqual({
+      kind: 'invite',
+      hash: 'AAAAAEHbZQ',
+    });
+  });
+
+  it('rejects a joinchat link with an invalid hash', () => {
+    expect(() => parseInput('t.me/joinchat/abc.def')).toThrow(ValidationError);
+  });
+
   it('classifies numeric ids as { kind: "chatId" }', () => {
     expect(parseInput('-1001234567890')).toEqual({ kind: 'chatId', value: '-1001234567890' });
     expect(parseInput('1234567')).toEqual({ kind: 'chatId', value: '1234567' });

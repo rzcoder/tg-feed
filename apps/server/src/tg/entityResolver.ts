@@ -1,11 +1,4 @@
-/**
- * Input parsing + entity → DTO mapping shared by `chatResolver` and the
- * invite resolver.
- *
- * This module no longer wraps gramjs directly — `chatResolver.ts` does that,
- * dispatching on the `parseInput` discriminator. The two helpers exported
- * here are pure: tests don't need a Telegram stub to exercise them.
- */
+// Pure input-parsing + entity → DTO mapping; no gramjs dependency so tests need no Telegram stub.
 import { UpstreamError, ValidationError } from '../lib/errors.js';
 
 export interface ResolvedEntity {
@@ -14,12 +7,7 @@ export interface ResolvedEntity {
   handle: string | null;
 }
 
-/**
- * Discriminated classification of a paste-the-source-here input. The web UI
- * accepts any of: `@username`, `t.me/username`, `t.me/+HASH` private invite,
- * `+HASH` raw invite, or a numeric chat id (`-100…` channels/supergroups
- * or bare positive ids for users / basic groups).
- */
+// Accepts @username, t.me/username, t.me/+HASH or +HASH invite, or a numeric chat id (-100… channel/supergroup, bare positive for user/basic group).
 export type ParsedInput =
   | { kind: 'handle'; value: string }
   | { kind: 'invite'; hash: string }
@@ -32,11 +20,19 @@ const CHAT_ID_RE = /^-?\d{6,}$/;
 export function parseInput(input: string): ParsedInput {
   let s = input.trim();
   if (!s) throw new ValidationError('input is required');
-  // Strip URL prefix variants.
   s = s.replace(/^https?:\/\//i, '');
   s = s.replace(/^(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\//i, '');
-  // Strip trailing path / query (e.g. `t.me/foo/123`, `t.me/foo?x=1`). We do
-  // this before classifying so a paste like `t.me/+HASH/123` still resolves.
+  // Legacy invite form `joinchat/<hash>` — capture the hash before the trailing-path strip
+  // below collapses it to the bare word `joinchat`, which would mis-classify as a handle.
+  const joinchat = s.match(/^joinchat\/([^/?#]+)/i);
+  if (joinchat) {
+    const hash = joinchat[1]!;
+    if (!INVITE_HASH_RE.test(hash)) {
+      throw new ValidationError('expected a Telegram invite hash after `joinchat/`');
+    }
+    return { kind: 'invite', hash };
+  }
+  // Strip trailing path/query before classifying so `t.me/+HASH/123` still resolves.
   s = s.replace(/[/?#].*$/, '');
   if (!s) throw new ValidationError('input is required');
 
@@ -71,9 +67,7 @@ export function entityToResolved(raw: unknown, handle: string): ResolvedEntity {
   const e = raw as MaybeEntity;
   if (!e?.id) throw new UpstreamError(`Telegram returned an unrecognised entity for @${handle}`);
   const idStr = typeof e.id === 'object' ? e.id.toString() : String(e.id);
-  // Channels arrive as positive ids from getEntity; the storage convention
-  // (matching what the listener sees) is the supergroup form prefixed -100.
-  // For users / bots the bare positive id is correct.
+  // getEntity returns positive channel ids; storage convention is the -100 supergroup form (users/bots keep the bare id).
   const sourceChatId = sourceChatIdFor(idStr, raw);
   const fullName = [e.firstName, e.lastName].filter(Boolean).join(' ').trim();
   const sourceTitle = e.title ?? (fullName !== '' ? fullName : handle);
@@ -82,8 +76,7 @@ export function entityToResolved(raw: unknown, handle: string): ResolvedEntity {
 }
 
 function sourceChatIdFor(idStr: string, raw: unknown): string {
-  // gramjs Channel/Chat carry a className; we can't import the class here
-  // without dragging telegram into the type surface, so do a structural check.
+  // Structural className check to avoid dragging telegram into the type surface.
   const className = (raw as { className?: string })?.className ?? '';
   if (className === 'Channel' || className === 'Chat') {
     return idStr.startsWith('-') ? idStr : `-100${idStr}`;

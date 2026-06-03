@@ -418,4 +418,50 @@ describe('createAccessMonitor', () => {
     expect(calls).toBeGreaterThanOrEqual(3);
     monitor.stop();
   });
+
+  it('preserves each target status under threshold for a mixed-status shared chatId', async () => {
+    // Same chat is both the subscription source and a destination, with divergent
+    // persisted statuses — an under-threshold sweep must not clobber either badge.
+    s.dbHandle.db
+      .update(destinations)
+      .set({ chatId: '-1001111111111', accessStatus: 'no_access' })
+      .where(eq(destinations.id, s.destId))
+      .run();
+    s.dbHandle.db
+      .update(subscriptions)
+      .set({ sourceAccessStatus: 'ok' })
+      .where(eq(subscriptions.id, s.subId))
+      .run();
+
+    const client = makeClient(() => Promise.reject(new Error('CHANNEL_PRIVATE')));
+    const monitor = createAccessMonitor({
+      client,
+      db: s.dbHandle.db,
+      bus: s.bus,
+      logger,
+      intervalMs: 100,
+      noAccessFailThreshold: 3, // single sweep stays under the threshold
+    });
+
+    await monitor.probe();
+
+    const subRow = s.dbHandle.db
+      .select()
+      .from(subscriptions)
+      .where(eq(subscriptions.id, s.subId))
+      .get();
+    const destRow = s.dbHandle.db
+      .select()
+      .from(destinations)
+      .where(eq(destinations.id, s.destId))
+      .get();
+    // Each keeps its own prior status; the destination's no_access is NOT cleared to ok.
+    expect(subRow?.sourceAccessStatus).toBe('ok');
+    expect(destRow?.accessStatus).toBe('no_access');
+    // Freshness still bumped on both, and no status change means no events.
+    expect(subRow?.sourceAccessCheckedAt).toBeInstanceOf(Date);
+    expect(destRow?.accessCheckedAt).toBeInstanceOf(Date);
+    expect(s.busEvents).toHaveLength(0);
+    monitor.stop();
+  });
 });

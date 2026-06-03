@@ -26,7 +26,6 @@ import { RuleForm } from '@/components/domain/RuleForm';
 import { RuleListItem } from '@/components/domain/RuleListItem';
 
 export interface InlineFilterDraft {
-  /** Stable react key for the lifetime of an unsaved row. */
   clientKey: string;
   ruleType: FilterRuleType;
   params: Record<string, unknown>;
@@ -35,28 +34,14 @@ export interface InlineFilterDraft {
 }
 
 export interface SubSheetSubmit {
-  /**
-   * Resolved chat id when known (public link / username / numeric id, or
-   * already-member private invite). `null` only for `t.me/+HASH` invites
-   * where the userbot isn't a member yet — in that case `inviteHash` is
-   * non-null and the server joins on create to derive the id.
-   */
+  // null only for not-yet-joined t.me/+HASH invites; then inviteHash is set and the server joins on create.
   sourceChatId: string | null;
   inviteHash: string | null;
   sourceTitle: string;
   handle: string | null;
-  /**
-   * Null means "no destination" — subscription is created/saved in a
-   * detached state and won't forward until the user attaches a destination.
-   */
-  destinationId: number | null;
+  destinationId: number | null; // null = detached, won't forward
   libraryFilterIds: number[];
-  /**
-   * Bulk-replace set of private inline filters. Empty array = drop all on
-   * save. Each entry has been validated against
-   * `filterRuleParamsSchemas[ruleType]` so `params` matches the discriminator.
-   */
-  inlineFilters: InlineFilterInput[];
+  inlineFilters: InlineFilterInput[]; // bulk-replace set; [] drops all
 }
 
 export interface SubSheetProps {
@@ -65,7 +50,6 @@ export interface SubSheetProps {
   initial?: SubscriptionDto | null;
   destinations: DestinationDto[];
   library: LibraryFilterDto[];
-  /** Catalog of supported rule types (from `useFilterCatalog`). */
   availableTypes: readonly FilterRuleType[];
   onClose: () => void;
   onSubmit: (data: SubSheetSubmit) => void;
@@ -94,8 +78,7 @@ export function SubSheet({
   const [libIds, setLibIds] = useState<number[]>([]);
   const [inlineFilters, setInlineFilters] = useState<InlineFilterDraft[]>([]);
   const [step, setStep] = useState<SubFilterStep>({ kind: 'list' });
-  // Step-local draft buffer (shared with FilterSheet via useFilterDraft);
-  // committed back into `inlineFilters` only on Save.
+  // Step-local draft buffer; committed into inlineFilters only on Save.
   const {
     ruleType: draftRule,
     params: draftParams,
@@ -117,32 +100,43 @@ export function SubSheet({
     error: resolveErrorRaw,
   } = useResolveSubscription();
 
-  // Pull existing inline filters in edit mode so the user sees and can edit
-  // what they already have. Only enabled when the sheet is open + edit mode.
   const filtersQuery = useSubscriptionFilters(isEdit && open && initial ? initial.id : null);
 
-  // Reset on open / mode change.
   useEffect(() => {
     if (!open) return;
     if (isEdit && initial) {
       setLink(initial.handle ?? `@${initial.sourceTitle}`);
       setDestId(initial.destinationId);
       setLibIds([...initial.libraryFilterIds]);
-      // inlineFilters seeded from filtersQuery.data when it lands (effect below).
       resetResolve();
     } else {
       setLink('');
-      setDestId(destinations[0]?.id ?? null);
+      setDestId(null);
       setLibIds([]);
       setInlineFilters([]);
       resetResolve();
     }
     setStep({ kind: 'list' });
     resetDraft();
-  }, [open, isEdit, initial, destinations, resetResolve, resetDraft]);
+    // `destinations` is intentionally NOT a dep — its ref changes on every background
+    // refetch, and re-running this would wipe the user's in-progress input. The default
+    // destination is seeded once by the effect below.
+  }, [open, isEdit, initial, resetResolve, resetDraft]);
 
-  // Seed inline filters from the server once they land. Ignored on subsequent
-  // refetches so the user's in-progress edits aren't clobbered.
+  // Default the destination to the first available one, once per add-sheet open. Guarded
+  // so a later background refetch of `destinations` can't clobber the user's pick.
+  const [destSeeded, setDestSeeded] = useState(false);
+  useEffect(() => {
+    if (!open) {
+      setDestSeeded(false);
+      return;
+    }
+    if (isEdit || destSeeded || destinations.length === 0) return;
+    setDestId((cur) => cur ?? destinations[0]!.id);
+    setDestSeeded(true);
+  }, [open, isEdit, destSeeded, destinations]);
+
+  // Seed once; later refetches are ignored so in-progress edits aren't clobbered.
   const [seeded, setSeeded] = useState(false);
   useEffect(() => {
     if (!open) {
@@ -164,7 +158,6 @@ export function SubSheet({
     setSeeded(true);
   }, [open, isEdit, seeded, filtersQuery.data]);
 
-  // Debounce resolve in add mode.
   useDebouncedResolve({
     value: link,
     enabled: !isEdit,
@@ -184,10 +177,7 @@ export function SubSheet({
 
   const handleSubmit = () => {
     if (!canSave) return;
-    // Validate each draft against the wire schema at the boundary rather than
-    // casting. Inline-edited drafts are already parsed on commit, but ones
-    // seeded from the server are re-checked here, so a schema drift fails
-    // loudly instead of writing a malformed filter.
+    // Re-validate at the wire boundary so server-seeded drafts fail loudly on schema drift.
     const wireInline: InlineFilterInput[] = inlineFilters.map((d) =>
       inlineFilterInputSchema.parse({
         ruleType: d.ruleType,
@@ -208,9 +198,6 @@ export function SubSheet({
       });
     } else if (resolved) {
       onSubmit({
-        // For not-yet-joined private invites the resolve preview can't
-        // know the chat id; the server joins via importInvite and derives
-        // the id during create. Otherwise we forward the resolved id.
         sourceChatId: resolved.sourceChatId ?? null,
         inviteHash: resolved.inviteHash,
         sourceTitle: resolved.sourceTitle,
@@ -470,9 +457,7 @@ export function SubSheet({
 
 let inlineKeyCounter = 0;
 
-// Stable React key for an unsaved inline-filter row. Prefers a UUID but falls
-// back to a counter on insecure contexts (http:// LAN host, where
-// crypto.randomUUID is undefined) — the key only needs to be unique in-sheet.
+// Counter fallback for insecure contexts where crypto.randomUUID is undefined.
 function newClientKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();

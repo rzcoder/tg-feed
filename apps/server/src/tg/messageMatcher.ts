@@ -1,12 +1,7 @@
 import type { NewMessageEvent } from 'telegram/events/index.js';
 import type { Subscription } from '../db/schema.js';
 
-/**
- * Subscription with destination chat id (and optional forum topic) resolved
- * via JOIN. The listener needs `destinationChatId` to enqueue forward jobs
- * but the `subscriptions` row only carries a FK now (`destinationId`);
- * `destinationTopicId` rides along so forum destinations route to a topic.
- */
+// Subscription row plus the JOIN-resolved destination chat/topic.
 export type ResolvedSubscription = Subscription & {
   destinationChatId: string;
   destinationTopicId: string | null;
@@ -16,11 +11,9 @@ export interface MatchableEvent {
   chatId: string;
   messageId: string;
   groupedId?: string;
-  /** Body text (or empty string for media-only messages without caption). */
-  text: string;
+  text: string; // empty string for media-only messages
   hasMedia: boolean;
-  /** Lowercased sender username, no leading '@'. Undefined for anonymous channel posts. */
-  senderUsername?: string;
+  senderUsername?: string; // lowercased, no '@'; undefined for anonymous channel posts
 }
 
 export function extractMatchableEvent(event: NewMessageEvent): MatchableEvent | null {
@@ -56,9 +49,10 @@ function extractSenderUsername(message: { sender?: unknown }): string | undefine
   return undefined;
 }
 
-export function matchSubscription<T extends Subscription>(
+// All enabled subscriptions for the event's source chat — a source may fan out to several.
+export function matchSubscriptions<T extends Subscription>(
   event: MatchableEvent,
   subscriptions: readonly T[],
-): T | undefined {
-  return subscriptions.find((s) => s.enabled && s.sourceChatId === event.chatId);
+): T[] {
+  return subscriptions.filter((s) => s.enabled && s.sourceChatId === event.chatId);
 }

@@ -74,6 +74,20 @@ describe('library filter routes', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('POST /api/library-filters rejects an uncompilable text-regex pattern', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/library-filters',
+      headers: { cookie },
+      payload: {
+        name: 'bad regex',
+        ruleType: 'text-regex',
+        params: { pattern: '(', flags: '' },
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('GET /api/library-filters carries usageCount via JOIN', async () => {
     const [lib] = testApp.db
       .insert(libraryFilters)

@@ -5,7 +5,7 @@ import { createTestDb, type TestDbHandle } from '../db/testing.js';
 import { destinations, forwardLog, subscriptions, type Subscription } from '../db/schema.js';
 import type { EventBus } from '../events/bus.js';
 import { createLogger } from '../lib/logger.js';
-import { createForwarder, type ForwarderClient } from './forwarder.js';
+import { createForwarder, recordForwardFailure, type ForwarderClient } from './forwarder.js';
 import type { ForwardJob } from './types.js';
 
 const logger = createLogger({ silent: true });
@@ -290,6 +290,30 @@ describe('createForwarder', () => {
       subscriptionId: sub.id,
       error: 'bad request',
     });
+  });
+
+  it('recordForwardFailure writes a failed row and emits forward.failed (dead-letter)', () => {
+    const sub = seedSubscription(handle);
+    const bus = makeStubBus();
+    recordForwardFailure(
+      { db: handle.db, logger, bus },
+      makeJob(sub, ['7']),
+      'flood_wait_abandoned',
+    );
+
+    const rows = handle.db
+      .select()
+      .from(forwardLog)
+      .where(eq(forwardLog.subscriptionId, sub.id))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      sourceMessageId: '7',
+      status: 'failed',
+      error: 'flood_wait_abandoned',
+      destMessageId: null,
+    });
+    expect(bus.emitted.filter((e) => e.type === 'forward.failed')).toHaveLength(1);
   });
 
   it('classifies CHAT_FORWARDS_RESTRICTED as a permanent failure with a tagged error message', async () => {

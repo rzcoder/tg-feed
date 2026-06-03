@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createLogger } from '../lib/logger.js';
 import type { Forwarder } from './forwarder.js';
-import { ForwardingPipeline, type SleepFn } from './queue.js';
+import { ForwardingPipeline, MAX_FLOOD_WAIT_ATTEMPTS, type SleepFn } from './queue.js';
 import type { ForwardJob, ForwardOutcome } from './types.js';
 
 const logger = createLogger({ silent: true });
@@ -150,6 +150,42 @@ describe('ForwardingPipeline', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(forwarder).toHaveBeenCalledTimes(3);
     expect(forwarder).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sourceMessageIds: ['msg-2'] }),
+    );
+
+    await pipeline.stop();
+  });
+
+  it('dead-letters a job after MAX_FLOOD_WAIT_ATTEMPTS flood_waits and unblocks the FIFO', async () => {
+    const deadLettered: ForwardJob[] = [];
+    const forwarder: Forwarder = vi.fn(async (j): Promise<ForwardOutcome> => {
+      if (j.sourceMessageIds[0] === 'msg-1') {
+        return { status: 'flood_wait', seconds: 30, kind: 'flood_wait' };
+      }
+      return sent();
+    });
+
+    const pipeline = new ForwardingPipeline({
+      forwarder,
+      getDelayMs: () => 1000,
+      logger,
+      sleep: fakeSleep,
+      onDeadLetter: (j) => deadLettered.push(j),
+    });
+
+    pipeline.enqueue(job('-100A', 'msg-1')); // perpetually flooded
+    pipeline.enqueue(job('-100A', 'msg-2')); // stuck behind it
+
+    // First attempt fires immediately; each retry follows a 30s flood backoff.
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i <= MAX_FLOOD_WAIT_ATTEMPTS; i++) {
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+
+    // msg-1 abandoned exactly once; msg-2 (behind it) then forwards.
+    expect(deadLettered).toHaveLength(1);
+    expect(deadLettered[0]).toMatchObject({ sourceMessageIds: ['msg-1'] });
+    expect(forwarder).toHaveBeenCalledWith(
       expect.objectContaining({ sourceMessageIds: ['msg-2'] }),
     );
 

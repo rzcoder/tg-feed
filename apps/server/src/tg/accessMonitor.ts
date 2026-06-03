@@ -1,26 +1,4 @@
-/**
- * Periodic check that the userbot still has access to every chat the
- * forwarder cares about — both source channels (subscribed to) and
- * destination chats (forwarded to).
- *
- * The userbot can lose access without any error reaching the app: the
- * channel admin kicks it, deletes the channel, or the account swaps. The
- * symptom is that `NewMessage` stops arriving from that source and/or
- * `forwardMessages` starts failing for that destination — both invisible
- * until something tries to use them. This monitor surfaces the loss
- * proactively by calling `getEntity` on every chat once a day and writing
- * a binary status to the DB so the UI can render a "no access" badge.
- *
- * Probe granularity is per-chat (deduped across subscriptions and
- * destinations) and sequential, mirroring `resolveSubscriptionsOnStartup`'s
- * floodwait-conscious pattern. On a `FloodWaitError` we wait the requested
- * duration once; further waits are deferred to the next 24h tick.
- *
- * Status writes are diffed against the current row value: only transitions
- * emit `subscription.changed` / `destination.changed` events. The
- * `*_checked_at` timestamp is always updated so future UIs can distinguish
- * fresh from stale.
- */
+// Daily getEntity probe of every source/destination chat, persisting a no-access status the UI badges; access loss is otherwise invisible until a forward fails.
 import { setTimeout as sleep } from 'node:timers/promises';
 import { eq } from 'drizzle-orm';
 import type { Api } from 'telegram';
@@ -34,14 +12,9 @@ import type { ProfilePhotoFetcher } from './profilePhoto.js';
 
 export const ACCESS_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-// Avoid flapping the "no access" badge on transient Telegram errors (a hostile
-// admin briefly kicking the bot, a one-off CHANNEL_PRIVATE on the wire, etc).
-// We only flip an existing `ok` status to `no_access` after this many
-// consecutive failures; going back to `ok` is always one-shot because access
-// being restored is unambiguous.
+// Consecutive failures before flipping ok→no_access (anti-flap); recovery to ok is one-shot.
 const NO_ACCESS_CONSECUTIVE_FAILS = 3;
 
-// Subset of `TelegramClient` we depend on so tests can pass a stub.
 export interface AccessProbeClient {
   getEntity(entity: string | Api.TypeInputPeer | Api.TypeInputUser): Promise<unknown>;
 }
@@ -51,28 +24,18 @@ export interface AccessMonitorDeps {
   db: Db;
   bus: EventBus;
   logger: Logger;
-  /** Default 24h. Overridable for tests. */
+  // default 24h
   intervalMs?: number;
-  /**
-   * How many consecutive failed probes flip a chat's status from `ok` to
-   * `no_access`. Default 3 — a hostile admin briefly kicking the bot, or a
-   * one-off `CHANNEL_PRIVATE` on the wire, shouldn't stamp the badge for a
-   * full 24h. Tests that want single-probe semantics override to 1.
-   */
+  // consecutive failed probes that flip ok→no_access (default 3)
   noAccessFailThreshold?: number;
-  /**
-   * Lazy backfill: when a row's `icon_data_url` is null and the access
-   * probe came back ok, the monitor calls this to fetch and stamp the
-   * channel/chat profile photo. Optional — when missing (Telegram-less
-   * boot, tests) the monitor only updates the access status columns.
-   */
+  // when set, backfills a row's null icon_data_url on a successful probe
   fetchProfilePhoto?: ProfilePhotoFetcher;
 }
 
 export interface AccessMonitor {
   start(): void;
   stop(): void;
-  /** Run one full sweep immediately. Exposed for tests and shutdown coverage. */
+  // run one full sweep immediately
   probe(): Promise<void>;
 }
 
@@ -100,16 +63,12 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
   const failThreshold = deps.noAccessFailThreshold ?? NO_ACCESS_CONSECUTIVE_FAILS;
   let stopped = false;
   let inFlight: Promise<void> | undefined;
-  // Per-chat consecutive-failure counter. Reset on success; flip the persisted
-  // status only after `failThreshold` sweeps in a row. Lives in memory —
-  // survives between sweeps but not restarts, which is fine because the
-  // operator can see the persisted status in the UI either way.
+  // Per-chat consecutive-failure counter; in-memory, resets on success and on restart.
   const failureCounts = new Map<string, number>();
 
   async function probe(): Promise<void> {
     if (stopped) return;
-    // Serialize concurrent probes (interval tick mid-sweep is harmless but
-    // doubles the load). The second caller awaits the first.
+    // Serialize concurrent probes; the second caller awaits the first.
     if (inFlight) {
       await inFlight;
       return;
@@ -129,8 +88,7 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
 
     let okCount = 0;
     let noAccessCount = 0;
-    // Group by chatId so a single chat used as both source and destination
-    // (or by multiple subscriptions) is probed once per sweep.
+    // Group by chatId so a chat reused across rows is probed once per sweep.
     const byChatId = new Map<string, Target[]>();
     for (const target of targets) {
       const existing = byChatId.get(target.chatId);
@@ -147,41 +105,41 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
         skippedCount++;
         continue;
       }
-      // Hysteresis: a single failed probe doesn't flip the badge. Only after
-      // N consecutive failures does the persisted status move ok → no_access.
-      // Recovery (no_access → ok) is one-shot — the moment we can read the
-      // channel again, clear the badge.
-      let status: 'ok' | 'no_access';
       if (probed === 'no_access') {
         const next = (failureCounts.get(chatId) ?? 0) + 1;
         failureCounts.set(chatId, next);
         if (next < failThreshold) {
-          // Keep the previous persisted status; just bump the freshness ts.
-          // Recovery shortcut: if every target in the group was already
-          // `no_access`, treat as still `no_access` so we don't write `ok`.
-          const wasNoAccess = group.every((t) => t.prevStatus === 'no_access');
-          status = wasNoAccess ? 'no_access' : 'ok';
+          // Under threshold: hold each target's OWN prior status (anti-flap) and just bump
+          // its freshness ts. A single group-wide status would clobber a divergent badge
+          // when the same chatId is both a source and a destination.
           logger.debug(
             { chatId, consecutiveFailures: next },
             'access monitor: probe failed but still under flap threshold',
           );
-        } else {
-          status = 'no_access';
+          for (const target of group) {
+            touchCheckedAt(target);
+            if (target.prevStatus === 'no_access') noAccessCount++;
+            else okCount++;
+          }
+          continue;
         }
-      } else {
+        // Threshold reached: flip the whole group to no_access and reset the counter so the
+        // map doesn't grow unbounded for a chat that never recovers.
         failureCounts.delete(chatId);
-        status = 'ok';
+        for (const target of group) {
+          applyStatus(target, 'no_access');
+        }
+        noAccessCount += group.length;
+        continue;
       }
-      if (status === 'ok') okCount++;
-      else noAccessCount++;
+
+      // Reachable: clear the failure counter, mark every row ok, backfill any missing icons.
+      failureCounts.delete(chatId);
       for (const target of group) {
-        applyStatus(target, status);
+        applyStatus(target, 'ok');
       }
-      // Icon backfill: when this chat is reachable and at least one row in
-      // the group is still icon-less, fetch the profile photo once and
-      // stamp it on every matching row. Skipped on `no_access` because
-      // gramjs would just fail again.
-      if (status === 'ok' && fetchProfilePhoto) {
+      okCount += group.length;
+      if (fetchProfilePhoto) {
         const needsIcon = group.filter((t) => t.iconDataUrl === null);
         if (needsIcon.length > 0) {
           const iconDataUrl = await fetchProfilePhoto(chatId);
@@ -208,9 +166,7 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
     } catch (err) {
       const rl = extractRateLimit(err);
       if (rl === null) return 'no_access';
-      // Bounded retry: wait the requested time once. If it floods again
-      // we leave the chat untouched until the next tick — better than
-      // burning CPU on a multi-hour cooldown.
+      // Wait the requested floodwait once; if it floods again, defer to the next tick.
       logger.warn({ chatId, seconds: rl.seconds }, 'access monitor: flood wait, retrying once');
       await sleep(rl.seconds * 1000);
       if (stopped) return 'skip';
@@ -257,6 +213,22 @@ export function createAccessMonitor(deps: AccessMonitorDeps): AccessMonitor {
           change: 'updated',
         });
       }
+    }
+  }
+
+  // Bump only the freshness timestamp, leaving the access status (and its event) untouched.
+  function touchCheckedAt(target: Target): void {
+    const now = new Date();
+    if (target.kind === 'subscription') {
+      db.update(subscriptions)
+        .set({ sourceAccessCheckedAt: now })
+        .where(eq(subscriptions.id, target.id))
+        .run();
+    } else {
+      db.update(destinations)
+        .set({ accessCheckedAt: now })
+        .where(eq(destinations.id, target.id))
+        .run();
     }
   }
 
