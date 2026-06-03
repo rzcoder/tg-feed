@@ -21,8 +21,7 @@ export function useUpdateBotConfig() {
   const qc = useQueryClient();
   return useMutation<BotConfigInfo, Error, UpdateBotConfigRequest>({
     mutationFn: updateBotConfig,
-    // PUT returns the fresh masked view (post-reload botRunning included), so
-    // seed the cache directly rather than round-tripping a refetch.
+    // PUT returns the fresh masked view, so seed the cache directly instead of refetching.
     onSuccess: (data) => qc.setQueryData(BOT_CONFIG_KEY, data),
   });
 }
@@ -35,7 +34,6 @@ export function useDeleteBotConfig() {
   });
 }
 
-/** Resolve a `@username` / numeric id to a Telegram user for the admin allowlist. */
 export function useResolveBotAdmin() {
   return useMutation<ResolveBotAdminResponse, Error, string>({ mutationFn: resolveBotAdmin });
 }

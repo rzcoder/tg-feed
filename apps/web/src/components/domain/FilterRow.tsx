@@ -11,13 +11,11 @@ import { Toggle } from '@/components/settings/primitives';
 
 export interface FilterRowProps {
   filter: FilterLike & { id: number; enabled?: boolean; name?: string | null };
-  /** Render a "Library" badge + accent icon styling. */
   library?: boolean;
-  /** Toggle handler — only shown when set. */
   onToggle?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
-  /** Optional label override for the delete button (e.g. "Detach"). */
+  // Delete-button label override, e.g. "Detach".
   deleteLabel?: string;
 }
 

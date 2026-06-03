@@ -1,10 +1,3 @@
-/**
- * Import sheet — file picker that validates against the shared
- * `exportFileSchema`, shows a preview, and lets the user pick which sections
- * to apply plus a conflict strategy (skip / replace) before POSTing to
- * /api/system/import. Imports never touch Telegram; the access monitor's
- * sweep refreshes channel status afterwards.
- */
 import { useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, Upload, X } from 'lucide-react';
 import {

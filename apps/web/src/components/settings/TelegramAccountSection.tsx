@@ -1,11 +1,3 @@
-/**
- * Settings → Telegram Account Connection card.
- *
- * The userbot (gramjs) account that does the forwarding. A status pill in the
- * header reflects the live Telegram connection; the body + footer switch on
- * state: sign in (phone-code or paste-session), sign out, env-fallback upgrade,
- * or a key-fingerprint-mismatch warning. Sign-in is gated on an encryption key.
- */
 import { useState } from 'react';
 import { AlertTriangle, KeyRound, type LucideIcon, LogIn, LogOut, Plug, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -42,8 +34,7 @@ export function TelegramAccountSection() {
       onError: (err) => toast.error(apiErrorMessage(err, 'Sign out failed')),
     });
 
-  // Pick the status pill + body. Order matters: a key mismatch is the most
-  // actionable signal even when the env fallback keeps us connected.
+  // Order matters: key mismatch wins even when the env fallback keeps us connected.
   let pill = <StatusPill tone="down">offline</StatusPill>;
   let body: React.ReactNode;
   let footer: React.ReactNode;
@@ -104,7 +95,6 @@ export function TelegramAccountSection() {
       />
     );
   } else {
-    // Disconnected (state='disconnected' or status missing).
     body = (
       <Banner icon={AlertTriangle} title="Telegram disconnected">
         {tg?.reason ?? 'Telegram client is not available.'} Subscribing and forwarding are

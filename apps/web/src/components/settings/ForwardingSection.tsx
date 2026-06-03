@@ -1,11 +1,3 @@
-/**
- * Settings → Forwarding card.
- *
- * Global pipeline knobs stored in the 'global' app_settings row: the inter-send
- * throttle delay and the album-debounce window. Both are number input + range
- * slider; sub-spam-threshold delays surface a warning. Saved together via one
- * Reset / Save, sending only the changed knob.
- */
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -48,8 +40,7 @@ export function ForwardingSection() {
   const delayDirty = draft !== data.delayMs;
   const albumDirty = albumDraft !== data.albumDebounceMs;
   const dirty = delayDirty || albumDirty;
-  // A cleared field coerces to 0; block saving a non-positive value (the
-  // server's .positive() schema rejects it) and flag the field instead.
+  // Cleared field coerces to 0; block non-positive (server's .positive() rejects it) and flag instead.
   const delayValid = Number.isInteger(draft) && draft > 0;
   const albumValid = Number.isInteger(albumDraft) && albumDraft > 0;
   const canSave = dirty && delayValid && albumValid && !updateMut.isPending;

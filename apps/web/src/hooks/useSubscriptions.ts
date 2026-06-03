@@ -14,9 +14,7 @@ import type {
 } from '@tg-feed/shared';
 
 export const SUBSCRIPTIONS_KEY = ['subscriptions'] as const;
-// Mirrors `subscriptionFiltersKey` in useFilters.ts. Duplicated here (rather
-// than imported) to avoid a circular hooks import — both files reference
-// each other's keys for cross-invalidation. Keep these prefixes in sync.
+// Duplicated from useFilters.ts (avoids a circular import); keep in sync with subscriptionFiltersKey.
 const SUB_FILTERS_KEY_PREFIX = ['subscription-filters'] as const;
 
 export function useSubscriptions() {
@@ -33,8 +31,7 @@ export function useCreateSubscription() {
     mutationFn: createSubscription,
     onSuccess: (sub) => {
       qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
-      // The new sub may carry inline filters set via the create body;
-      // invalidate so PerSubView's per-sub query reflects them.
+      // The create body may carry inline filters, so refresh the per-sub filter query.
       qc.invalidateQueries({ queryKey: [...SUB_FILTERS_KEY_PREFIX, sub.id] });
     },
   });

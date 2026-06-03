@@ -1,12 +1,3 @@
-/**
- * Shared building blocks for the Settings page cards, ported from the design
- * direction (project/styles.css + screen-settings.jsx) onto our Tailwind
- * tokens. Every Settings panel is a self-titled card: a `CardHeader` (icon
- * badge + title + optional status pill / toggle), a body, and an optional
- * `CardFooter` (Reset / Save). Inside the body, `PanelSection` groups related
- * fields under an uppercase label, and `FieldHead` pairs a field label with a
- * `SourceBadge` (database vs .env).
- */
 import type { ReactNode } from 'react';
 import { ChevronDown, Lock, Zap } from 'lucide-react';
 import type { BotConfigSource } from '@tg-feed/shared';
@@ -36,7 +27,6 @@ export interface CardHeaderProps {
   right?: ReactNode;
 }
 
-/** Card header: icon badge + title on the left, an optional pill/toggle on the right. */
 export function CardHeader({ icon, title, right }: CardHeaderProps) {
   return (
     <div className="flex items-center justify-between gap-2.5 px-4 py-3 border-b border-border bg-bg-2">
@@ -56,7 +46,6 @@ export interface CardFooterProps {
   children: ReactNode;
 }
 
-/** Card footer on a tinted bar. `left` is pinned to the start (e.g. a danger reset). */
 export function CardFooter({ left, children }: CardFooterProps) {
   return (
     <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-bg-2">
@@ -72,7 +61,6 @@ export interface PanelSectionProps {
   children: ReactNode;
 }
 
-/** A labelled group within a card body; `right` sits opposite the label (e.g. a toggle). */
 export function PanelSection({ label, right, children }: PanelSectionProps) {
   return (
     <div className="flex flex-col gap-3.5">
@@ -92,7 +80,6 @@ export interface FieldHeadProps {
   source?: BotConfigSource | null;
 }
 
-/** Field label paired with its source badge. */
 export function FieldHead({ label, source }: FieldHeadProps) {
   return (
     <div className="flex items-baseline justify-between mb-1.5">
@@ -106,7 +93,6 @@ export interface SourceBadgeProps {
   source: BotConfigSource | null;
 }
 
-/** Small uppercase pill showing where a value resolves from: database / .env / not set. */
 export function SourceBadge({ source }: SourceBadgeProps) {
   if (!source) return <span className="text-[10.5px] text-text-faint">not set</span>;
   const isDb = source === 'db';
@@ -131,7 +117,6 @@ export interface ToggleProps {
   disabled?: boolean;
 }
 
-/** Accessible on/off switch matching the design's `.toggle`. */
 export function Toggle({ checked, onChange, label, disabled }: ToggleProps) {
   return (
     <button
@@ -178,7 +163,6 @@ export interface StatusPillProps {
   children: ReactNode;
 }
 
-/** Rounded status pill with a leading dot, matching the design's `.pill`. */
 export function StatusPill({ tone, children }: StatusPillProps) {
   return (
     <span
@@ -201,7 +185,6 @@ export interface InlineSelectProps<T extends string> {
   ariaLabel?: string;
 }
 
-/** Compact styled native <select> for the inline-sentence digest config. */
 export function InlineSelect<T extends string>({
   value,
   onChange,

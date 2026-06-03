@@ -24,8 +24,6 @@ export function useImportData() {
   return useMutation<ImportResult, Error, ImportRequest>({
     mutationFn: importData,
     onSuccess: () => {
-      // Imports can touch every section; invalidate everything that lists
-      // imported entities so the UI reflects the new state immediately.
       qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
       qc.invalidateQueries({ queryKey: DESTINATIONS_KEY });
       qc.invalidateQueries({ queryKey: LIBRARY_FILTERS_KEY });

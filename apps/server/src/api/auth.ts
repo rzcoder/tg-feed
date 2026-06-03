@@ -1,25 +1,4 @@
-/**
- * Auth primitives for the API server.
- *
- * Single-user model. A successful `POST /api/auth/login` mints a fresh
- * opaque random token (256-bit, base64url), stores it in `web_sessions` with
- * an expiry, and sets a signed cookie carrying that token as the value.
- *
- * The signature exists for tamper detection; the *security* comes from the
- * token being unguessable and existing in the DB. Logout deletes the row,
- * so a leaked cookie can be revoked. Sliding refresh on each authed request
- * keeps the user signed in while limiting damage from a long-unused
- * captured cookie.
- *
- * `requireWebAuthEnv` parallels `tg/client.ts#requireTelegramEnv`. Both
- * `WEB_PASSWORD` and `SESSION_SECRET` stay `.optional()` in `config.ts`
- * so `pnpm db:migrate` and `pnpm tg:login` can run without them; only
- * the server boot path requires them.
- *
- * `verifyPassword` hashes both inputs to a fixed-size SHA-256 digest
- * before `timingSafeEqual` so password length isn't observable as a
- * timing signal and the equal-length precondition is automatic.
- */
+// Opaque 256-bit DB-backed token in a signed cookie (the token is the security; the signature is tamper detection); sliding refresh, server-side revoke.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { CookieSerializeOptions } from '@fastify/cookie';
 import type { FastifyReply, FastifyRequest } from 'fastify';
@@ -35,7 +14,6 @@ export interface WebAuth {
   sessionSecret: string;
 }
 
-/** Bot token + admin allowlist for the Telegram Web App sign-in route. */
 export interface TelegramAuth {
   botToken: string;
   adminIds: string[];
@@ -58,10 +36,9 @@ export function requireWebAuthEnv(cfg: Config): WebAuth {
 }
 
 export function verifyPassword(plain: string, expected: string): boolean {
-  // Defensive: refuse to match empty/missing credentials even if upstream
-  // validation lets them through. SHA-256 of '' is a deterministic constant —
-  // without this guard, two empty strings would compare equal and grant entry.
+  // Reject empty: SHA-256('')==SHA-256('') would grant entry.
   if (!plain || !expected) return false;
+  // Hash both first so password length isn't a timing signal.
   const a = createHash('sha256').update(plain).digest();
   const b = createHash('sha256').update(expected).digest();
   return timingSafeEqual(a, b);
@@ -87,11 +64,7 @@ export function clearedCookieOptions(isProd: boolean): CookieSerializeOptions {
   };
 }
 
-/**
- * Read a session token from the incoming signed cookie, or null if absent /
- * tampered. Does NOT verify against the DB — the auth pre-handler does that
- * via `sessionStore.verifyAndRefresh`.
- */
+// Unwraps the signed cookie only; the DB check is verifyAndRefresh.
 export function readSessionToken(request: FastifyRequest): string | null {
   const raw = request.cookies[SESSION_COOKIE_NAME];
   if (!raw) return null;
@@ -102,11 +75,6 @@ export function readSessionToken(request: FastifyRequest): string | null {
   return result.value;
 }
 
-/**
- * Build the Fastify pre-handler that enforces auth on a scoped route plugin.
- * The factory takes the session store so the pre-handler closes over a real
- * DB-backed lookup; tests build their own via `buildTestApp`.
- */
 export function makeRequireAuth(sessionStore: SessionStore) {
   return async function requireAuth(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
     const token = readSessionToken(request);

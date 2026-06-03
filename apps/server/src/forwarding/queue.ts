@@ -1,26 +1,12 @@
-/**
- * Per-destination FIFO queues with one worker each.
- *
- * Telegram throttles per receiving chat, so the throttling domain == the
- * destination chat. Workers are created lazily on first enqueue for a given
- * destination and run for the lifetime of the pipeline.
- *
- * Worker loop:
- *   1. Wait for a job (sleep on a wakeup promise).
- *   2. Sleep until at least `delayMs` has elapsed since the last successful
- *      attempt for this destination.
- *   3. Hand the job to the forwarder.
- *   4. On `flood_wait`: sleep `seconds * 1000` and retry the SAME job.
- *      On `sent`/`failed`: pop the job and move on.
- *
- * `stop()` aborts in-flight sleeps and waits for the current send to finish.
- */
+// Per-destination FIFO + worker: Telegram throttles per receiving chat, so that's the throttling domain.
 import { setTimeout as nodeSleep } from 'node:timers/promises';
 import type { Logger } from '../lib/logger.js';
 import type { Forwarder } from './forwarder.js';
 import type { ForwardJob, ForwardingHandle } from './types.js';
 
 export const MAX_FLOOD_WAIT_SECONDS = 300;
+// Consecutive flood_waits on one head job before it's dead-lettered (and the FIFO unblocked).
+export const MAX_FLOOD_WAIT_ATTEMPTS = 5;
 
 export type SleepFn = (ms: number, signal: AbortSignal) => Promise<void>;
 
@@ -32,6 +18,8 @@ export interface PipelineDeps {
   getDelayMs: () => number;
   logger: Logger;
   sleep?: SleepFn;
+  // Called when a job is abandoned after MAX_FLOOD_WAIT_ATTEMPTS; records the terminal failure.
+  onDeadLetter?: (job: ForwardJob) => void;
 }
 
 interface WorkerDeps {
@@ -39,6 +27,7 @@ interface WorkerDeps {
   getDelayMs: () => number;
   logger: Logger;
   sleep: SleepFn;
+  onDeadLetter?: (job: ForwardJob) => void;
 }
 
 class DestinationWorker {
@@ -46,6 +35,7 @@ class DestinationWorker {
   private wakeup: () => void = () => {};
   private wakeupPromise: Promise<void>;
   private lastSendAt = 0;
+  private floodWaitCount = 0;
   private loopPromise?: Promise<void>;
 
   constructor(
@@ -99,6 +89,22 @@ class DestinationWorker {
       const outcome = await this.deps.forwarder(job);
 
       if (outcome.status === 'flood_wait') {
+        this.floodWaitCount++;
+        if (this.floodWaitCount > MAX_FLOOD_WAIT_ATTEMPTS) {
+          // Perpetually flooded — abandon the head job so it can't wedge the FIFO forever.
+          this.deps.logger.error(
+            {
+              destinationChatId: this.destinationChatId,
+              sourceMessageIds: job.sourceMessageIds,
+              attempts: this.floodWaitCount,
+            },
+            'flood_wait exceeded max attempts — dead-lettering job',
+          );
+          this.deps.onDeadLetter?.(job);
+          this.queue.shift();
+          this.floodWaitCount = 0;
+          continue;
+        }
         const cappedSeconds = Math.min(outcome.seconds, MAX_FLOOD_WAIT_SECONDS);
         if (outcome.seconds > MAX_FLOOD_WAIT_SECONDS) {
           this.deps.logger.warn(
@@ -116,6 +122,7 @@ class DestinationWorker {
       }
 
       this.queue.shift();
+      this.floodWaitCount = 0;
       this.lastSendAt = Date.now();
     }
     this.deps.logger.debug({ destinationChatId: this.destinationChatId }, 'worker stopped');
@@ -134,6 +141,7 @@ export class ForwardingPipeline implements ForwardingHandle {
       getDelayMs: deps.getDelayMs,
       logger: deps.logger,
       sleep: deps.sleep ?? cancellableSleep,
+      ...(deps.onDeadLetter ? { onDeadLetter: deps.onDeadLetter } : {}),
     };
   }
 

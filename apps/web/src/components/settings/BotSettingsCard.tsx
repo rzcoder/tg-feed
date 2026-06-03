@@ -1,27 +1,11 @@
-/**
- * Settings → Bot card.
- *
- * One self-contained card holding every bot-related setting — connection
- * params (token / admins / public URL, stored DB-over-env) and the stats
- * digest schedule — behind a single status header and one Save / Reset.
- *
- * The two halves persist to different endpoints (bot config → /api/config/bot,
- * digest → /api/settings); Save fires only the dirty halves and reports one
- * outcome. "Reset all to .env" clears the DB bot-config row. The digest's time
- * zone is captured from the browser on save (no picker), matching how the
- * scheduler interprets it.
- *
- * Draft state lives in `useBotSettingsDraft`; the connection and digest fields
- * render through the `bot/` sub-components. This card keeps the save
- * orchestration (the two-half Promise.allSettled write + per-half reporting)
- * and the DB-reset / key-mismatch affordances.
- */
+// Bot config + digest persist to different endpoints; Save fires only the dirty halves and reports per-half.
 import { Check, KeyRound, Power } from 'lucide-react';
 import type { UpdateBotConfigRequest, UpdateSettingsRequest } from '@tg-feed/shared';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { useToast } from '@/components/ui/toast';
 import { apiErrorMessage } from '@/api/client';
+import { getTelegramUserId } from '@/lib/telegram';
 import { useBotConfig, useDeleteBotConfig, useUpdateBotConfig } from '@/hooks/useBotConfig';
 import { useSettings, useUpdateSettings } from '@/hooks/useSettings';
 import { CardFooter, CardHeader, SettingsCard, StatusPill } from './primitives';
@@ -96,8 +80,7 @@ export function BotSettingsCard() {
   const dirty = botDirty || digestDirty;
   const busy = updateBot.isPending || updateSettings.isPending || delMut.isPending;
   const keyMissingForToken = tokenDirty && !data.encryptionKeyConfigured;
-  // Each half gates on its own validity, so an invalid Public URL (a bot
-  // field) can't block saving an unrelated digest edit, and vice-versa.
+  // Each half gates on its own validity, so an invalid URL can't block an unrelated digest edit.
   const botSavable = botDirty && urlValid && !keyMissingForToken;
   const digestSavable = digestDirty;
   const canSave = !busy && (botSavable || digestSavable);
@@ -127,8 +110,6 @@ export function BotSettingsCard() {
   );
 
   const save = async () => {
-    // Run the two halves independently so a failure in one doesn't hide a
-    // success in the other, and report per-half so the user knows what landed.
     const jobs: Array<{ half: 'bot' | 'digest'; run: () => Promise<unknown> }> = [];
     if (botSavable) {
       const body: UpdateBotConfigRequest = {};
@@ -150,8 +131,7 @@ export function BotSettingsCard() {
 
     const results = await Promise.allSettled(jobs.map((j) => j.run()));
     const botOk = results.every((r, i) => jobs[i]?.half !== 'bot' || r.status === 'fulfilled');
-    // Only clear the (write-only) token field once the bot write actually
-    // landed, so a failed save doesn't silently drop the typed token.
+    // Clear the write-only token only once the write landed, so a failure doesn't drop it silently.
     if (botOk && tokenDirty) setTokenDraft('');
 
     const failed = jobs.filter((_, i) => results[i]?.status === 'rejected').map((j) => j.half);
@@ -212,6 +192,7 @@ export function BotSettingsCard() {
           admins={admins}
           onRemoveAdmin={(id) => setAdmins((xs) => xs.filter((x) => x.id !== id))}
           onAddAdmin={(admin) => setAdmins((xs) => [...xs, admin])}
+          currentTelegramUserId={getTelegramUserId()}
           urlDraft={urlDraft}
           onUrlChange={setUrlDraft}
           urlValid={urlValid}

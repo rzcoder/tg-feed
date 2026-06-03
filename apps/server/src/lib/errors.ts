@@ -1,14 +1,4 @@
-/**
- * Typed error hierarchy for HTTP route handlers.
- *
- * Throw these from inside route handlers; the Fastify error handler
- * (`api/errorHandler.ts`) reads `statusCode` + `code` and maps them to
- * the wire-format envelope `{ error: { code, message, issues? } }`.
- *
- * Anything not derived from `AppError` is treated as a 500 by the handler
- * with a generic `internal` message — so do not throw raw `Error` for
- * client-facing failure modes.
- */
+// Throw these from route handlers; api/errorHandler.ts maps them to the wire envelope. A raw Error becomes a generic 500, so never throw one for client-facing failures.
 export class AppError extends Error {
   constructor(
     public readonly statusCode: number,
@@ -47,25 +37,14 @@ export class ConflictError extends AppError {
   }
 }
 
-/**
- * Thrown when an upstream service (Telegram via gramjs) is unreachable or
- * misbehaving. Maps to 503; the `code` is an explicit subtype the web UI
- * keys on for retry / fallback messaging.
- */
+// 503; `code` is a subtype the web UI keys on for retry/fallback messaging.
 export class UpstreamError extends AppError {
   constructor(message: string, code = 'upstream_unavailable') {
     super(503, code, message);
   }
 }
 
-/**
- * Builds the right 503 for a Telegram dep that's currently undefined.
- * `telegram_initializing` (transient, retry) when the lifecycle phase is
- * still 'connecting'; `telegram_unavailable` (configure / re-login) for
- * the steady-state disconnected case. Both subscription and destination
- * routes use the same logic, so it lives here to keep the message and
- * code mapping consistent.
- */
+// telegram_initializing (retry) while 'connecting', else telegram_unavailable (configure/re-login).
 export function telegramUnavailableError(status: { state: string }): UpstreamError {
   if (status.state === 'connecting') {
     return new UpstreamError('Telegram is starting up; retry in a moment', 'telegram_initializing');
@@ -73,12 +52,7 @@ export function telegramUnavailableError(status: { state: string }): UpstreamErr
   return new UpstreamError('Telegram client not configured', 'telegram_unavailable');
 }
 
-/**
- * Thrown for "this shouldn't happen" cases — e.g. a row that exists at
- * INSERT-time disappearing before the immediate follow-up read. Maps to
- * 500; the message is logged but `errorHandler.ts` only echoes the
- * generic envelope, so internal context never leaks to the client.
- */
+// 500 for "shouldn't happen" cases; message is logged but never echoed to the client.
 export class InternalError extends AppError {
   constructor(message: string) {
     super(500, 'internal', message);

@@ -1,8 +1,3 @@
-/**
- * Wipe sheet — checkboxes per wipeable section, gated on a typed-in
- * confirmation phrase, then POSTs to /api/system/wipe. Destructive and
- * irreversible, so the confirm button stays disabled until the phrase matches.
- */
 import { useState } from 'react';
 import { Trash } from 'lucide-react';
 import { WIPE_SECTIONS, type WipeSection } from '@tg-feed/shared';

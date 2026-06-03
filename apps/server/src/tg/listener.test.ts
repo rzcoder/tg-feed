@@ -132,4 +132,34 @@ describe('attachNewMessageListener', () => {
       sourceMessageId: '42',
     });
   });
+
+  it('fans out to every subscription that shares the same source', async () => {
+    const [dest2] = dbHandle.db
+      .insert(destinations)
+      .values({ name: 'd2', chatId: '-100888' })
+      .returning()
+      .all();
+    dbHandle.db
+      .insert(subscriptions)
+      .values({ sourceChatId: '-100123', sourceTitle: 's2', destinationId: dest2!.id })
+      .run();
+
+    const captured: Partial<CapturedHandler> = {};
+    const enqueued: RawForwardJob[] = [];
+    const forwarding: RawForwardingHandle = {
+      enqueue: (job) => {
+        enqueued.push(job);
+      },
+    };
+    attachNewMessageListener(
+      fakeClient(captured as CapturedHandler),
+      dbHandle.db,
+      logger,
+      forwarding,
+    );
+    await captured.handler!(makeEvent('-100123', 42));
+    expect(enqueued).toHaveLength(2);
+    expect(enqueued.map((j) => j.destinationChatId).sort()).toEqual(['-100888', '-100999']);
+    expect(enqueued.every((j) => j.sourceMessageId === '42')).toBe(true);
+  });
 });

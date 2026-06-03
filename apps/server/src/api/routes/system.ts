@@ -1,22 +1,4 @@
-/**
- * System routes.
- *
- * - `GET /system/status`: Surface enough info for the web UI to explain
- *   why some features are unavailable (e.g. Telegram disconnected →
- *   subscribing/forwarding disabled). The status is supplied as a getter
- *   so the health monitor (apps/server/src/tg/healthMonitor.ts) can update
- *   it on each probe and the route always reads the current value.
- *
- * - `POST /system/export`, `POST /system/import`, `POST /system/wipe`:
- *   Settings → Data section. Versioned JSON envelope (`exportFileSchema`)
- *   carries selected sections (subscriptions / destinations / library
- *   filters / app settings) round-trip without ID collisions — IDs are
- *   intentionally omitted and import remaps via natural keys (chatId+name
- *   for destinations, name for library filters, sourceChatId for
- *   subscriptions). Import body limit is bumped to 2 MB on the route
- *   level — large enough for thousands of subscriptions, small enough to
- *   refuse abuse.
- */
+// Import remaps by natural key (destinations: chatId+name; library filters: name; subscriptions: sourceChatId).
 import { eq, inArray } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -64,9 +46,6 @@ import {
 import { getStatsDigestConfig } from '../../forwarding/statsDigestConfig.js';
 import { replaceInlineFilters, replaceLibraryFilterAttachments } from './subscriptions.js';
 
-// Read the app version from the root package.json so exports carry a
-// truthful tag. The path goes from this module up four levels:
-// apps/server/src/api/routes → apps/server → repo root.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -92,26 +71,10 @@ export interface RegisterSystemRoutesDeps {
   bus: EventBus;
   logger: Logger;
   getTelegramStatus: () => TelegramStatus;
-  /**
-   * Returns the loaded `TG_SESSION_ENCRYPTION_KEY` as a 32-byte Buffer, or
-   * null when not set. Used by import to decide whether to write the
-   * encrypted account blob carried inside `appSettings.telegramAccount`.
-   */
+  // null gates writing the imported account blob.
   getEncryptionKey?: () => Buffer | null;
-  /**
-   * Triggers a live-swap of the gramjs runtime so an imported account row
-   * activates without a process restart. Optional; when absent, the row is
-   * still written but takes effect on next boot.
-   */
+  // Live-swaps gramjs so an imported account activates without restart.
   reloadTelegramSession?: () => Promise<void>;
-  /**
-   * Best-effort Telegram profile-photo fetcher. Import never carries icon
-   * bytes (they're derived data, refetched per host), so after a successful
-   * import we backfill `iconDataUrl` for the rows we just created — mirroring
-   * the inline fetch that POST /subscriptions and POST /destinations already
-   * do. Optional: when absent (Telegram-less boot, tests) imported rows stay
-   * icon-less until the access monitor's 24h sweep catches them.
-   */
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
 }
 
@@ -133,10 +96,7 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
   app.post(
     '/system/export',
     {
-      // Behind cookie auth and SameSite=strict, but cap nonetheless: a stolen
-      // cookie or compromised browser extension shouldn't be able to grind
-      // out unlimited full-DB dumps. Generous enough that legitimate
-      // back-to-back exports work; tight enough that abuse is bounded.
+      // Cap full-DB dumps against a stolen cookie.
       config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
     },
     async (request): Promise<ExportFile> => {
@@ -158,23 +118,15 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
           `unsupported export schemaVersion ${body.data.schemaVersion}`,
         );
       }
-      // v1 files lack `appSettings.telegramAccount`; v2 importers handle
-      // both transparently because the field is `.optional()`.
       const sectionSet = new Set<ExportSection>(body.sections);
       const result = applyImport(db, body.data, sectionSet, body.conflictStrategy, {
         ...(getEncryptionKey !== undefined ? { getEncryptionKey } : {}),
       });
-      // If a telegram account was actually written, kick the live-swap so
-      // the running app picks it up without a restart. Failures are
-      // swallowed — the row is saved either way.
+      // Failures swallowed: the row is saved either way.
       if (result.telegramAccountWritten && reloadTelegramSession) {
         await reloadTelegramSession().catch(() => {});
       }
-      // Backfill profile photos for the rows we just imported. Fire-and-forget:
-      // a large import shouldn't block the HTTP response on hundreds of
-      // sequential Telegram downloads. Icons stream into the UI as they land
-      // via the `subscription.changed` / `destination.changed` SSE events the
-      // backfill emits (the web client invalidates its lists on those).
+      // Fire-and-forget so a big import doesn't block on sequential TG downloads.
       const fetchProfilePhoto = getFetchProfilePhoto?.();
       if (fetchProfilePhoto && result.iconTargets.length > 0) {
         void backfillImportedIcons({
@@ -194,9 +146,7 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
   app.post(
     '/system/wipe',
     {
-      // Destructive — cap aggressively. A leaked cookie or stored-XSS
-      // shouldn't be able to nuke the DB in a tight loop. Three calls per
-      // minute is still plenty for a legitimate "clear & re-import" flow.
+      // Destructive — cap aggressively against a leaked cookie.
       config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
     },
     async (request): Promise<WipeResult> => {
@@ -351,9 +301,7 @@ function buildExport(db: Db, sections: Set<ExportSection>): ExportFile {
       statsDigestTime: digest.time,
       statsDigestTimezone: digest.timezone,
     };
-    // v2: include the encrypted Telegram account row when present. The
-    // ciphertext + fingerprint travel as-is — the importing host decides
-    // (via fingerprint match) whether to write the row to its own DB.
+    // Ciphertext + fingerprint travel as-is; importing host decides via fingerprint match.
     const accountRow = db.select().from(telegramAccount).get();
     if (accountRow) {
       settings.telegramAccount = {
@@ -379,7 +327,6 @@ function destKey(chatId: string, name: string): string {
 
 const emptySectionResult = (): ImportSectionResult => ({ created: 0, skipped: 0, replaced: 0 });
 
-/** A subscription/destination row that import created, needing a profile photo. */
 export interface IconBackfillTarget {
   kind: 'subscription' | 'destination';
   id: number;
@@ -388,13 +335,7 @@ export interface IconBackfillTarget {
 
 interface ApplyImportResult {
   body: ImportResult;
-  /** True when a `telegram_account` row was created or replaced. */
   telegramAccountWritten: boolean;
-  /**
-   * Subscription/destination rows this import touched (created or replaced)
-   * that still have a null `iconDataUrl` — fed to `backfillImportedIcons`
-   * after the transaction commits. Empty when nothing needs an icon.
-   */
   iconTargets: IconBackfillTarget[];
 }
 
@@ -413,18 +354,11 @@ function applyImport(
     warnings: [],
   };
   let telegramAccountWritten = false;
-  // IDs of subscription / destination rows this import created or replaced.
-  // After the transaction commits we re-read these and keep only the ones
-  // still missing an icon, so the post-import backfill targets exactly the
-  // rows that need one (created rows always do; replaced rows only when they
-  // were icon-less to begin with).
   const touchedDestIds: number[] = [];
   const touchedSubIds: number[] = [];
 
   db.transaction((tx) => {
-    // Build initial maps from existing rows so subscriptions can resolve
-    // refs even when the user opted out of importing destinations / library
-    // filters in this run (and the records already exist).
+    // Seed from existing rows so subscriptions resolve refs even when those sections weren't imported.
     const destMap = new Map<string, number>();
     for (const d of tx.select().from(destinations).all() as Destination[]) {
       destMap.set(destKey(d.chatId, d.name), d.id);
@@ -477,8 +411,7 @@ function applyImport(
       for (const item of data.libraryFilters) {
         const existingId = libMap.get(item.name);
         if (existingId !== undefined) {
-          // ruleType is immutable post-create; if it changed, surface a
-          // warning and skip this row regardless of strategy.
+          // ruleType is immutable; on mismatch, warn and skip regardless of strategy.
           const existingRow = tx
             .select()
             .from(libraryFilters)
@@ -534,8 +467,6 @@ function applyImport(
             result.subscriptions.skipped += 1;
             continue;
           }
-          // Replace: overwrite mutable fields + bulk-replace filter sets via
-          // the existing helpers (same code path as PATCH /subscriptions/:id).
           tx.update(subscriptions)
             .set({
               sourceTitle: item.sourceTitle,
@@ -579,11 +510,7 @@ function applyImport(
     }
 
     if (sections.has('appSettings') && data.appSettings) {
-      // The throttle/debouncer fields go into `app_settings`. The optional
-      // `telegramAccount` sub-object is split off and routed to its own
-      // table (`telegram_account`) — the wire format embeds it under
-      // `appSettings` so the user can manage both with one checkbox in the
-      // UI, but at rest they live separately.
+      // telegramAccount rides under appSettings on the wire but persists to its own table.
       const { telegramAccount: importedAccount, ...appSettingsValue } = data.appSettings;
       const existing = tx
         .select()
@@ -593,9 +520,7 @@ function applyImport(
       if (existing && strategy === 'skip') {
         result.appSettings.skipped += 1;
       } else {
-        // Merge onto the existing row rather than replacing it: the export
-        // may omit fields (e.g. an older file with no digest schedule), and a
-        // wholesale overwrite would wipe whatever the row already held.
+        // Merge, don't overwrite: an older export may omit fields the row already holds.
         const mergedValue = {
           ...((existing?.value as Record<string, unknown> | undefined) ?? {}),
           ...appSettingsValue,
@@ -626,10 +551,7 @@ function applyImport(
     }
   });
 
-  // Re-read the touched rows (post-commit) and keep only those still missing
-  // an icon. Created rows are always null here; replaced rows pass through
-  // only when they were already icon-less, so we never re-download a photo a
-  // row already has.
+  // Keep only touched rows still missing an icon, so we never re-download.
   const iconTargets: IconBackfillTarget[] = [];
   if (touchedDestIds.length > 0) {
     const rows = db
@@ -667,23 +589,7 @@ function applyImport(
   return { body: result, telegramAccountWritten, iconTargets };
 }
 
-/**
- * Post-import icon backfill. Import envelopes never carry profile-photo bytes
- * (they're derived data — large, and tied to the importing host's session),
- * so freshly imported subscriptions / destinations land with `iconDataUrl =
- * null` and render the lucide fallback. This mirrors the inline fetch that the
- * create routes (POST /subscriptions, POST /destinations) run, but batched and
- * fired after the import response so a big import isn't held hostage to
- * sequential Telegram downloads.
- *
- * Best-effort throughout: `fetchProfilePhoto` already swallows its own errors
- * and returns null (no photo, gramjs error, oversize), so a failure just
- * leaves that one row icon-less for the access monitor's 24h sweep to retry.
- * Each successful stamp emits the same `*.changed` event the access monitor
- * uses, so the web client's SSE listener invalidates its lists and the icon
- * appears without a manual refresh. Fetches are deduped per chatId so a chat
- * used by several rows is downloaded once.
- */
+// Best-effort, deduped per chatId; each stamp emits a *.changed event so the UI refreshes.
 export async function backfillImportedIcons(deps: {
   db: Db;
   bus: EventBus;
@@ -717,12 +623,7 @@ export async function backfillImportedIcons(deps: {
   return stamped;
 }
 
-/**
- * Returns true when the row was actually upserted (caller triggers
- * live-swap). Returns false when the row was skipped (no key, fingerprint
- * mismatch, or strategy=skip with an existing row); the warning array is
- * mutated in place either way.
- */
+// false = skipped: no key, fingerprint mismatch, or skip strategy.
 type DbOrTx = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
 
 function importTelegramAccount(
@@ -817,11 +718,7 @@ function resolveLibraryFilterIds(
   return ids;
 }
 
-// The exported subscription's inline filters are already validated by the
-// `exportFileSchema`'s discriminated union — every entry carries valid
-// per-rule params. Pass them through, but keep the warning hook so a future
-// schema bump or hand-edited file with stray entries gets a clear surface
-// rather than a silent throw.
+// Already validated by exportFileSchema; warning hook retained for future schema drift.
 function importableInlineFilters(
   item: ExportedSubscription,
   _warnings: ImportWarning[],
@@ -840,16 +737,13 @@ function applyWipe(db: Db, sections: Set<WipeSection>): WipeResult {
       deleted.subscriptions = result.changes;
     }
     if (sections.has('libraryFilters')) {
-      // Pre-detach to avoid the FK RESTRICT on `subscription_library_filters
-      // → library_filters` when subscriptions weren't selected for wipe.
+      // Pre-detach to dodge FK RESTRICT on subscription_library_filters → library_filters.
       tx.delete(subscriptionLibraryFilters).run();
       const result = tx.delete(libraryFilters).run();
       deleted.libraryFilters = result.changes;
     }
     if (sections.has('destinations')) {
-      // FK is ON DELETE SET NULL on `subscriptions.destination_id`, so
-      // subscriptions survive — just lose their destination. Order matters
-      // only relative to subscriptions wipe (already done above if selected).
+      // FK is ON DELETE SET NULL on subscriptions.destination_id, so subscriptions survive.
       const result = tx.delete(destinations).run();
       deleted.destinations = result.changes;
     }

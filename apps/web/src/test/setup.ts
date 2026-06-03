@@ -2,9 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
 
-// jsdom doesn't implement matchMedia. Reinstall a default before every test so
-// the afterEach restore below can't leave it returning undefined (the theme
-// provider now mounts in every render). Tests that care override the mock.
+// jsdom lacks matchMedia; reinstall per-test so afterEach's restoreAllMocks can't leave it undefined.
 beforeEach(() => {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
     matches: false,

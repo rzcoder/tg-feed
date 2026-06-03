@@ -1,14 +1,3 @@
-/**
- * Two-step filter creation/edit sheet.
- *
- * Step 1 (add only) — pick a rule from the catalogue list.
- * Step 2 — fill the params for the picked rule.
- *
- * Used in three modes:
- * - kind='sub' add: attach a per-sub filter (no Name field)
- * - kind='sub' edit: edit per-sub filter params (skip step 1)
- * - kind='library' add/edit: same flow plus a Name field
- */
 import { ChevronLeft } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -34,7 +23,7 @@ export interface FilterSheetSubmit {
   ruleType: FilterRuleType;
   params: Record<string, unknown>;
   mode: FilterMode;
-  /** Name only set when kind='library'. */
+  // Only set when kind='library'.
   name?: string;
 }
 
@@ -43,7 +32,6 @@ export interface FilterSheetProps {
   mode: 'add' | 'edit';
   kind: FilterSheetKind;
   initial?: SubscriptionFilterDto | LibraryFilterDto | null;
-  /** Available rule types from the API catalogue (filtered by support). */
   availableTypes: readonly FilterRuleType[];
   onClose: () => void;
   onSubmit: (data: FilterSheetSubmit) => void;
@@ -65,9 +53,7 @@ export function FilterSheet({
 
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState('');
-  // The rule draft (type + params + include/exclude mode) and its validation
-  // are shared with SubSheet's inline-filter editor via this hook. `mode` is
-  // taken by the add/edit prop here, so it's exposed as `filterMode`.
+  // Draft mode aliased to filterMode since `mode` is already the add/edit prop.
   const {
     ruleType: type,
     params,

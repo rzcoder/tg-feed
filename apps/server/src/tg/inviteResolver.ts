@@ -1,22 +1,4 @@
-/**
- * gramjs wrappers for `messages.CheckChatInvite` (preview) and
- * `messages.ImportChatInvite` (actually join).
- *
- * The check call is non-destructive — we use it from the resolve endpoint
- * to show the user a preview card before they commit. The import call is
- * destructive (joins the chat) — used from the create endpoint after the
- * user confirms.
- *
- * For `ChatInvite` (not yet a member) the preview carries the title but no
- * chatId — only `ImportChatInvite` returns the chat. The resolve flow
- * surfaces `chatId: null` in that case and forwards the raw hash to the
- * create endpoint.
- *
- * Errors are mapped to the typed `AppError` hierarchy for `checkInvite`
- * (so the resolve endpoint propagates 4xx/5xx with stable codes), and
- * coalesced into `'no_access'` for the import path (matching the
- * `joinChannel` pattern — the create endpoint wants a single decision bit).
- */
+// checkInvite = non-destructive preview (ChatInvite carries title but no chatId until joined); createImportInvite joins. Check errors map to typed AppError; import coalesces to 'no_access'.
 import { Api } from 'telegram';
 import type { TelegramClient } from 'telegram';
 import { NotFoundError, UpstreamError } from '../lib/errors.js';
@@ -57,13 +39,7 @@ const NOT_FOUND_PATTERNS = /INVITE_HASH_(EXPIRED|INVALID|EMPTY)/i;
 const PRIVATE_PATTERNS =
   /CHANNEL_PRIVATE|USER_BANNED_IN_CHANNEL|USERS_TOO_MUCH|CHAT_ADMIN_REQUIRED/i;
 
-/**
- * Convert a chat-shaped object (from `ChatInviteAlready.chat`,
- * `ChatInvitePeek.chat`, or an entry in `Updates.chats[]`) into the
- * `-100`-prefixed string the rest of the system uses. Mirrors the rule in
- * `entityResolver.entityToResolved` so invite-derived ids match
- * `-100`-prefixed ids stored elsewhere.
- */
+// Normalize a chat-shaped object to the -100-prefixed id used everywhere else.
 export function chatIdFromInviteChat(chat: unknown): string | null {
   if (!chat || typeof chat !== 'object') return null;
   const c = chat as { id?: { toString: () => string } | number | string; className?: string };
@@ -82,10 +58,7 @@ function chatTitle(chat: unknown): string {
   return c.title ?? '';
 }
 
-// Invite hashes are bearer credentials — anyone with the full string can join
-// the chat (subject to expiry/usage limits). Logs may be shipped to external
-// systems; only the first 6 chars survive so the operator can still correlate
-// without leaking the credential.
+// Invite hashes are bearer credentials; keep only the first 6 chars out of logs.
 function redactInviteHash(hash: string): string {
   if (hash.length <= 6) return '***';
   return `${hash.slice(0, 6)}…`;
@@ -110,7 +83,7 @@ export async function checkInvite(client: InviteClient, hash: string): Promise<I
     return {
       chatId: chatIdFromInviteChat(result.chat),
       title: chatTitle(result.chat),
-      // Peek means we can read but haven't joined as a full participant.
+      // Peek = can read, not a full participant.
       alreadyMember: false,
     };
   }
@@ -139,8 +112,7 @@ export function createImportInvite(client: InviteClient, logger: Logger): Import
     } catch (err) {
       const msg = errorMessage(err).toUpperCase();
       if (/USER_ALREADY_PARTICIPANT/i.test(msg)) {
-        // Already a member — fall back to a check call to fetch the chat
-        // info so the caller still gets a chatId for storage.
+        // Already a member — check call still yields a chatId for storage.
         try {
           const preview = await checkInvite(client, hash);
           return { status: 'ok', chatId: preview.chatId, title: preview.title };

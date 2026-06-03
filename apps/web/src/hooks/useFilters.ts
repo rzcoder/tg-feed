@@ -91,8 +91,6 @@ export function useDeleteSubscriptionFilter() {
   });
 }
 
-// --- Library filters ---
-
 export function useLibraryFilters() {
   return useQuery({
     queryKey: LIBRARY_FILTERS_KEY,

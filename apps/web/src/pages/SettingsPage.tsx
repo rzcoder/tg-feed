@@ -17,8 +17,6 @@ export function SettingsPage() {
     );
   }
 
-  // Each panel is a self-titled card (header carries its own title + status),
-  // stacked in a centered column.
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <div className="scroll flex-1 min-h-0 px-4.5 pt-4 pb-6">

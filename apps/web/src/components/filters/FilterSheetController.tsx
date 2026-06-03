@@ -46,9 +46,7 @@ export function FilterSheetController({
         );
       } else {
         createLibMut.mutate(
-          // The discriminated-union schema is satisfied at runtime because the
-          // server zod validates the same shape; we cast through the same wire
-          // shape here.
+          // Cast safe: server zod validates the same discriminated-union shape.
           {
             name: data.name ?? '',
             ruleType: data.ruleType,

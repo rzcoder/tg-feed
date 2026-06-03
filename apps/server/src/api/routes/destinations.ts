@@ -1,10 +1,4 @@
-/**
- * Destinations CRUD routes (Chapter 10).
- *
- * Destinations are the named CRUD list subscriptions pick from. Delete is
- * pre-checked for usage in this layer; the FK is `ON DELETE RESTRICT` as a
- * belt-and-suspenders DB-level guard.
- */
+// Delete is usage-checked here; the FK is also ON DELETE RESTRICT as a DB-level guard.
 import { asc, count, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -49,36 +43,12 @@ interface DestinationRow {
 
 export interface RegisterDestinationDeps {
   db: Db;
-  /**
-   * Live status getter used to distinguish "Telegram is starting up — try
-   * again in a moment" from "Telegram is not configured at all". Drives
-   * the error code returned when a tg-dep getter yields undefined.
-   */
   getTelegramStatus: () => TelegramStatus;
-  /**
-   * Lazy lookup for the universal "paste-anything" resolver — backs
-   * `POST /destinations/resolve`. Read per request because the boot path
-   * fills it asynchronously after `app.listen()`. When undefined the
-   * route returns 503 with `telegram_initializing` (during the boot
-   * window) or `telegram_unavailable` (steady-state disconnected).
-   */
+  // Lazy getters: filled after app.listen(), so read per request. Undefined → 503.
   getChatResolver?: () => ChatResolver | undefined;
-  /**
-   * Lazy lookup for the `messages.ImportChatInvite` wrapper invoked from
-   * `POST /destinations` when the body carries `inviteHash`. Same
-   * lifecycle as `getChatResolver`.
-   */
   getImportInvite?: () => ImportInviteFn | undefined;
-  /**
-   * Lazy lookup for the best-effort profile-photo fetcher invoked after
-   * the row is inserted. When undefined the row's `iconDataUrl` stays
-   * null and the access monitor's lazy backfill catches it later.
-   */
+  // Undefined leaves iconDataUrl null; the access monitor backfills it later.
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
-  /**
-   * Lazy lookup for the forum-topic lister backing `POST /destinations/topics`.
-   * Same lifecycle as `getChatResolver`. When undefined the route returns 503.
-   */
   getListForumTopics?: () => ForumTopicLister | undefined;
 }
 
@@ -146,8 +116,7 @@ export function registerDestinationRoutes(
         throw new UpstreamError('failed to join via invite link', 'invite_join_failed');
       }
       chatId = join.chatId;
-      // We just successfully joined — record access ok now so the access
-      // monitor's first sweep doesn't briefly mis-report.
+      // Just joined — record access ok so the monitor's first sweep doesn't mis-report.
       initialAccessStatus = 'ok';
       accessCheckedAt = new Date();
     } else {
@@ -168,9 +137,7 @@ export function registerDestinationRoutes(
       .returning()
       .all();
     const row = inserted[0]!;
-    // Best-effort: fetch the profile photo and stamp it on the row. The
-    // fetcher already swallows errors and returns null on failure, so we
-    // don't need a try/catch — the response just goes out without an icon.
+    // Best-effort icon: the fetcher swallows errors and returns null.
     let iconDataUrl: string | null = row.iconDataUrl;
     const fetchProfilePhoto = getFetchProfilePhoto?.();
     if (fetchProfilePhoto) {
@@ -244,8 +211,6 @@ export function registerDestinationRoutes(
 }
 
 function listDestinations(db: Db): DestinationRow[] {
-  // One query: destinations LEFT JOIN subscriptions GROUP BY destination,
-  // counting subscription references.
   const rows = db
     .select({
       id: destinations.id,

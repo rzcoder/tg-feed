@@ -1,20 +1,4 @@
-/**
- * Periodic `client.getDialogs` ping that keeps gramjs's update stream alive.
- *
- * The primary fix for "channel updates silently stop" is the `historyPoller`
- * — it actually fetches missed messages. This keepalive is the secondary,
- * cheap signal: gramjs maintainer painor documented in
- * https://github.com/gram-js/gramjs/issues/280 that calling `getEntity` /
- * `getMessages` / `getDialogs` periodically nudges Telegram to keep
- * delivering NewMessage events. Issue
- * https://github.com/gram-js/gramjs/issues/654 reports a 30s-interval
- * `getDialogs` call stabilising the update stream for 24h+.
- *
- * On its own this is unreliable for high-volume channels — that's what the
- * poller is for — but pairing the two narrows the window between a missed
- * post and a poller sweep, and is essentially free (one cheap RPC every
- * 30s).
- */
+// Secondary keepalive to the historyPoller: periodic getDialogs nudges gramjs to keep delivering NewMessage (gram-js/gramjs#280, #654). Unreliable alone, but cheap and narrows the miss window.
 import type { TelegramClient } from 'telegram';
 import type { Logger } from '../lib/logger.js';
 import { createPoller, type Poller } from '../lib/poller.js';
@@ -45,9 +29,7 @@ export function createDialogsKeepalive(deps: DialogsKeepaliveDeps): DialogsKeepa
     try {
       await client.getDialogs({ limit: KEEPALIVE_LIMIT });
     } catch (err) {
-      // Single bad call must not stop the timer — we want to keep retrying
-      // on the next tick. Log at debug to avoid noise on transient errors;
-      // the historyPoller and access monitor will surface persistent issues.
+      // Debug-level: transient failures are expected and the poller/access monitor surface persistent issues.
       logger.debug({ err }, 'dialogs keepalive ping failed');
     } finally {
       inFlight = false;

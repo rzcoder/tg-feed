@@ -1,37 +1,3 @@
-/**
- * Subscription CRUD + resolve routes.
- *
- * `sourceChatId` and `handle` are immutable post-creation (matches the
- * shared schema's `updateSubscriptionRequestSchema`); to change the source
- * channel, delete and recreate.
- *
- * DELETE returns 204 No Content (REST convention). Cascades down to
- * `subscription_filters` and `subscription_library_filters` (Ch 11);
- * `forward_log` rows survive with `subscriptionId` set to NULL via
- * `ON DELETE SET NULL` (Ch 2).
- *
- * The resolve endpoint is preview-only — it never writes to the DB. The
- * UI submits the resolved fields back to POST /subscriptions to commit.
- * Routes that need the gramjs entity resolver gate on its presence and
- * return 503 — `telegram_initializing` while the Telegram subsystem is
- * still bootstrapping (background init in `apps/server/src/index.ts`),
- * `telegram_unavailable` once it's settled in a disconnected state (test
- * mode, missing Telegram env). The web UI keys on the code: the first is
- * a transient retry; the second points the operator at configuration.
- *
- * Library filter attachments are exposed two ways:
- * - bulk-replace via `libraryFilterIds` on POST/PATCH /subscriptions[/:id]
- *   (used by the SubSheet's checkbox group)
- * - granular at POST /:id/library-filters and DELETE /:id/library-filters/:libId
- *   (used by the per-sub Filters view's `+` and `X` buttons)
- *
- * Inline (private) filters work the same way: bulk-replace via
- * `inlineFilters` on POST/PATCH /subscriptions[/:id], plus the granular
- * CRUD at /:id/filters[/:filterId] in `filters.ts`. Both library and
- * inline writes happen inside a single `db.transaction(...)` so a partial
- * failure can't leave the subscription with one set replaced and the other
- * untouched.
- */
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -56,6 +22,7 @@ import {
   subscriptions,
 } from '../../db/schema.js';
 import type { EventBus } from '../../events/bus.js';
+import { assertFilterParamsCompilable } from '../../filters/validateParams.js';
 import {
   InternalError,
   NotFoundError,
@@ -69,9 +36,6 @@ import type { JoinChannelFn } from '../../tg/joinChannel.js';
 import type { ProfilePhotoFetcher } from '../../tg/profilePhoto.js';
 import { idParamsSchema } from './_params.js';
 
-// `db.transaction(cb)` passes `cb` a tx handle whose query interface matches
-// `Db`'s, but its TS type is the more specific `SQLiteTransaction`. Helpers
-// that need to run under either branch take this union.
 type DbOrTx = Db | Parameters<Parameters<Db['transaction']>[0]>[0];
 
 const libraryFilterAttachmentParamsSchema = z.object({
@@ -82,38 +46,14 @@ const libraryFilterAttachmentParamsSchema = z.object({
 export interface RegisterSubscriptionDeps {
   db: Db;
   bus: EventBus;
-  /**
-   * Live status getter used to distinguish "Telegram is starting up — try
-   * again in a moment" from "Telegram is not configured at all". Drives
-   * the error code returned when a tg-dep getter yields undefined.
-   */
+  // Distinguishes "starting up" from "not configured" for the tg-dep error code.
   getTelegramStatus: () => TelegramStatus;
-  /**
-   * Lazy lookup for the universal "paste-anything" resolver — backs
-   * `POST /subscriptions/resolve`. Read per request because the boot path
-   * fills it asynchronously after `app.listen()`. Accepts any of:
-   * `@username`, `t.me/username`, `t.me/+HASH`, `+HASH`, or numeric chat id.
-   */
+  // Lazy getters: boot fills them asynchronously after `app.listen()`, so read per request.
   getChatResolver?: () => ChatResolver | undefined;
-  /**
-   * Lazy lookup for the `messages.ImportChatInvite` wrapper invoked from
-   * `POST /subscriptions` when the body carries `inviteHash`. Same
-   * lifecycle as `getChatResolver`.
-   */
   getImportInvite?: () => ImportInviteFn | undefined;
-  /**
-   * Lazy lookup for the auto-join helper invoked after a successful
-   * POST /subscriptions insert (chatId path). When the getter yields
-   * undefined the row keeps the default 'ok' status and the access
-   * monitor's first sweep corrects it. The `inviteHash` path bypasses
-   * this — `importInvite` already joined.
-   */
+  // undefined => keep default status; access monitor's first sweep corrects it.
   getJoinChannel?: () => JoinChannelFn | undefined;
-  /**
-   * Lazy lookup for the best-effort profile-photo fetcher invoked after
-   * the row is inserted. When undefined the row's `iconDataUrl` stays
-   * null and the access monitor's lazy backfill catches it later.
-   */
+  // undefined => iconDataUrl stays null; access monitor backfills later.
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
 }
 
@@ -156,9 +96,7 @@ export function registerSubscriptionRoutes(
 
   app.post('/subscriptions', async (request, reply) => {
     const body = createSubscriptionRequestSchema.parse(request.body);
-    // `destinationId` is now optional/nullable — only validate when provided.
-    // FK SET NULL would coalesce a bad id silently, so we still 400 up-front
-    // for a missing one to surface a clear UI message.
+    // FK SET NULL would coalesce a bad id silently; 400 up-front for a clear UI message.
     if (body.destinationId !== undefined && body.destinationId !== null) {
       const dest = db
         .select()
@@ -170,13 +108,7 @@ export function registerSubscriptionRoutes(
     if (body.libraryFilterIds && body.libraryFilterIds.length > 0) {
       assertLibraryFiltersExist(db, body.libraryFilterIds);
     }
-    // Source==destination guard. A subscription whose source chat id is also
-    // a destination chat id would forward into itself: the bot's own forwards
-    // would (via the history poller, which bypasses the `incoming:true`
-    // filter on the live listener) be re-ingested and forwarded again on the
-    // next sweep, ad infinitum. Reject up-front; safe to skip when the body
-    // uses an `inviteHash` since we don't know the chat id until after join,
-    // and the post-join shape is checked below.
+    // source==destination = forwarding loop (poller re-ingests own forwards); inviteHash re-checked post-join below.
     if (body.sourceChatId !== undefined) {
       const conflict = db
         .select({ id: destinations.id })
@@ -190,10 +122,7 @@ export function registerSubscriptionRoutes(
       }
     }
 
-    // Resolve the source chat id from either the resolved id (existing flow)
-    // or by joining via invite hash (new flow). The hash path is destructive
-    // and runs *before* the insert so a join failure doesn't leave a
-    // half-baked row behind.
+    // Invite-hash join is destructive; run it before the insert so a failure leaves no half-baked row.
     let sourceChatId: string;
     let preJoined = false;
     if (body.inviteHash) {
@@ -210,11 +139,7 @@ export function registerSubscriptionRoutes(
     } else {
       sourceChatId = body.sourceChatId!;
     }
-    // Re-check post-resolve in case the invite path landed on a chat that is
-    // already a destination. (Same loop-prevention rationale as above.) We
-    // intentionally don't undo the join — at this point the bot has joined
-    // the channel; the operator just can't use it as a subscription with
-    // that destination configuration.
+    // Re-check post-resolve for the loop guard; the join is intentionally not undone.
     {
       const conflict = db
         .select({ id: destinations.id })
@@ -249,12 +174,8 @@ export function registerSubscriptionRoutes(
       }
       return row.id;
     });
-    // For the chatId path: auto-join the source channel so the userbot
-    // starts receiving its events. Done outside the transaction (gramjs
-    // network I/O can't be atomic with SQLite) and before the SSE emit so
-    // the DTO read by the UI carries the post-join status.
+    // Outside the tx (gramjs I/O isn't atomic with SQLite) and before the SSE emit so the DTO carries post-join status.
     if (preJoined) {
-      // Already joined via importInvite; just stamp the access check.
       db.update(subscriptions)
         .set({ sourceAccessStatus: 'ok', sourceAccessCheckedAt: new Date() })
         .where(eq(subscriptions.id, newId))
@@ -269,10 +190,7 @@ export function registerSubscriptionRoutes(
           .run();
       }
     }
-    // Best-effort profile photo fetch. Same reasoning as on the
-    // destination create path: the fetcher swallows errors and returns
-    // null, so failure means the row stays icon-less until the access
-    // monitor's lazy backfill kicks in.
+    // Best-effort; fetcher swallows errors, so the row stays icon-less until backfill.
     const fetchProfilePhoto = getFetchProfilePhoto?.();
     if (fetchProfilePhoto) {
       const iconDataUrl = await fetchProfilePhoto(sourceChatId);
@@ -334,7 +252,6 @@ export function registerSubscriptionRoutes(
     return null;
   });
 
-  /** Granular attach — backs the per-sub view's `+ library filter` action. */
   app.post('/subscriptions/:id/library-filters', async (request, reply) => {
     const { id } = idParamsSchema.parse(request.params);
     const body = attachLibraryFilterRequestSchema.parse(request.body);
@@ -361,7 +278,6 @@ export function registerSubscriptionRoutes(
     return dto;
   });
 
-  /** Granular detach — the design's "X" button on attached library chips. */
   app.delete('/subscriptions/:id/library-filters/:libId', async (request, reply) => {
     const { id, libId } = libraryFilterAttachmentParamsSchema.parse(request.params);
     const result = db
@@ -429,10 +345,7 @@ export function replaceLibraryFilterAttachments(
     .run();
 }
 
-// Bulk-replace the private inline filter set for a subscription. The input
-// array has already been zod-validated as a discriminated union, so each
-// element's `params` is guaranteed to match its `ruleType`. Empty array =
-// drop all (matches `replaceLibraryFilterAttachments` semantics).
+// Empty array = drop all. Inputs are pre-validated as a discriminated union (params match ruleType).
 export function replaceInlineFilters(
   db: DbOrTx,
   subscriptionId: number,
@@ -442,6 +355,7 @@ export function replaceInlineFilters(
     .where(eq(subscriptionFilters.subscriptionId, subscriptionId))
     .run();
   if (inputs.length === 0) return;
+  for (const f of inputs) assertFilterParamsCompilable(f.ruleType, f.params);
   db.insert(subscriptionFilters)
     .values(
       inputs.map((f) => ({
@@ -484,9 +398,7 @@ function loadLibraryFilterIdsBatch(db: Db, subscriptionIds: number[]): Map<numbe
   return result;
 }
 
-// Correlated subqueries reused by listSubscriptions/getSubscription.
-// `filterCount` is the sum of per-sub filter rows (regardless of enabled —
-// same as Ch 7) plus library-filter attachments. Both are cheap on SQLite.
+// filterCount = per-sub filter rows (any enabled state) + library attachments.
 const filterCountSubquery = sql<number>`(
   SELECT COUNT(*) FROM ${subscriptionFilters}
   WHERE ${subscriptionFilters.subscriptionId} = ${subscriptions.id}

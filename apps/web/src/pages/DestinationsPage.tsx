@@ -28,8 +28,6 @@ export function DestinationsPage() {
 
   const submit = (data: DestSheetSubmit) => {
     if (sheet.mode === 'edit' && sheet.initial) {
-      // Edit changes name, note, and forum topic; chatId is locked in the
-      // sheet and inviteHash is never set in edit mode.
       updateMut.mutate(
         {
           id: sheet.initial.id,
@@ -69,8 +67,7 @@ export function DestinationsPage() {
     }
   };
 
-  // Stable across renders so the memoized DestRow rows don't re-render on
-  // every parent render (deleteMut/toast are themselves stable references).
+  // Stable identity so memoized DestRow rows don't re-render on every parent render.
   const handleDelete = useCallback(
     (d: DestinationDto) => {
       deleteMut.mutate(d.id, {

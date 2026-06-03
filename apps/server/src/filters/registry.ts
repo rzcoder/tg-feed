@@ -1,16 +1,4 @@
-/**
- * Filter rule registry.
- *
- * Factory pattern — `createRegistry()` returns a fresh, empty registry.
- * Production wiring builds one via `createDefaultRegistry()` (in
- * `rules/index.ts`) and registers all v1 rules; tests can build empty or
- * partial registries without import-order side effects.
- *
- * `register` accepts a statically-typed `FilterRule<T>` and stores it as a
- * type-erased `RegisteredFilterRule`. The cast is the boundary: at register
- * time the rule's `T` ↔ params correlation is known; once retrieved by string
- * lookup, the relationship is gone and runtime zod validation takes over.
- */
+// register() type-erases FilterRule<T> to RegisteredFilterRule; the T↔params link is lost on lookup, so runtime zod validates.
 import type { FilterRuleType } from '@tg-feed/shared';
 import type { FilterRule, RegisteredFilterRule } from './types.js';
 

@@ -1,24 +1,5 @@
-/**
- * Forward log route — paginated activity feed source.
- *
- * Two LEFT JOINs: `forward_log → subscriptions → destinations`. The
- * subscription FK is `ON DELETE SET NULL`, so historic rows for deleted
- * subscriptions survive with `subscriptionId`/`subscriptionTitle`/
- * `sourceHandle`/`destinationName` all `null`. The destination join hops
- * through the subscription's current `destinationId` — `forward_log`
- * doesn't store the destination, so a re-pointed subscription will surface
- * its current destination on historical rows (matches the prior
- * client-side enrichment behavior).
- *
- * Pagination uses the `limit + 1` trick: fetch one row past the asked
- * `limit`, then if the extra row is present `nextOffset = offset + limit`,
- * else `nextOffset = null`. Avoids a separate `COUNT(*)` query while still
- * answering "is there more?".
- *
- * Sort is `desc(createdAt), desc(id)` — albums write N rows in one
- * transaction sharing a `createdAt` ms; sorting by `id` as a tiebreaker
- * makes pagination deterministic across calls.
- */
+// Paginated activity feed. Sub FK is ON DELETE SET NULL, so rows for deleted subs survive with null titles; the dest join hops through the sub's current destinationId, so re-pointing surfaces the new dest on old rows.
+// Pagination is the limit+1 trick (one row past limit → nextOffset, else null), avoiding a COUNT(*). Sort desc(createdAt),desc(id) so albums sharing a createdAt ms paginate deterministically.
 import { desc, eq, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -55,10 +36,7 @@ export function registerForwardLogRoutes(app: FastifyInstance, deps: RegisterFor
         status: forwardLog.status,
         error: forwardLog.error,
         createdAt: forwardLog.createdAt,
-        // Surface presence-only here; the raw JSON itself is fetched on
-        // demand via the dedicated /:id/raw route so list responses stay
-        // small. SQLite renders the boolean as `1`/`0` which the cast
-        // below normalises for the wire format.
+        // Presence only (raw JSON is fetched via /:id/raw); SQLite returns 1/0.
         hasRawMessage: sql<number>`(${forwardLog.rawMessage} IS NOT NULL)`,
       })
       .from(forwardLog)
@@ -90,10 +68,7 @@ export function registerForwardLogRoutes(app: FastifyInstance, deps: RegisterFor
     return response;
   });
 
-  // Deferred-fetch endpoint for the raw JSON snapshot. Kept off the list
-  // route so a page load doesn't drag tens of KB per row over the wire —
-  // the JSON is only useful when the user clicks "View raw" on a specific
-  // entry, and an album's array is identical across its N rows anyway.
+  // Deferred raw-JSON fetch, off the list route so page loads don't drag tens of KB per row.
   app.get('/forward-log/:id/raw', async (request, reply) => {
     const { id } = rawParamsSchema.parse(request.params);
     const row = db

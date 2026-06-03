@@ -2,7 +2,7 @@
 --
 -- Originally created in 0000 as an optional encrypted-at-rest cache for the
 -- gramjs StringSession. The MVP design ended up using `TG_SESSION_STRING`
--- from .env as the source of truth (see PLAN.md "Session storage"). The
+-- from .env as the source of truth. The
 -- table was never written to from app code, and `TG_SESSION_ENCRYPTION_KEY`
 -- — the env knob that would have driven AES around it — was removed in
 -- favour of plain env-only storage.

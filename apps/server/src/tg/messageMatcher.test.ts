@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractMatchableEvent, matchSubscription, type MatchableEvent } from './messageMatcher.js';
+import {
+  extractMatchableEvent,
+  matchSubscriptions,
+  type MatchableEvent,
+} from './messageMatcher.js';
 import type { Subscription } from '../db/schema.js';
 
 function makeSub(overrides: Partial<Subscription>): Subscription {
@@ -26,25 +30,25 @@ const event: MatchableEvent = {
   hasMedia: false,
 };
 
-describe('matchSubscription', () => {
+describe('matchSubscriptions', () => {
   it('returns the matching enabled subscription', () => {
     const subs = [makeSub({ id: 1 })];
-    expect(matchSubscription(event, subs)).toEqual(subs[0]);
+    expect(matchSubscriptions(event, subs)).toEqual(subs);
   });
 
   it('skips disabled subscriptions even on a chat-id match', () => {
     const subs = [makeSub({ id: 1, enabled: false })];
-    expect(matchSubscription(event, subs)).toBeUndefined();
+    expect(matchSubscriptions(event, subs)).toEqual([]);
   });
 
-  it('returns undefined when no subscription matches', () => {
+  it('returns an empty array when no subscription matches', () => {
     const subs = [makeSub({ id: 1, sourceChatId: '-100888' })];
-    expect(matchSubscription(event, subs)).toBeUndefined();
+    expect(matchSubscriptions(event, subs)).toEqual([]);
   });
 
-  it('returns the first enabled subscription when multiple match', () => {
+  it('returns all enabled subscriptions when multiple match (fan-out)', () => {
     const subs = [makeSub({ id: 1, enabled: false }), makeSub({ id: 2 }), makeSub({ id: 3 })];
-    expect(matchSubscription(event, subs)?.id).toBe(2);
+    expect(matchSubscriptions(event, subs).map((s) => s.id)).toEqual([2, 3]);
   });
 });
 

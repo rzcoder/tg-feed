@@ -1,26 +1,9 @@
-/**
- * Adapts the live gramjs `TelegramClient` to the forwarder's `ForwarderClient`
- * interface, adding forum-topic support the high-level helper lacks.
- *
- * gramjs's `client.forwardMessages` accepts only `{ messages, fromPeer,
- * silent, ... }` — there is no `topMsgId`. To forward into a forum topic we
- * fall back to the raw `messages.ForwardMessages` request, which does carry
- * `topMsgId`. gramjs auto-generates the required `randomId` vector in the
- * request constructor (one per `id`), and `_getResponseMessage` is the same
- * extractor the helper uses to turn the `Updates` result into messages — so
- * the topic path produces the same `{ id }[]` shape the no-topic path does.
- *
- * The no-topic path delegates verbatim to the helper, leaving normal chats
- * (and a forum's General topic, which omits `topMsgId`) on the proven code
- * path.
- */
+// Adapts gramjs TelegramClient to ForwarderClient, adding forum-topic forwarding: client.forwardMessages has no topMsgId, so the topic path drops to the raw messages.ForwardMessages request (which carries it). No-topic forwards delegate to the helper.
 import { Api } from 'telegram';
 import type { TelegramClient } from 'telegram';
 import type { ForwarderClient } from './forwarder.js';
 
-// `_getResponseMessage` is an internal-but-public method on TelegramClient
-// (used by the high-level send/forward helpers). Narrow the surface we touch
-// so the cast stays honest.
+// _getResponseMessage is internal-but-public on TelegramClient; narrow the cast surface.
 interface ResponseMessageClient {
   _getResponseMessage(
     req: unknown,
@@ -48,9 +31,7 @@ export function createForwarderClient(client: TelegramClient): ForwarderClient {
           ...(silent !== undefined ? { silent } : {}),
         });
       }
-      // Raw request path: resolve both peers to input peers (the TL layer
-      // needs concrete `InputPeer`s, exactly as the helper does) and set
-      // `topMsgId` so the forward lands in the chosen forum topic.
+      // Resolve both peers to InputPeers and set topMsgId so the forward lands in the chosen topic.
       const toPeer = await client.getInputEntity(entity);
       const fromPeerResolved = await client.getInputEntity(fromPeer);
       const request = new Api.messages.ForwardMessages({

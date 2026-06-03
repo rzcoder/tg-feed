@@ -1,26 +1,4 @@
-/**
- * @tg-feed/server — entrypoint.
- *
- * Boots the API listener first, then brings the gramjs Telegram client up
- * in the background. The forwarding pipeline (NewMessage listener →
- * debouncer → pipeline) and the chat-resolver / invite / join / profile
- * fetcher helpers are attached to a mutable runtime box once the gramjs
- * `client.connect()` finishes. The Fastify factory reads tg-deps via
- * lazy getters, so route handlers pick up the post-init values without
- * re-registration. This eliminates a `pnpm -r --parallel dev` race where
- * Vite's proxy hit ECONNREFUSED before the server reached `app.listen()`.
- *
- * Telegram bring-up is best-effort: if env vars are missing or the connect
- * step fails, the API still serves in a degraded mode (no listener, no
- * forwarder, no entity resolver). `GET /api/system/status` exposes the
- * lifecycle phase ('connecting' / 'connected' / 'disconnected') so the web
- * UI can distinguish "starting up" from "configure your Telegram session".
- *
- * Shutdown order is HTTP-first → wait for in-flight Telegram init → tear
- * down debouncer / pipeline / Telegram / DB. We wait for the init promise
- * to settle because gramjs `client.connect()` doesn't accept an AbortSignal
- * cleanly; cancelling mid-flight risks orphaned sockets.
- */
+// Listen before connecting Telegram: avoids a dev-proxy ECONNREFUSED race; bring-up is best-effort.
 import './lib/loadEnv.js';
 import process from 'node:process';
 import type { TelegramClient } from 'telegram';
@@ -87,25 +65,8 @@ interface TryStartTelegramDeps {
   db: Db;
   bus: EventBus;
   filterEvaluator: FilterEvaluator;
-  /**
-   * Returns true if a SIGINT/SIGTERM landed while we were inside
-   * `client.connect()`. The function bails after connect with the client
-   * disconnected so we don't attach a NewMessage listener that nothing will
-   * tear down.
-   */
   isShuttingDown: () => boolean;
-  /**
-   * Sink for status updates emitted by the health monitor. The boot path
-   * funnels these into `statusRef.current` so `/api/system/status` reflects
-   * runtime liveness changes (connected → disconnected, etc).
-   */
   setStatus: (next: TelegramStatus) => void;
-  /**
-   * Forced session-reload callback. Passed into the health monitor so it
-   * can recover from gramjs getting stuck in a reconnect loop. The function
-   * is `reloadTelegramSession` from `main()`, which coalesces concurrent
-   * calls and atomically swaps the runtime box.
-   */
   requestReload: () => Promise<void>;
 }
 
@@ -138,10 +99,6 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
       ),
     ]);
     if (isShuttingDown()) {
-      // SIGINT/SIGTERM landed mid-connect. Bail before we attach the
-      // listener — main()'s shutdown handler awaits this promise so
-      // it'll just see a disconnected status and skip teardown of the
-      // listener / pipeline.
       try {
         await disconnectClient(client);
       } catch (secondaryErr) {
@@ -156,14 +113,7 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
       };
     }
     logger.info({ source: tgEnvResult.source }, 'connected to Telegram');
-    // gramjs 2.26.x ships `client.catchUp()` as a TODO stub (see
-    // node_modules/telegram/client/updates.js — empty body) and does not
-    // call `updates.getDifference` automatically on reconnect. As a result
-    // any NewMessage events delivered while the process was offline are
-    // permanently lost. Surface this as a warning so operators don't
-    // assume restarts are transparent. A future change can poll
-    // messages.getHistory per subscription on boot to backfill, gated on a
-    // per-subscription `last_seen_message_id` column.
+    // gramjs 2.26.x catchUp() is a stub: offline updates are lost; history poller is the backstop.
     logger.warn(
       'Telegram catch-up is not available in gramjs 2.26.x; messages delivered while offline will be missed',
     );
@@ -181,11 +131,7 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
     });
     attachNewMessageListener(client, db, logger, debouncer);
     await resolveSubscriptionsOnStartup(client, db, logger);
-    // Polling backstop: catches messages the live `NewMessage` stream misses.
-    // gramjs 2.26.x has no working `catchUp()` and silently stops delivering
-    // channel updates once a per-channel pts drifts, so a periodic
-    // `messages.getHistory` sweep is the only way to guarantee we see new
-    // posts from every subscribed channel. See historyPoller.ts for details.
+    // Backstop: gramjs silently stops delivering channel updates once a per-channel pts drifts.
     const historyPoller = createHistoryPoller({
       client,
       db,
@@ -237,8 +183,6 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
       try {
         await disconnectClient(client);
       } catch (secondaryErr) {
-        // Already failing the primary path; don't let teardown throw,
-        // but record at debug so post-mortem isn't blind.
         logger.debug({ err: secondaryErr }, 'secondary error during Telegram client teardown');
       }
     }
@@ -246,11 +190,7 @@ async function tryStartTelegram(deps: TryStartTelegramDeps): Promise<TelegramRun
   }
 }
 
-/**
- * Stop and dispose a Telegram runtime in the order that avoids dangling
- * references: monitors first (they hold timers), then the debouncer (timers),
- * then the pipeline (in-flight forwards), then the gramjs client itself.
- */
+// Dispose order matters: monitors/debouncer (timers) → pipeline (in-flight forwards) → gramjs client.
 async function teardownRuntime(runtime: Partial<TelegramRuntime>): Promise<void> {
   if (runtime.dialogsKeepalive) {
     try {
@@ -310,10 +250,6 @@ async function main(): Promise<void> {
   const filterRegistry = createDefaultRegistry();
   const filterEvaluator = createFilterEvaluator({ db, registry: filterRegistry, logger, bus });
 
-  // Mutable runtime box. Populated once Telegram bring-up finishes; the
-  // Fastify routes read these via getter closures (see createApiServer
-  // below) so they always see the current value without needing
-  // re-registration when the background init completes.
   const tgRuntime: Partial<TelegramRuntime> = {};
   const statusRef: { current: TelegramStatus } = {
     current: {
@@ -327,18 +263,13 @@ async function main(): Promise<void> {
     statusRef.current = next;
   };
 
-  // Singleton store for in-progress sign-ins from the Settings page. Holds
-  // temp gramjs clients between HTTP steps; GC sweeps stale entries every
-  // minute. Shut down with the rest of the app on SIGINT/SIGTERM.
   const loginSessionStore = createLoginSessionStore({
     apiId: config.TG_API_ID ?? 0,
     apiHash: config.TG_API_HASH ?? '',
     logger,
   });
 
-  // Live-swap mutex. Coalesces concurrent reload requests so two clicks of
-  // "Sign in" don't race two new clients into the runtime box. Shutdown
-  // awaits the current pending promise (if any) before tearing down.
+  // Mutex: coalesce concurrent reloads so two "Sign in" clicks don't race two clients in.
   let reloadPending: Promise<void> | null = null;
 
   async function reloadTelegramSession(): Promise<void> {
@@ -347,7 +278,6 @@ async function main(): Promise<void> {
     reloadPending = (async () => {
       logger.info('reloading Telegram session');
       const oldRuntime: Partial<TelegramRuntime> = { ...tgRuntime };
-      // Mark transient state so /system/status reflects the swap window.
       setStatus({
         state: 'connecting',
         connected: false,
@@ -361,16 +291,13 @@ async function main(): Promise<void> {
         setStatus,
         requestReload: reloadTelegramSession,
       });
-      // Replace refs in the box. Any unset keys on `next` clear the old
-      // value (so e.g. degraded mode after a sign-out actually drops the
-      // chat resolver).
+      // Clear first so unset keys on `next` actually drop old refs (e.g. resolver after sign-out).
       for (const key of Object.keys(tgRuntime) as (keyof TelegramRuntime)[]) {
         delete tgRuntime[key];
       }
       Object.assign(tgRuntime, next);
       setStatus(next.status);
-      // Tear down old refs after the swap so any in-flight route handler
-      // dereferencing the live getter sees the new value first.
+      // Tear down after the swap so an in-flight handler sees the new value first.
       await teardownRuntime(oldRuntime);
       if (next.status.connected) {
         logger.info('Telegram session reloaded');
@@ -388,9 +315,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // Telegram Web App bot. Held in a mutable `bot` ref + a reload mutex so the
-  // bot-config route can live-swap it (new token / admin ids / public URL)
-  // without a restart.
   let bot: TgFeedBot | undefined;
   let botReloadPending: Promise<void> | null = null;
 
@@ -400,8 +324,7 @@ async function main(): Promise<void> {
     botReloadPending = (async () => {
       const auth = resolveTelegramAuth({ cfg: config, db, logger });
       const publicUrl = resolvePublicUrl({ cfg: config, db });
-      // Stop the old bot FIRST: grammy long-polls and two getUpdates loops on
-      // the same token would 409. A brief no-bot window is acceptable.
+      // Stop the old bot FIRST: two getUpdates loops on the same token 409.
       const old = bot;
       bot = undefined;
       if (old) {
@@ -438,8 +361,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // DB-backed session store. Shared with the Fastify factory so both the
-  // login route and the prune task see the same set of rows.
   const sessionStore = createSessionStore({ db });
 
   const app = await createApiServer({
@@ -467,9 +388,6 @@ async function main(): Promise<void> {
   await app.listen({ host: '0.0.0.0', port: config.PORT });
   logger.info({ port: config.PORT }, 'API listening');
 
-  // Background pruner: keeps `forward_log` bounded and reaps expired web
-  // sessions. One hour cadence is plenty — neither table changes fast enough
-  // to justify aggressive ticking, and a single sweep is cheap.
   const prunePoller = createPoller({
     intervalMs: 60 * 60 * 1000,
     runOnStart: true,
@@ -483,22 +401,14 @@ async function main(): Promise<void> {
   });
   prunePoller.start();
 
-  // Telegram Web App bot — best-effort: a failed start leaves the API serving
-  // (password login still works). Started after `listen()`. `reloadBot`
-  // resolves the config DB-over-env and starts the bot when one is configured.
+  // Best-effort: a failed bot start leaves the API serving (password login still works).
   await reloadBot();
 
-  // Stats digest: a minute-tick scheduler that DMs admins a forwarded/
-  // filtered/error summary on the configured daily/weekly cadence. `getBot`
-  // reads the live `bot` ref so it always sees the current bot across reloads;
-  // when the digest is disabled (the default) every tick is a cheap no-op.
+  // getBot reads the live ref so the scheduler follows bot reloads.
   const statsDigest = createStatsDigestScheduler({ db, getBot: () => bot, logger });
   statsDigest.start();
 
-  // Background Telegram bring-up. Errors are caught inside
-  // tryStartTelegram; the outer .catch is a belt-and-suspenders for any
-  // throw that escapes (e.g. a logger crash). The promise is awaited from
-  // the shutdown handler so we don't tear down half-attached resources.
+  // Awaited from shutdown so we don't tear down half-attached resources.
   const tgInitPromise = (async () => {
     const tg = await tryStartTelegram({
       db,
@@ -509,10 +419,6 @@ async function main(): Promise<void> {
       requestReload: reloadTelegramSession,
     });
     if (shuttingDown) {
-      // Shutdown ran while we were connecting. Tear down what we built
-      // (tryStartTelegram's own early-shutdown branch already handled the
-      // pre-listener case; this path catches a SIGINT that landed *after*
-      // connect returned but before we got here).
       await teardownRuntime(tg);
       return;
     }
@@ -533,16 +439,12 @@ async function main(): Promise<void> {
     try {
       prunePoller.stop();
       statsDigest.stop();
-      // Let any in-flight bot reload settle before stopping the bot, so a
-      // reload triggered moments before SIGTERM can't leave a poll loop running.
+      // Settle an in-flight bot reload first, else it can leave a poll loop running past SIGTERM.
       if (botReloadPending) await botReloadPending.catch(() => {});
       if (bot) await bot.stop();
       await app.close();
-      // gramjs client.connect() doesn't accept an AbortSignal cleanly, so
-      // wait for the in-flight init to settle before tearing down its
-      // outputs. Bounded by Telegram's internal connect timeout.
+      // connect() takes no AbortSignal cleanly; wait for init (and any live-swap) to settle.
       await tgInitPromise.catch(() => {});
-      // Same for any in-flight live-swap.
       if (reloadPending) await reloadPending.catch(() => {});
       await loginSessionStore.shutdown();
       await teardownRuntime(tgRuntime);

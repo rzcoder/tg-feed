@@ -1,15 +1,4 @@
-/**
- * Single shared "now" tick.
- *
- * Components that render relative timestamps (e.g. "12s ago") subscribe via
- * `useNowTick()` and re-render only when the shared clock advances. The
- * interval is created lazily on the first subscriber and torn down when the
- * last one unsubscribes, so idle screens don't keep a timer alive.
- *
- * Using a module-scoped store rather than a per-component `setInterval`
- * avoids N identical timers when N rows are mounted, and lets a memoized
- * list parent skip re-rendering — only the leaf subscribers update.
- */
+// One shared clock for all relative timestamps; lazy timer avoids N per-row intervals.
 import { useSyncExternalStore } from 'react';
 
 const TICK_MS = 5000;

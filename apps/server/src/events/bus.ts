@@ -1,23 +1,5 @@
-/**
- * In-process event bus.
- *
- * Producers (forwarder, filter evaluator, subscription routes) call `emit`
- * with a `StreamEventInput`; the bus stamps `occurredAt` and broadcasts to
- * every subscriber. The SSE route is the only consumer in v1, but the bus
- * stays general so future consumers (metrics, audit log, etc.) can attach
- * without coupling to producers.
- *
- * Implementation choice: a plain `Set<Listener>` instead of
- * `node:events.EventEmitter`. `EventEmitter.emit` rethrows synchronously
- * when a listener throws, which would propagate a buggy SSE write back up
- * into a forwarding-pipeline call site. We catch per-listener errors here,
- * log them, and keep going. `listenerCount()` becomes `set.size` — used by
- * the SSE cleanup test to verify unsubscribe ran on disconnect.
- *
- * Listener iteration snapshots the set first (`[...listeners]`) so a
- * listener that unsubscribes itself during dispatch doesn't mutate the
- * iterator mid-loop.
- */
+// Plain Set, not EventEmitter, so a throwing listener can't rethrow into a forwarding-pipeline call site.
+// Dispatch snapshots the set so a listener unsubscribing itself mid-loop doesn't mutate the iterator.
 import type { StreamEvent, StreamEventInput } from '@tg-feed/shared';
 import type { Logger } from '../lib/logger.js';
 

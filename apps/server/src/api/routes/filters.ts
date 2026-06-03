@@ -1,20 +1,5 @@
-/**
- * Filter routes — catalog + per-subscription filter CRUD.
- *
- * The catalog (`GET /api/filters/catalog`) reflects what's actually
- * registered in the live filter registry — not a hardcoded list. Adding
- * a rule = drop a file + register it in `createDefaultRegistry()`; the
- * catalog endpoint picks it up on next restart.
- *
- * Filter PATCH validates `params` against the EXISTING row's `ruleType`
- * (rule type itself is immutable post-creation; to switch, delete and
- * re-add). The shared schema's `updateSubscriptionFilterRequestSchema`
- * keeps `params` loose (`z.record`); strict per-rule validation happens
- * here in the handler.
- *
- * Cross-sub access (filter id belongs to a different sub than the URL
- * names) returns 404 — prevents id-guessing across subscriptions.
- */
+// ruleType is immutable; PATCH validates params against the existing row's ruleType.
+// Cross-sub filter ids return 404 to block id-guessing across subscriptions.
 import { and, asc, eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';

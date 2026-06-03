@@ -1,9 +1,3 @@
-/**
- * Shared constants, types, and helpers for the Settings → Data sheets
- * (export / import / wipe). Kept in one module so the section labels and the
- * "which sections does this file carry" logic stay in a single place instead
- * of being re-derived in each sheet.
- */
 import { EXPORT_SECTIONS, type ExportFile, type ExportSection } from '@tg-feed/shared';
 
 export const SECTION_LABELS: Record<ExportSection, string> = {
@@ -29,16 +23,11 @@ export interface ParsedFile {
   fileName: string;
 }
 
-/**
- * Sections actually carried by an export file, in the canonical
- * `EXPORT_SECTIONS` order so checkbox lists and result rows render
- * consistently regardless of the file's key order.
- */
+// Present sections in canonical EXPORT_SECTIONS order, ignoring the file's key order.
 export function presentSections(file: ExportFile): ExportSection[] {
   return EXPORT_SECTIONS.filter((s) => file[s] != null);
 }
 
-/** Return a new Set with `value` toggled in/out — for checkbox selection state. */
 export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
   const next = new Set(set);
   if (next.has(value)) next.delete(value);

@@ -1,31 +1,4 @@
-/**
- * Best-effort POJO snapshot of a gramjs `Message` (or any TL object) for
- * persistence in `forward_log.raw_message`.
- *
- * gramjs's `TLObject` classes already implement `toJSON()` correctly —
- * `BigInteger` instances stringify, `Buffer`s become base64. Round-tripping
- * through `JSON.stringify` + `JSON.parse` invokes those `toJSON` hooks for
- * us and drops class identity, which is exactly the POJO we want to store.
- * The replacer adds two safety nets that `toJSON` alone doesn't cover:
- *
- *   - **Cycle guard** via WeakSet. gramjs payloads are mostly tree-shaped,
- *     but `fwdFrom.fromId` chains can occasionally re-enter the original
- *     `peerId` graph; without the guard a single weird message blows the
- *     stack and we'd lose the row.
- *   - **Native `BigInt`** — newer Node versions (≥21) sometimes hand back
- *     raw `bigint` from MTProto deserialization where older versions used
- *     `big-integer`. `JSON.stringify` throws on these; coerce to string.
- *
- * After the round-trip we measure the encoded byte length. Pathological
- * payloads (full thumbnail strips, file refs with embedded preview blobs)
- * can balloon past 100KB; cap at `maxBytes` and replace the value with a
- * marker so the row still inserts cleanly and the UI surfaces the reason.
- *
- * Returns `null` for `null`/`undefined`, `MessageEmpty`, and `MessageService`
- * — none of those carry payloads worth viewing, and `MessageService`
- * specifically is filtered out earlier in the pipeline anyway. Callers
- * store the `null` directly.
- */
+// POJO snapshot of a gramjs TL object for forward_log.raw_message. JSON round-trip invokes toJSON and drops class identity; the replacer adds a WeakSet cycle guard (fwdFrom.fromId can re-enter the peerId graph) and coerces native bigint (Node ≥21) since JSON.stringify throws on it. Returns null for null/undefined, MessageEmpty, MessageService.
 
 export interface ToJsonSafeOptions {
   /** Max serialized JSON byte length; over this, value is replaced with a truncation marker. */
@@ -52,17 +25,12 @@ export function toJsonSafe(value: unknown, opts: ToJsonSafeOptions = {}): unknow
       return v;
     });
   } catch {
-    // Last-resort: gramjs surfaced a value we can't round-trip (e.g. a
-    // class with a throwing `toJSON`). Drop it rather than crash the
-    // forward — the row is still valuable without the snapshot.
+    // Unround-trippable value (e.g. a throwing toJSON); drop the snapshot, keep the row.
     return null;
   }
 
   if (encoded === undefined) return null;
-  // `Buffer.byteLength` measures real UTF-8 bytes — `.length` measures UTF-16
-  // code units, which understates multibyte content (a 64KB cap allows ~256KB
-  // of emoji-heavy text through). The comment block at the top of this file
-  // promises "byte length"; honor it literally.
+  // Real UTF-8 bytes, not UTF-16 .length which understates multibyte content.
   const byteLen = Buffer.byteLength(encoded, 'utf8');
   if (byteLen > maxBytes) {
     return { __truncated: true, size: byteLen };

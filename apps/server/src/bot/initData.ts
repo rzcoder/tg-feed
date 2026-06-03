@@ -1,23 +1,6 @@
-/**
- * Telegram Web App `initData` verification.
- *
- * When the web client is opened as a Telegram Mini App, Telegram injects a
- * signed `initData` query string into `window.Telegram.WebApp`. The client
- * POSTs it verbatim to `/api/auth/telegram`; this module proves it was
- * minted by Telegram for *our* bot and extracts the calling user.
- *
- * Verification (per https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app):
- *   1. Parse the query string and pull out the `hash` field.
- *   2. Build the data-check-string: the remaining `key=value` pairs sorted
- *      by key, joined with `\n`.
- *   3. secret_key = HMAC-SHA256(key = "WebAppData", data = bot_token)
- *   4. expected  = hex(HMAC-SHA256(key = secret_key, data = data-check-string))
- *   5. constant-time compare `expected` with the supplied `hash`.
- *   6. reject payloads older than `maxAgeSec` via `auth_date`.
- */
+// Verifies Telegram Mini App `initData` was minted for our bot, per https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-/** Subset of the Telegram WebApp `user` object we care about. */
 export interface TelegramWebAppUser {
   id: string;
   firstName: string | null;
@@ -30,9 +13,9 @@ export type VerifyInitDataResult =
   | { ok: false; reason: string };
 
 export interface VerifyInitDataOptions {
-  /** Reject initData whose `auth_date` is older than this many seconds. Default 24h. */
+  // Reject initData older than this many seconds; default 24h.
   maxAgeSec?: number;
-  /** Injectable clock for tests. Defaults to `Date.now()`. */
+  // Injectable clock for tests; defaults to `Date.now()`.
   now?: () => number;
 }
 
@@ -55,8 +38,7 @@ export function verifyTelegramInitData(
   const hash = params.get('hash');
   if (!hash) return { ok: false, reason: 'initData missing hash' };
 
-  // Data-check-string: every field except `hash`, sorted by key, `key=value`
-  // joined by newlines (`signature` stays in — the HMAC base excludes only `hash`).
+  // Data-check-string: every field except `hash` (incl. `signature`), sorted by key, `key=value` joined by `\n`.
   const pairs: string[] = [];
   for (const [key, value] of params) {
     if (key === 'hash') continue;
@@ -94,8 +76,7 @@ export function verifyTelegramInitData(
     if (parsed.id === undefined || parsed.id === null) {
       return { ok: false, reason: 'initData user missing id' };
     }
-    // Telegram ids can exceed JS's safe-integer range, so take the exact
-    // digits from the raw JSON text rather than the (lossy) parsed number.
+    // Telegram ids exceed JS safe-integer range: take exact digits from raw JSON, not the lossy parsed number.
     const idMatch = /"id"\s*:\s*(-?\d+)/.exec(userRaw);
     user = {
       id: idMatch ? idMatch[1]! : String(parsed.id),

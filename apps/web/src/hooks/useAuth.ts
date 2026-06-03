@@ -1,12 +1,4 @@
-/**
- * Auth hooks.
- *
- * `useMe` is the source of truth for "is the user logged in". It runs once
- * at app boot via `RequireAuth`; mutations invalidate it after login/logout.
- * staleTime is Infinity because cookie validity doesn't change while the
- * tab is open — if it expires mid-session, the api/client.ts 401-interceptor
- * forces a navigate to /login anyway.
- */
+// useMe is the source of truth for "logged in". staleTime Infinity since cookie validity is stable per tab; a mid-session expiry is caught by the client.ts 401-interceptor.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMe, login, loginWithTelegram, logout } from '@/api/authApi';
 import { UnauthorizedError } from '@/api/client';
@@ -32,7 +24,6 @@ export function useLogin() {
   });
 }
 
-/** Sign in with a Telegram Mini App `initData` payload; invalidates `/me` on success. */
 export function useTelegramLogin() {
   const qc = useQueryClient();
   return useMutation({

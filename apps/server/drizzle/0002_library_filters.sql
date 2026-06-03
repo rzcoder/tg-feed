@@ -1,4 +1,4 @@
--- Chapter 11 — Library filters + M:N join.
+-- Library filters + M:N join.
 --
 -- Reusable named filter rules attachable to many subscriptions. The
 -- evaluator UNIONs these with per-sub filters at evaluation time.

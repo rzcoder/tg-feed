@@ -8,7 +8,7 @@ import { toJsonSafe } from '../lib/jsonSafe.js';
 import type { Logger } from '../lib/logger.js';
 import {
   extractMatchableEvent,
-  matchSubscription,
+  matchSubscriptions,
   type ResolvedSubscription,
 } from './messageMatcher.js';
 
@@ -22,9 +22,7 @@ export function attachNewMessageListener(
     const matchable = extractMatchableEvent(event);
     if (!matchable) return;
 
-    // Filter by source_chat_id in the WHERE clause (backed by
-    // idx_subscriptions_source_chat_id) so the DB returns only the rows
-    // that could possibly match — usually 0 or 1, never the full table.
+    // WHERE source_chat_id hits idx_subscriptions_source_chat_id, not a full scan.
     const activeSubs = db
       .select({
         id: subscriptions.id,
@@ -41,9 +39,9 @@ export function attachNewMessageListener(
       .innerJoin(destinations, eq(subscriptions.destinationId, destinations.id))
       .where(and(eq(subscriptions.enabled, true), eq(subscriptions.sourceChatId, matchable.chatId)))
       .all() as ResolvedSubscription[];
-    const matched = matchSubscription(matchable, activeSubs);
+    const matched = matchSubscriptions(matchable, activeSubs);
 
-    if (!matched) {
+    if (matched.length === 0) {
       logger.debug(
         { chatId: matchable.chatId, messageId: matchable.messageId },
         'message has no matching subscription',
@@ -51,42 +49,41 @@ export function attachNewMessageListener(
       return;
     }
 
-    logger.info(
-      {
-        subscriptionId: matched.id,
-        sourceChatId: matched.sourceChatId,
-        messageId: matchable.messageId,
-        hasMedia: !!event.message.media,
-      },
-      'message matched subscription',
-    );
+    // One snapshot of the source message, reused for every fan-out destination.
+    const rawMessage = toJsonSafe(event.message);
+    for (const sub of matched) {
+      logger.info(
+        {
+          subscriptionId: sub.id,
+          sourceChatId: sub.sourceChatId,
+          messageId: matchable.messageId,
+          hasMedia: !!event.message.media,
+        },
+        'message matched subscription',
+      );
 
-    forwarding.enqueue({
-      subscriptionId: matched.id,
-      sourceChatId: matched.sourceChatId,
-      destinationChatId: matched.destinationChatId,
-      destinationTopicId: matched.destinationTopicId,
-      sourceMessageId: matchable.messageId,
-      text: matchable.text,
-      hasMedia: matchable.hasMedia,
-      rawMessage: toJsonSafe(event.message),
-      ...(matchable.groupedId !== undefined ? { groupedId: matchable.groupedId } : {}),
-      ...(matchable.senderUsername !== undefined
-        ? { senderUsername: matchable.senderUsername }
-        : {}),
-    });
+      forwarding.enqueue({
+        subscriptionId: sub.id,
+        sourceChatId: sub.sourceChatId,
+        destinationChatId: sub.destinationChatId,
+        destinationTopicId: sub.destinationTopicId,
+        sourceMessageId: matchable.messageId,
+        text: matchable.text,
+        hasMedia: matchable.hasMedia,
+        rawMessage,
+        ...(matchable.groupedId !== undefined ? { groupedId: matchable.groupedId } : {}),
+        ...(matchable.senderUsername !== undefined
+          ? { senderUsername: matchable.senderUsername }
+          : {}),
+      });
+    }
   };
 
-  // Wrap the handler so a single bad event (DB hiccup, malformed gramjs
-  // payload, downstream throw from `enqueue`) gets logged and dropped
-  // instead of bubbling up into gramjs and potentially destabilising the
-  // whole TG session.
+  // Drop a single bad event rather than let it bubble into gramjs and destabilise the TG session.
   const safeHandler = async (event: NewMessageEvent): Promise<void> => {
     try {
       await handler(event);
     } catch (err) {
-      // Include the error type so DB / gramjs / forwarding failures are
-      // distinguishable in the logs without re-deriving it from the stack.
       logger.error(
         { err, errorType: err instanceof Error ? err.constructor.name : typeof err },
         'listener handler threw; dropping event',
@@ -94,6 +91,6 @@ export function attachNewMessageListener(
     }
   };
 
-  // `incoming: true` filters out events the userbot itself produced.
+  // incoming: true filters out events the userbot itself produced.
   client.addEventHandler(safeHandler, new NewMessage({ incoming: true }));
 }

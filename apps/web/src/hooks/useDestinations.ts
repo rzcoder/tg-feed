@@ -55,11 +55,7 @@ export function useResolveDestination() {
   });
 }
 
-/**
- * Lists a forum chat's topics for the destination picker. Enabled only once
- * we know the chat is a forum (and have its id), so non-forum destinations
- * never trigger the lookup. Keyed by chatId so switching chats refetches.
- */
+// Pass enabled=true only for confirmed forum chats, so non-forum picks never fetch.
 export function useForumTopics(chatId: string | null, enabled: boolean) {
   return useQuery<ListForumTopicsResponse>({
     queryKey: ['forum-topics', chatId],

@@ -1,47 +1,18 @@
-# Production compose for tg-feed.
-# Server-side workflow:
-#   mkdir -p data && cp .env.example .env  # edit .env
-#   docker compose pull && docker compose up -d
-# Update:
-#   docker compose pull && docker compose up -d
-# Pin a version: set TG_FEED_VERSION=0.2.0 in .env (or env-export).
+# Example deploy:
+#   cp .env.example .env   # fill it in
+#   docker compose up -d
 
 services:
   tg-feed:
     image: ghcr.io/rzcoder/tg-feed:${TG_FEED_VERSION:-latest}
     container_name: tg-feed
     restart: unless-stopped
-    # Match host UID/GID so files written into ./data are owned by the
-    # invoking user. Override with UID=$(id -u) GID=$(id -g) if your
-    # host user isn't 1000:1000.
-    user: '${UID:-1000}:${GID:-1000}'
-    # Both sides use the same port so a custom PORT in .env Just Works
-    # (compose interpolates PORT from .env-in-cwd; the app reads it from
-    # env_file inside the container).
-    #
-    # Bind to loopback so the shared-password auth surface isn't exposed
-    # publicly when the host has a routable IP. Front with a reverse proxy
-    # (Caddy/nginx/Cloudflare Tunnel) that terminates TLS and forwards to
-    # 127.0.0.1:${PORT}. Override BIND_HOST=0.0.0.0 in `.env` if you really
-    # do want to expose the port directly (e.g. on a LAN-only box).
     ports:
-      - '${BIND_HOST:-127.0.0.1}:${PORT:-3000}:${PORT:-3000}'
+      - '3000:3000'
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
-    # TCP-level liveness — the server has no dedicated /health endpoint,
-    # and every HTTP route requires auth. "Node is listening on the port"
-    # is good enough to drive restart-on-failure.
-    healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "require('node:net').connect(Number(process.env.PORT||3000)).on('connect', function(){this.end();process.exit(0)}).on('error', () => process.exit(1))",
-        ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+      - tg-feed-data:/app/data
+
+volumes:
+  tg-feed-data:

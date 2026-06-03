@@ -9,9 +9,7 @@ export function createQueryClient(): QueryClient {
           if (error instanceof Error && error.name === 'UnauthorizedError') return false;
           return failureCount < 2;
         },
-        // Refetch on focus so a tab left open overnight doesn't display
-        // stale state after the user comes back. SSE invalidates targeted
-        // queries (subscriptions) live; this picks up anything else.
+        // Refetch on focus so a tab left open overnight isn't stale; SSE covers live subscription updates.
         refetchOnWindowFocus: true,
         staleTime: 5_000,
         gcTime: 10 * 60 * 1000,

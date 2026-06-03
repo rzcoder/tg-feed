@@ -1,9 +1,3 @@
-/**
- * Apply pending drizzle migrations to the configured DATABASE_PATH.
- *
- * Invoked via `pnpm db:migrate`. Idempotent — drizzle tracks applied
- * migrations in `__drizzle_migrations__`, so re-running is a no-op.
- */
 import '../lib/loadEnv.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,13 +10,7 @@ const migrationsFolder = path.resolve(moduleDir, '../../drizzle');
 
 const handle = createDb(config.DATABASE_PATH);
 try {
-  // SQLite table-recreation migrations (the recipe for column drops + FK
-  // changes) require FKs disabled around the rename — otherwise CASCADE
-  // and SET NULL fire when the old table is dropped, wiping referencing
-  // rows. drizzle's migrate() wraps in a transaction where `PRAGMA
-  // foreign_keys` is a no-op, so we have to set it here. The
-  // `foreign_key_check` afterwards verifies the migration left no
-  // orphans before we re-enable enforcement.
+  // FKs off around table-recreation migrations, else CASCADE/SET NULL fire on the old-table drop and wipe referencing rows; migrate()'s transaction makes the PRAGMA a no-op so set it here. foreign_key_check verifies no orphans before re-enabling.
   handle.sqlite.pragma('foreign_keys = OFF');
   try {
     migrate(handle.db, { migrationsFolder });

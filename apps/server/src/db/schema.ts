@@ -1,14 +1,4 @@
-/**
- * Drizzle schema for the tg-feed SQLite database.
- *
- * Telegram chat / message IDs are stored as `text` (lossless, opaque) since
- * they're 64-bit identifiers, not numbers we range-query on.
- *
- * Timestamps: `timestamp_ms` (Date in JS, millis in SQLite). Defaults are
- * applied JS-side via `$defaultFn` — all writes go through drizzle.
- *
- * JSON columns use drizzle's `mode: 'json'` for automatic parse/stringify.
- */
+// Telegram 64-bit chat/message IDs stored as text (lossless, opaque, never range-queried).
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, index, check, primaryKey } from 'drizzle-orm/sqlite-core';
 import {
@@ -23,48 +13,22 @@ import {
 
 export { FORWARD_LOG_STATUSES, type ForwardLogStatus };
 
-/**
- * Named forward target. Subscriptions pick from this list (Chapter 10).
- * Same chat id can appear under multiple names — unique-by-id, not chatId.
- */
 export const destinations = sqliteTable('destinations', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
   chatId: text('chat_id').notNull(),
   note: text('note'),
-  /**
-   * Forum topic to forward into, when `chatId` is a forum supergroup. Holds
-   * the topic's `top_msg_id`; stored as text for consistency with the other
-   * 64-bit ids and converted to a number only at the forward boundary. NULL
-   * means "no explicit topic" — the General topic for a forum, or the only
-   * behaviour for a normal chat.
-   */
+  // forum topic top_msg_id (text for 64-bit parity); NULL = General/none
   topicId: text('topic_id'),
-  /**
-   * Topic title cached at create/edit time so the list and badges render
-   * without a live `channels.GetForumTopics` round-trip. NULL whenever
-   * `topicId` is NULL.
-   */
+  // cached topic title; NULL whenever topicId is NULL
   topicTitle: text('topic_title'),
-  /**
-   * Channel/chat profile photo as a `data:image/jpeg;base64,...` URL, or
-   * NULL when we haven't fetched one yet (the trigger for the access
-   * monitor's lazy backfill). Populated on create when Telegram is
-   * configured and refreshed by the access monitor on the periodic sweep
-   * for rows that are still null.
-   */
+  // data:image/jpeg;base64 URL; NULL until the access monitor's lazy backfill fetches it
   iconDataUrl: text('icon_data_url'),
-  /**
-   * Whether the userbot can currently see/post to this destination. Written
-   * by the access monitor (`apps/server/src/tg/accessMonitor.ts`) on the
-   * periodic sweep. Default 'ok' so existing rows aren't surfaced as broken
-   * before the first sweep runs.
-   */
+  // written by the access monitor's sweep; default 'ok' so unswept rows aren't shown as broken
   accessStatus: text('access_status', { enum: ['ok', 'no_access'] })
     .notNull()
     .default('ok')
     .$type<'ok' | 'no_access'>(),
-  /** Timestamp of the last access check; null until the first sweep runs. */
   accessCheckedAt: integer('access_checked_at', { mode: 'timestamp_ms' }),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .notNull()
@@ -77,56 +41,27 @@ export const subscriptions = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     sourceChatId: text('source_chat_id').notNull(),
     sourceTitle: text('source_title').notNull(),
-    /**
-     * Display handle (`@channel_username`). Populated on create from the
-     * resolve endpoint's response; nullable for legacy rows.
-     */
+    // @channel_username; nullable for legacy rows
     handle: text('handle'),
-    /**
-     * Source channel profile photo as a `data:image/jpeg;base64,...` URL,
-     * or NULL when we haven't fetched one yet. Same lazy-backfill semantics
-     * as `destinations.iconDataUrl` — populated on create and refreshed by
-     * the access monitor for rows that are still null.
-     */
     iconDataUrl: text('icon_data_url'),
-    /**
-     * FK → destinations. Nullable: a subscription can exist without a
-     * destination (created via import where the destination is missing, or
-     * detached by the user). The forwarder skips such rows. ON DELETE SET
-     * NULL so deleting a destination demotes its subscriptions to detached
-     * rather than blocking the delete.
-     */
+    // nullable: subscription may be detached; ON DELETE SET NULL demotes rather than blocks
     destinationId: integer('destination_id').references(() => destinations.id, {
       onDelete: 'set null',
     }),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-    /**
-     * Timestamp of the last `CHAT_FORWARDS_RESTRICTED` from this source.
-     * Set by the forwarder when Telegram refuses to forward (the channel
-     * has "Restrict Saving Content" enabled). Cleared on the next
-     * successful forward. Surfaced in the API as `forwardingRestrictedAt`
-     * so the UI can render a "noforwards" badge on the subscription.
-     */
+    // set on CHAT_FORWARDS_RESTRICTED (source has "Restrict Saving Content"), cleared on next success
     forwardingRestrictedAt: integer('forwarding_restricted_at', { mode: 'timestamp_ms' }),
-    /**
-     * Whether the userbot can currently read messages from this source
-     * channel. Written on subscription create (after `channels.JoinChannel`)
-     * and on every access-monitor sweep. Default 'ok' so existing rows
-     * aren't surfaced as broken before the first sweep runs.
-     */
     sourceAccessStatus: text('source_access_status', { enum: ['ok', 'no_access'] })
       .notNull()
       .default('ok')
       .$type<'ok' | 'no_access'>(),
-    /** Timestamp of the last access check; null until the first sweep runs. */
     sourceAccessCheckedAt: integer('source_access_checked_at', { mode: 'timestamp_ms' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
       .$defaultFn(() => new Date()),
   },
   (t) => ({
-    // Listener queries by source_chat_id on every incoming TG message; index
-    // turns the per-event lookup from a full scan into an index probe.
+    // every incoming TG message looks up by source_chat_id
     bySourceChatId: index('idx_subscriptions_source_chat_id').on(t.sourceChatId),
   }),
 );
@@ -141,12 +76,7 @@ export const subscriptionFilters = sqliteTable(
     ruleType: text('rule_type').notNull().$type<FilterRuleType>(),
     params: text('params', { mode: 'json' }).$type<AnyFilterRuleParams>().notNull(),
     enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
-    /**
-     * Per-filter mode (Ch 14). 'include' is the legacy default and matches
-     * the original AND-pass semantics. 'exclude' inverts the rule for that
-     * one row — the filter rejects when its rule matches. SQL CHECK keeps
-     * hand-written rows honest, mirroring the `forward_log.status` precedent.
-     */
+    // 'include' = AND-pass; 'exclude' inverts (reject when the rule matches)
     mode: text('mode').notNull().default('include').$type<FilterMode>(),
   },
   (t) => ({
@@ -158,14 +88,7 @@ export const subscriptionFilters = sqliteTable(
   }),
 );
 
-/**
- * Reusable named filter rules (Chapter 11). Same per-rule params shape as
- * `subscription_filters` but carry a `name` so users can recognise them when
- * attaching across subscriptions. Rule type is constrained both via TS
- * (`$type<FilterRuleType>()`) and a SQL CHECK constraint, mirroring the
- * `forward_log.status` precedent — the TS narrowing alone wouldn't reject
- * a hand-written DB row.
- */
+// Reusable named filter rules; rule type also guarded by a SQL CHECK against hand-written rows.
 export const libraryFilters = sqliteTable(
   'library_filters',
   {
@@ -173,7 +96,6 @@ export const libraryFilters = sqliteTable(
     name: text('name').notNull(),
     ruleType: text('rule_type').notNull().$type<FilterRuleType>(),
     params: text('params', { mode: 'json' }).$type<AnyFilterRuleParams>().notNull(),
-    /** Same semantics as `subscription_filters.mode`. */
     mode: text('mode').notNull().default('include').$type<FilterMode>(),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
@@ -191,15 +113,7 @@ export const libraryFilters = sqliteTable(
   }),
 );
 
-/**
- * M:N join — a library filter attached to a subscription. No `enabled`
- * column: detach == off, reattach == on, single source of truth (matches
- * the design's "X to detach" affordance).
- *
- * Composite PK on (subscriptionId, libraryFilterId) gives uniqueness
- * automatically; `idx_subscription_library_filters_lib` accelerates the
- * "where used" lookup the library tab needs for usage badges.
- */
+// M:N join. No `enabled` column: detach == off, reattach == on.
 export const subscriptionLibraryFilters = sqliteTable(
   'subscription_library_filters',
   {
@@ -221,27 +135,12 @@ export const appSettings = sqliteTable('app_settings', {
   value: text('value', { mode: 'json' }).$type<unknown>().notNull(),
 });
 
-/**
- * Single-row table for the Telegram session signed in via the Settings page.
- * Convention: always upserted at id=1 — the table is logically a singleton
- * but uses a normal PK so `onConflictDoUpdate` works without an INSERT/UPDATE
- * branch.
- *
- * `encrypted_session_string` is `base64(iv ‖ tag ‖ ct)` of the raw gramjs
- * `StringSession.save()` value, encrypted with `TG_SESSION_ENCRYPTION_KEY`.
- * `key_fingerprint` is the first 16 hex chars of `sha256(key)` so an
- * exported row can be matched against the importing host's key without
- * exposing either key.
- *
- * Metadata fields (`phone_number`, `display_name`, `username`,
- * `telegram_user_id`) come from `getMe()` after a successful sign-in. They
- * are nullable because the raw-paste flow may produce a session whose
- * `getMe` returns partial data, and because future schema bumps may add
- * fields.
- */
+// Singleton, always upserted at id=1 (normal PK so onConflictDoUpdate has no INSERT/UPDATE branch).
 export const telegramAccount = sqliteTable('telegram_account', {
   id: integer('id').primaryKey(),
+  // base64(iv ‖ tag ‖ ct) of StringSession.save(), encrypted with TG_SESSION_ENCRYPTION_KEY
   encryptedSessionString: text('encrypted_session_string').notNull(),
+  // first 16 hex of sha256(key); matches an exported row against a host key without exposing it
   keyFingerprint: text('key_fingerprint').notNull(),
   phoneNumber: text('phone_number'),
   displayName: text('display_name'),
@@ -266,13 +165,7 @@ export const forwardLog = sqliteTable(
     destMessageId: text('dest_message_id'),
     status: text('status', { enum: FORWARD_LOG_STATUSES }).notNull(),
     error: text('error'),
-    /**
-     * JSON snapshot of the raw gramjs `Message` (captured at the listener /
-     * history poller boundary). For album batches every row stores the same
-     * N-element array; for single-message forwards a plain object. Nullable
-     * for rows written before the column existed (and for `MessageEmpty` /
-     * `MessageService` events that we deliberately drop in `toJsonSafe`).
-     */
+    // raw gramjs Message snapshot; album batches store the same N-element array on every row
     rawMessage: text('raw_message', { mode: 'json' }),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .notNull()
@@ -312,18 +205,8 @@ export type NewTelegramAccount = typeof telegramAccount.$inferInsert;
 export type ForwardLogEntry = typeof forwardLog.$inferSelect;
 export type NewForwardLogEntry = typeof forwardLog.$inferInsert;
 
-/**
- * Per-login session row.
- *
- * Replaces the legacy "static cookie value + signed by SESSION_SECRET" scheme
- * with opaque random tokens, so logout actually invalidates a session and a
- * stolen cookie has a single revocation point. The token in the cookie is the
- * primary-key lookup against this table.
- *
- * `expiresAt` is the hard cap; `lastSeenAt` is updated on each authed request
- * for the sliding-window refresh (limits damage from a leaked cookie that
- * sits unused). A background prune sweeps rows past expiry.
- */
+// Opaque per-login tokens (cookie value is the PK lookup); logout deletes the row to revoke.
+// expiresAt is the hard cap; lastSeenAt drives the sliding-window refresh.
 export const webSessions = sqliteTable(
   'web_sessions',
   {

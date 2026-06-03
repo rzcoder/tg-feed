@@ -34,14 +34,12 @@ export function SubscriptionsPage() {
   const navigate = useNavigate();
 
   const [openId, setOpenId] = useState<number | null>(null);
-  // Functional updater keeps deps empty so the handler stays stable across
-  // renders — the memoized SubRow only re-renders when its own sub/expanded change.
+  // Functional updater keeps deps empty so the handler stays stable for memoized SubRow.
   const handleToggle = useCallback(
     (id: number) => setOpenId((cur) => (cur === id ? null : id)),
     [],
   );
   const sheet = useSheetState<SubscriptionDto>();
-  // Subscription whose destination is being re-picked via the Forwards-to card.
   const [destPickerSub, setDestPickerSub] = useState<SubscriptionDto | null>(null);
 
   const pickDestination = (destinationId: number | null) => {
@@ -80,9 +78,7 @@ export function SubscriptionsPage() {
     } else {
       createMut.mutate(
         {
-          // Exactly one of sourceChatId / inviteHash is set — the schema
-          // refines this server-side; on the wire we send only the
-          // populated half.
+          // Exactly one of sourceChatId / inviteHash is set (server schema refines this).
           ...(data.inviteHash
             ? { inviteHash: data.inviteHash }
             : { sourceChatId: data.sourceChatId! }),

@@ -120,19 +120,32 @@ describe('createAlbumDebouncer', () => {
     expect(downstream.jobs[0]?.sourceMessageIds).toEqual(['10', '11', '12']);
   });
 
-  it('keys by sourceChatId so the same groupedId from two different chats does not conflate', async () => {
+  it('keys by subscriptionId so a fan-out source keeps each subscription album separate', async () => {
     const downstream = makeDownstream();
     const debouncer = makeDebouncer({ downstream, filterEvaluator: passEvaluator });
 
-    debouncer.enqueue(raw({ sourceChatId: '-100A', sourceMessageId: '1', groupedId: 'g' }));
-    debouncer.enqueue(raw({ sourceChatId: '-100B', sourceMessageId: '2', groupedId: 'g' }));
+    // Same source + same album (groupedId), two subscriptions → two destinations.
+    debouncer.enqueue(
+      raw({ subscriptionId: 1, destinationChatId: '-100D1', sourceMessageId: '1', groupedId: 'g' }),
+    );
+    debouncer.enqueue(
+      raw({ subscriptionId: 1, destinationChatId: '-100D1', sourceMessageId: '2', groupedId: 'g' }),
+    );
+    debouncer.enqueue(
+      raw({ subscriptionId: 2, destinationChatId: '-100D2', sourceMessageId: '1', groupedId: 'g' }),
+    );
+    debouncer.enqueue(
+      raw({ subscriptionId: 2, destinationChatId: '-100D2', sourceMessageId: '2', groupedId: 'g' }),
+    );
 
     await vi.advanceTimersByTimeAsync(TEST_WINDOW_MS);
 
+    // Two independent batches, one per subscription/destination — not conflated into one.
     expect(downstream.jobs).toHaveLength(2);
-    const bySource = new Map(downstream.jobs.map((j) => [j.sourceChatId, j.sourceMessageIds]));
-    expect(bySource.get('-100A')).toEqual(['1']);
-    expect(bySource.get('-100B')).toEqual(['2']);
+    const byDest = new Map(downstream.jobs.map((j) => [j.destinationChatId, j.sourceMessageIds]));
+    expect(byDest.get('-100D1')).toEqual(['1', '2']);
+    expect(byDest.get('-100D2')).toEqual(['1', '2']);
+    expect(new Set(downstream.jobs.map((j) => j.subscriptionId))).toEqual(new Set([1, 2]));
   });
 
   it('treats a straggler arriving after the window as a new group', async () => {

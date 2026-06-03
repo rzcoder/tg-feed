@@ -1,22 +1,3 @@
-/**
- * Activity feed — hydrate from forward-log, prepend live SSE events.
- *
- * Hydration: `useForwardLog({ limit: 50 })` seeds the in-memory list and is
- * refreshed (debounced) as forward events arrive, so the persisted history
- * stays current. Live SSE events arrive via `useForwardEvents` and get
- * prepended immediately (capped at 200 entries to bound memory), then
- * reconcile with the refreshed log by `forwardLogId`.
- *
- * Enrichment: hydrated rows already have `subscriptionTitle`, `sourceHandle`,
- * and `destinationName` joined server-side via LEFT JOIN. SSE payloads carry
- * IDs only, so they're enriched on the client from the cached
- * `useSubscriptions` and `useDestinations` queries — with a backfill effect
- * for the case where a live event arrives before those queries hydrate.
- *
- * Pause: stops appending new events to the list (the EventSource stays
- * open). Scroll lock + jump-to-live: when the user has scrolled away from
- * the top, prepends don't yank — show a button to jump back.
- */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowDown, Activity as ActivityIcon, Pause, Play } from 'lucide-react';
 import type {
@@ -52,15 +33,10 @@ export function ActivityPage() {
 
   const [events, setEvents] = useState<ActivityEvent[]>([]);
 
-  // Hydrate from forward-log, and re-hydrate when it refetches (the stream
-  // provider refreshes it as forward events land). Keep live events the
-  // fetched log doesn't contain yet; drop those it does — matched by the
-  // forward_log row id the event carried — so a row isn't shown twice.
+  // Re-hydrate on refetch, keeping live events not yet in the log (deduped by forward_log id).
   useEffect(() => {
     if (!forwardLog.data) return;
-    // While paused the feed is frozen — skip re-hydration so a background
-    // log refetch doesn't prepend rows; `paused` is a dep, so it catches up
-    // on resume.
+    // Frozen while paused; `paused` is a dep so it catches up on resume.
     if (paused) return;
     setEvents((prev) => {
       const hydrated = forwardLog.data.items.map((row) => fromForwardLogEntry(row));
@@ -73,11 +49,7 @@ export function ActivityPage() {
     });
   }, [forwardLog.data, paused]);
 
-  // Read sub/dest maps via refs inside the prepend effect — including them
-  // in the dep array would re-run the effect (and re-prepend the same SSE
-  // event) every time `subscription.changed` invalidates the queries and
-  // produces a new Map reference. Backfill enrichment is handled by the
-  // separate effect below.
+  // Maps read via refs, not deps: a new Map reference per query invalidation would re-prepend the same event.
   const subByIdRef = useRef(subById);
   const destByChatIdRef = useRef(destByChatId);
   useEffect(() => {
@@ -85,15 +57,13 @@ export function ActivityPage() {
     destByChatIdRef.current = destByChatId;
   });
 
-  // Pause is read through a ref so the event handler stays stable (subscribes
-  // once) and isn't re-created when `paused` toggles.
+  // Read through a ref so the event handler stays stable across `paused` toggles.
   const pausedRef = useRef(paused);
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
-  // Prepend live SSE events as they arrive, deduped against the head in case
-  // the server ever re-emits one.
+  // Prepend live SSE events, deduped in case the server re-emits one.
   const handleForwardEvent = useCallback((event: StreamEvent) => {
     if (pausedRef.current) return;
     const built = fromStreamEvent(event, subByIdRef.current, destByChatIdRef.current);
@@ -104,9 +74,7 @@ export function ActivityPage() {
   }, []);
   useForwardEvents(handleForwardEvent);
 
-  // Backfill events constructed before subs/dests loaded. Returns the same
-  // array reference when nothing needs enrichment, so ActivityRow rows keep
-  // referential equality and don't re-render.
+  // Backfill events built before subs/dests loaded; returns the same array reference when nothing changed.
   useEffect(() => {
     setEvents((prev) => {
       const needsEnrich = prev.some(
@@ -239,8 +207,7 @@ function enrichEvent(event: ActivityEvent, subs: Map<number, SubscriptionDto>): 
 }
 
 function fromForwardLogEntry(row: ForwardLogEntryDto): ActivityEvent {
-  // Build optional fields conditionally — under exactOptionalPropertyTypes,
-  // `{ seconds: undefined }` no longer satisfies `seconds?: number`.
+  // Optional fields built conditionally: exactOptionalPropertyTypes rejects `{ seconds: undefined }`.
   const floodWaitSeconds =
     row.status === 'flood_wait' ? parseFloodWaitSeconds(row.error) : undefined;
   return {
@@ -271,19 +238,14 @@ function fromStreamEvent(
   dests: Map<string, DestinationDto>,
 ): ActivityEvent | null {
   const occurredAt = new Date(event.occurredAt).getTime();
-  // `destination.changed` events don't carry a subscription id — the
-  // narrowed switch below filters them out, but the lookup needs a guard
-  // for the type checker.
+  // Guard for the type checker: destination.changed events carry no subscriptionId.
   const subscriptionId = 'subscriptionId' in event ? event.subscriptionId : undefined;
   const sub = subscriptionId !== undefined ? subs.get(subscriptionId) : undefined;
   const subscriptionTitle = sub?.sourceTitle ?? null;
   const sourceHandle = sub?.handle ?? sub?.sourceChatId ?? null;
   const sourceMessageId = 'sourceMessageIds' in event ? (event.sourceMessageIds[0] ?? '?') : '?';
 
-  // The `forward.*` SSE variants now carry the inserted `forward_log`
-  // row ids so we can offer "view raw" on live entries without waiting
-  // for the next hydration. Index 0 is enough — the JSON viewer reads
-  // the same denormalised payload from any row of an album.
+  // Index 0 is enough — the JSON viewer reads the same denormalised payload from any row of an album.
   const forwardLogId = 'forwardLogIds' in event ? (event.forwardLogIds[0] ?? undefined) : undefined;
   const hasRawMessage = forwardLogId != null;
   switch (event.type) {
@@ -337,9 +299,7 @@ function fromStreamEvent(
       };
     }
     case 'forward.filtered': {
-      // forward.filtered doesn't carry destinationChatId — look it up from
-      // subscription instead. `destinationChatId` may be null when the
-      // subscription has been detached.
+      // No destinationChatId on this variant; look it up from the sub (null when detached).
       const destLabel =
         sub && sub.destinationChatId && dests.get(sub.destinationChatId)?.name
           ? dests.get(sub.destinationChatId)!.name

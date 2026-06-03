@@ -38,11 +38,8 @@ const buttonStyles = cva(
 
 export interface ButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonStyles> {
-  /** Leading icon, rendered before `children`. Swapped for a spinner while loading. */
   icon?: ReactNode;
-  /** Shows a spinner in the leading slot and disables the button. */
   loading?: boolean;
-  /** Spinner size while loading. */
   spinnerSize?: number;
 }
 

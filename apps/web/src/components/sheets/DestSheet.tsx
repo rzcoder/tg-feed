@@ -8,19 +8,17 @@ import { ResolveCard } from '@/components/domain/ResolveCard';
 import { useForumTopics, useResolveDestination } from '@/hooks/useDestinations';
 import { useDebouncedResolve } from '@/hooks/useDebouncedResolve';
 
-// Telegram's General topic has the reserved top_msg_id 1. We represent it as
-// the null/no-topic choice so a forum's General and a normal chat share the
-// "no explicit topic" code path; the API's General entry is filtered out.
+// Telegram's General topic is the reserved top_msg_id 1; we map it to the null/no-topic choice.
 const GENERAL_TOPIC_ID = '1';
 
 export interface DestSheetSubmit {
   name: string;
-  /** Set when the resolver returned a chatId (any input form except not-yet-joined private invite). */
+  // null for a not-yet-joined private invite (only inviteHash set)
   chatId: string | null;
-  /** Set when the input was a `t.me/+HASH` link the userbot hasn't joined — server joins on add. */
+  // set for a t.me/+HASH link the userbot hasn't joined; server joins on add
   inviteHash: string | null;
   note?: string;
-  /** Selected forum topic, or null for the General topic / a non-forum chat. */
+  // null for the General topic or a non-forum chat
   topicId: string | null;
   topicTitle: string | null;
 }
@@ -38,12 +36,9 @@ export function DestSheet({ open, mode, initial, onClose, onSubmit, submitting }
   const isEdit = mode === 'edit';
   const [link, setLink] = useState('');
   const [name, setName] = useState('');
-  // Track manual edits so we can auto-fill from a resolved title without
-  // clobbering anything the user typed first.
+  // Tracks manual edits so the resolved-title auto-fill doesn't clobber user input.
   const [nameTouched, setNameTouched] = useState(false);
   const [note, setNote] = useState('');
-  // Selected forum topic; null == General / no topic. `topicTitle` is cached
-  // alongside so we can persist it without re-deriving from the topics list.
   const [topicId, setTopicId] = useState<string | null>(null);
   const [topicTitle, setTopicTitle] = useState<string | null>(null);
 
@@ -55,7 +50,6 @@ export function DestSheet({ open, mode, initial, onClose, onSubmit, submitting }
     error: resolveErrorRaw,
   } = useResolveDestination();
 
-  // Reset on open / mode change.
   useEffect(() => {
     if (!open) return;
     if (isEdit && initial) {
@@ -77,7 +71,6 @@ export function DestSheet({ open, mode, initial, onClose, onSubmit, submitting }
     }
   }, [open, initial, isEdit, resetResolve]);
 
-  // Debounce resolve in add mode.
   useDebouncedResolve({
     value: link,
     enabled: !isEdit,
@@ -96,17 +89,12 @@ export function DestSheet({ open, mode, initial, onClose, onSubmit, submitting }
   const resolving = !isEdit && resolvePending;
   const resolveError = !isEdit ? resolveErrorRaw : null;
 
-  // Topic picker. Fetch the chat's topics whenever we have a resolved (add
-  // mode) or stored (edit mode) chat id, and show the picker only when the
-  // lister reports a forum. Driving `isForum` off the lister — which calls
-  // channels.GetForumTopics — is authoritative, unlike the resolve-time
-  // `entity.forum` hint which gramjs doesn't reliably populate.
+  // isForum comes from the lister (channels.GetForumTopics), authoritative unlike gramjs's unreliable entity.forum hint.
   const topicChatId = isEdit ? (initial?.chatId ?? null) : (resolved?.chatId ?? null);
   const topicsQuery = useForumTopics(topicChatId, !!topicChatId);
   const isForum = topicsQuery.data?.isForum ?? false;
 
-  // Topics belong to a specific forum, so clear any stale pick when the
-  // resolved chat changes in add mode.
+  // Topics are forum-specific; clear a stale pick when the resolved chat changes.
   useEffect(() => {
     if (isEdit) return;
     setTopicId(null);

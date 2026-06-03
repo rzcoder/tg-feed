@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { MessageContext } from '../types.js';
-import { textRegexRule } from './textRegex.js';
+import { getCompiledRegex, textRegexRule } from './textRegex.js';
 
 const ctx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   text: '',
@@ -32,6 +32,12 @@ describe('textRegexRule', () => {
 
   it('throws on invalid pattern (caught by evaluator, not rule)', () => {
     expect(() => textRegexRule.evaluate(ctx({ text: 'x' }), { pattern: '(', flags: '' })).toThrow();
+  });
+
+  it('memoizes compiled RE2 instances by pattern+flags', () => {
+    const a = getCompiledRegex('foo', 'i');
+    expect(getCompiledRegex('foo', 'i')).toBe(a);
+    expect(getCompiledRegex('foo', '')).not.toBe(a);
   });
 
   it('does not catastrophically backtrack on pathological pattern (RE2 is linear-time)', () => {

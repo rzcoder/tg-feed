@@ -16,18 +16,10 @@ export type EntityIconSize = 'md' | 'sm';
 export type EntityIconVariant = 'default' | 'active';
 
 export interface EntityIconProps {
-  /**
-   * Base64 data URL for the channel/chat profile photo, or null when not
-   * yet fetched. When null, the lucide fallback icon is rendered instead.
-   */
   iconDataUrl: string | null;
   fallback: EntityIconFallback;
   size?: EntityIconSize;
-  /**
-   * `active` flips the surface-2 / muted-text container to accent colors
-   * (used by SubRow when a subscription is expanded). Only applied to the
-   * fallback path — when a photo is present it fills the container.
-   */
+  // `active` paints the fallback container with accent colors; no effect when a photo is present.
   variant?: EntityIconVariant;
   className?: string;
 }

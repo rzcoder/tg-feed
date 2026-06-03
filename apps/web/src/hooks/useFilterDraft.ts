@@ -1,13 +1,4 @@
-/**
- * Shared rule-draft state for the filter editors.
- *
- * Both the standalone `FilterSheet` and the inline-filter editor inside
- * `SubSheet` drive the same little flow: pick a rule type (which seeds its
- * default params and resets the include/exclude mode), edit the params,
- * validate them against `filterRuleParamsSchemas[ruleType]`, then parse the
- * validated payload on commit. This hook owns that logic so the two sheets
- * don't each hand-roll (and drift on) it; each still renders its own step UI.
- */
+// Shared rule-draft state so FilterSheet and SubSheet's inline editor don't drift.
 import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import {
   filterRuleDefaultParams,
@@ -22,15 +13,12 @@ export interface FilterDraft {
   mode: FilterMode;
   setParams: Dispatch<SetStateAction<Record<string, unknown>>>;
   setMode: Dispatch<SetStateAction<FilterMode>>;
-  /** Select a rule type: seeds its default params and resets mode to 'include'. */
+  // Seeds the rule's default params and resets mode to 'include'.
   pickType: (t: FilterRuleType) => void;
-  /** Load an existing filter for editing. */
   load: (rule: FilterRuleType, params: Record<string, unknown>, mode: FilterMode) => void;
-  /** Clear back to the empty draft. */
   reset: () => void;
-  /** True when the current params validate against the rule's schema. */
   valid: boolean;
-  /** Parse + return the validated params. Throws if there's no rule — guard with `valid`. */
+  // Throws if there's no rule — guard with `valid`.
   parseParams: () => Record<string, unknown>;
 }
 

@@ -1,7 +1,4 @@
-/**
- * Settings → Appearance card. Theme preference (system / light / dark);
- * applies instantly, so there's no Save / Reset footer.
- */
+// Theme applies instantly, so there's no Save / Reset footer.
 import { Monitor, Moon, Palette, Sun } from 'lucide-react';
 import { useThemeContext } from '@/lib/ThemeProvider';
 import { type ThemePreference } from '@/lib/useTheme';

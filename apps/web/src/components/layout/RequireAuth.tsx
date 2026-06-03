@@ -31,10 +31,8 @@ export function RequireAuth({ children }: RequireAuthProps) {
   }
 
   if (me.isError) {
-    // 401 → redirecting to /login via the effect above; render nothing mid-redirect.
     if (isUnauthorized) return null;
-    // Any other error (network/5xx): `/me` has retry:false + staleTime:Infinity,
-    // so nothing recovers on its own — offer a manual retry instead of a blank screen.
+    // /me won't recover on its own (retry:false + staleTime:Infinity), so offer a manual retry.
     return (
       <div className="grid place-items-center min-h-dvh px-6 text-center">
         <div className="flex flex-col items-center gap-3 text-text-muted">

@@ -1,18 +1,6 @@
-/**
- * Stream event taxonomy — the wire format for `GET /api/stream` (SSE).
- *
- * The internal event bus (`apps/server/src/events/bus.ts`) accepts a
- * `StreamEventInput` and stamps `occurredAt` to produce the `StreamEvent`
- * that goes on the wire. Per-variant fields live next to the discriminator
- * tag rather than behind `Omit<Union, 'occurredAt'>` because `Omit` doesn't
- * always preserve discriminated-union narrowing across the codebase's TS
- * surface — co-locating keeps narrowing reliable.
- *
- * `forward.filtered` peers `forward_log.status='filtered'` from Ch 6 so the
- * Ch 13 Activity feed can render filtered messages alongside forwarded ones.
- * `subscription.changed` is intentionally narrow: filter mutations do NOT
- * emit events (the Ch 11 filter UI manages its own invalidation).
- */
+// SSE wire format for GET /api/stream; the bus stamps occurredAt onto StreamEventInput.
+// Fields are inlined (not Omit<Union,'occurredAt'>) so discriminated-union narrowing stays reliable.
+// subscription.changed is intentionally narrow: filter mutations don't emit (the filter UI self-invalidates).
 
 export const STREAM_EVENT_TYPES = [
   'forward.started',
@@ -43,11 +31,7 @@ export type StreamEventInput =
       destinationChatId: string;
       sourceMessageIds: string[];
       destMessageIds: string[];
-      /**
-       * Inserted `forward_log` row ids — one per source message id, in the
-       * same order. Lets the Activity UI fetch the persisted raw-message
-       * JSON for a live event without round-tripping through a list refresh.
-       */
+      // forward_log row ids, one per sourceMessageId, same order.
       forwardLogIds: number[];
     }
   | {

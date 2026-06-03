@@ -20,15 +20,12 @@ export interface TelegramEnv {
 export interface TelegramEnvResult {
   ok: boolean;
   env?: TelegramEnv;
-  /** Where the session came from when `ok === true`. */
   source?: 'db' | 'env';
-  /** Human-readable reason when `ok === false`; safe to surface in API. */
+  // Safe to surface in the API when ok === false.
   reason?: string;
 }
 
-// Non-throwing variant — used by the server entrypoint to support degraded
-// boot (no Telegram client; API + DB still come up). Callers that genuinely
-// require credentials use `requireTelegramEnv` below.
+// Non-throwing variant supporting degraded boot (no client; API + DB still come up).
 export function readTelegramEnv(cfg: Config): TelegramEnvResult {
   const missing: string[] = [];
   if (cfg.TG_API_ID === undefined) missing.push('TG_API_ID');
@@ -61,17 +58,8 @@ export function requireTelegramEnv(cfg: Config): TelegramEnv {
   return result.env as TelegramEnv;
 }
 
-/**
- * Priority resolver: prefers the DB-stored account when its key fingerprint
- * matches the configured `TG_SESSION_ENCRYPTION_KEY`, then falls back to the
- * env `TG_SESSION_STRING`, then surfaces a degraded-mode reason.
- *
- * A row whose fingerprint *doesn't* match (key rotated, no key configured,
- * or the row was imported from another host) is skipped — the resolver
- * never auto-deletes it. The `/api/tg/account` endpoint reflects the
- * mismatch state so the operator can either restore the original key or
- * sign out + re-add.
- */
+// DB account (when key fingerprint matches) → env TG_SESSION_STRING → degraded reason.
+// A fingerprint mismatch is skipped, never auto-deleted; /api/tg/account surfaces the mismatch.
 export function resolveTelegramEnv(deps: {
   cfg: Config;
   db: Db;
@@ -155,9 +143,7 @@ export interface CreateTelegramClientOptions {
   gramjsLogLevel?: LogLevel;
 }
 
-// gramjs retries connect this many times with exponential backoff before
-// giving up and throwing — the listener's safe-handler catches downstream
-// failures, but `connect()` itself bubbles to the boot path's degraded mode.
+// connect() bubbles to the boot path's degraded mode after this many retries.
 const CONNECTION_RETRIES = 5;
 
 export function createTelegramClient(opts: CreateTelegramClientOptions): TelegramClient {
@@ -165,13 +151,12 @@ export function createTelegramClient(opts: CreateTelegramClientOptions): Telegra
   const client = new TelegramClient(session, opts.apiId, opts.apiHash, {
     connectionRetries: CONNECTION_RETRIES,
   });
-  // gramjs's own logger is loud by default; pin it to warn unless overridden.
+  // gramjs's logger is loud by default; pin to warn unless overridden.
   client.setLogLevel(opts.gramjsLogLevel ?? LogLevel.WARN);
   return client;
 }
 
-// `destroy` alone leaves the auto-reconnect loop running and the process
-// won't exit cleanly on SIGINT. Order matters: disconnect first, then destroy.
+// Order matters: disconnect before destroy, else the reconnect loop keeps the process alive on SIGINT.
 export async function disconnectClient(client: TelegramClient): Promise<void> {
   await client.disconnect();
   await client.destroy();

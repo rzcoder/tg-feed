@@ -1,11 +1,4 @@
-/**
- * API test scaffolding.
- *
- * Builds an isolated app instance backed by an in-memory DB and a fixed
- * test `webAuth`. Returns a `loginAndGetCookie()` helper because cookie
- * signing requires the live secret — tests can't fabricate a valid signed
- * cookie without going through the real login route.
- */
+// loginAndGetCookie() goes through the real login route: cookie signing needs the live secret.
 import type { FastifyInstance } from 'fastify';
 import type { TelegramStatus } from '@tg-feed/shared';
 import { type Config } from '../config.js';
@@ -41,48 +34,22 @@ export interface TestApp {
 }
 
 export interface BuildTestAppOptions {
-  /** Override the SSE heartbeat interval (default 25 s — too long for stream tests). */
+  // Default 25 s — too long for stream tests.
   heartbeatMs?: number;
-  /** Stub for the universal chat resolver used by both /resolve endpoints. */
   chatResolver?: ChatResolver;
-  /** Stub for the invite-import hook used by both /create endpoints when `inviteHash` is provided. */
   importInvite?: ImportInviteFn;
-  /** Stub for the auto-join hook fired from POST /api/subscriptions (chatId path). */
   joinChannel?: JoinChannelFn;
-  /** Stub for the best-effort profile photo fetcher fired from both /create endpoints. */
   fetchProfilePhoto?: ProfilePhotoFetcher;
-  /** Stub for the forum-topic lister backing POST /api/destinations/topics. */
   listForumTopics?: ForumTopicLister;
-  /**
-   * Override the Telegram status surfaced via `GET /api/system/status` and
-   * used by routes to choose between `telegram_initializing` (transient,
-   * during boot) and `telegram_unavailable` (steady-state). Defaults to a
-   * disconnected status so tests that omit Telegram stubs see the
-   * configure-style 503.
-   */
+  // Default disconnected, so tests without Telegram stubs see the configure-style 503.
   telegramStatus?: TelegramStatus;
-  /**
-   * Returns the configured `TG_SESSION_ENCRYPTION_KEY` as a 32-byte Buffer,
-   * or null. Used by tests that exercise the export/import telegram-account
-   * flow. Defaults to undefined (key absent).
-   */
+  // Default undefined (key absent).
   getEncryptionKey?: () => Buffer | null;
-  /**
-   * Override the SPA static root. Lets the SPA-history-fallback tests point
-   * the server at a temp dir containing a stub index.html.
-   */
   webDistRoot?: string;
-  /**
-   * Telegram Web App auth config. Default undefined → the
-   * `POST /api/auth/telegram` route reports `telegram_auth_disabled`.
-   * Forwarded as a `getTelegramAuth` getter to the server factory.
-   */
+  // Default undefined → POST /api/auth/telegram reports telegram_auth_disabled.
   telegramAuth?: TelegramAuth | null;
-  /** Parsed env config for the bot-config route's DB-over-env fallbacks. */
   cfg?: Config;
-  /** Stub for the bot live-swap invoked by the bot-config route's PUT/DELETE. */
   reloadBot?: () => Promise<void>;
-  /** Whether the bot is "running" for the masked `GET /api/config/bot`. */
   getBotRunning?: () => boolean;
 }
 
@@ -145,9 +112,7 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
       const setCookie = res.headers['set-cookie'];
       const cookieHeader = Array.isArray(setCookie) ? setCookie[0] : setCookie;
       if (!cookieHeader) throw new Error('login response missing Set-Cookie header');
-      // Pick out just the `name=value` portion before the first `;` —
-      // attributes (Path, HttpOnly, ...) aren't sent back on subsequent
-      // requests; clients just echo the cookie value.
+      // Just the name=value pair; clients echo that, not the attributes.
       return cookieHeader.split(';')[0]!;
     },
     async close() {
@@ -157,10 +122,6 @@ export async function buildTestApp(options: BuildTestAppOptions = {}): Promise<T
   };
 }
 
-/**
- * Insert a destination row and return its id. Most route tests need a
- * destination to attach subscriptions to.
- */
 export function seedDestination(
   db: Db,
   overrides: { name?: string; chatId?: string; note?: string | null } = {},

@@ -1,24 +1,5 @@
-/**
- * Filter evaluator.
- *
- * Loads enabled filters for a subscription — both per-sub
- * (`subscription_filters` where `enabled=true`) and library filters
- * attached via `subscription_library_filters` — runs each through its
- * registered rule, AND-combines, and on failure writes one `forward_log`
- * row per source message id (status `'filtered'`, reasons joined into
- * the `error` column).
- *
- * Reasons format:
- * - per-sub: `"<ruleType>: <reason>"`
- * - library: `"library:<name>: <ruleType>: <reason>"` so the activity UI
- *   can split on the `library:` prefix and render a Library chip.
- *
- * Fail-open semantics from Ch 6 are preserved across both sources: an
- * unknown ruleType, a zod params parse failure, or a runtime throw inside
- * a rule's `evaluate` skips that single row (with a warning). The
- * remaining rules still gate the message. Empty surviving filter set
- * passes (vacuous AND).
- */
+// AND-combines a subscription's per-sub + library filter rules; fail-open (unknown rule, bad params, or a throw skips that one row with a warning).
+// Reason format: `library:<name>: <ruleType>: <reason>` for library rows (UI splits on the `library:` prefix), else `<ruleType>: <reason>`.
 import { and, asc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import {
@@ -53,12 +34,7 @@ interface PureEvaluation {
   reasons: string[];
 }
 
-/**
- * Row shape consumed by the pure evaluator. `source` distinguishes per-sub
- * vs library; `label` is the library filter name (null for per-sub). `mode`
- * inverts the rule for that one row when set to `'exclude'` — the filter
- * rejects when its rule matches instead of when it doesn't.
- */
+// mode 'exclude' inverts the row: it rejects when the rule matches.
 export interface EvaluatorRow {
   id: number;
   source: 'sub' | 'lib';
@@ -82,9 +58,7 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
       if (result.pass) return { pass: true };
 
       const errorText = result.reasons.join('; ');
-      // Denormalize the raw payload onto every filtered row so each row is
-      // independently inspectable in the Activity JSON viewer, mirroring
-      // the sent/failed paths in `forwarder.writeLogs`.
+      // Denormalize the raw payload onto every row so each is independently inspectable.
       const rawMessage = context.rawMessage ?? null;
       const inserted = db
         .insert(forwardLog)
@@ -121,19 +95,7 @@ export function createFilterEvaluator(deps: CreateFilterEvaluatorDeps): FilterEv
   };
 }
 
-/**
- * Load all evaluatable filters for a subscription as a single ordered list.
- *
- * Per-sub filters (where `enabled=true`) and library filters attached via
- * `subscription_library_filters` are loaded with two selects and merged in
- * JS. Library rows come first (`source ASC: 'lib' < 'sub'`), then by id.
- *
- * Two queries instead of a SQL UNION because drizzle's mapped JSON columns
- * (`mode: 'json'` in the schema) flow through cleanly per-table; a raw
- * UNION returns columns as strings and would need manual `JSON.parse`. The
- * cost is one extra round-trip on a hot path — for personal-use volumes
- * (single-digit messages/sec at most) this is comfortably below noise.
- */
+// Two selects merged in JS (library rows first, then by id) rather than a SQL UNION, which would stringify drizzle's JSON columns.
 export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[] {
   const subRows = db
     .select({
@@ -190,10 +152,7 @@ export function loadEvaluatorRows(db: Db, subscriptionId: number): EvaluatorRow[
   return merged;
 }
 
-/**
- * Pure evaluation — no side effects. Exported for unit tests; the public
- * `FilterEvaluator.evaluate` method is what production wiring calls.
- */
+// Pure evaluation, no side effects; the side-effecting wrapper is FilterEvaluator.evaluate.
 export function evaluateFilters(
   rows: readonly EvaluatorRow[],
   registry: FilterRegistry,
@@ -237,9 +196,6 @@ export function evaluateFilters(
       continue;
     }
 
-    // include: row fails when the rule did NOT match; exclude inverts that —
-    // the row fails when the rule DID match. Either way, a failing row
-    // contributes a reason and the message is rejected (AND-combined).
     const blocks = row.mode === 'exclude' ? evaluation.pass : !evaluation.pass;
     if (blocks) {
       const reason =

@@ -27,17 +27,13 @@ export function LoginPage() {
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tgFailed, setTgFailed] = useState(false);
-  // Resolved Telegram initData: `undefined` while waiting for the async SDK,
-  // `null` when this isn't a Telegram launch, or the signed string.
+  // undefined = waiting for async SDK, null = not a Telegram launch, else the signed string.
   const [initData, setInitData] = useState<string | null | undefined>(() =>
     detectTelegramLaunch() ? undefined : null,
   );
-  // One-shot guard for the auto sign-in; a ref so it survives StrictMode's
-  // double-invoked effects.
+  // One-shot guard; a ref so it survives StrictMode's double-invoked effects.
   const attemptedRef = useRef(false);
 
-  // Resolve initData (waiting briefly for the async SDK on a launch) and signal
-  // the viewport ready.
   useEffect(() => {
     if (initData !== undefined) return;
     let cancelled = false;
@@ -51,19 +47,16 @@ export function LoginPage() {
     };
   }, [initData]);
 
-  // Auto sign-in via Telegram once initData and `/me` resolve; on failure the
-  // password form takes over.
   useEffect(() => {
     if (initData === undefined || me.isPending || me.data?.authenticated) return;
     if (attemptedRef.current) return;
     attemptedRef.current = true;
-    if (initData === null) return; // not a Telegram launch
+    if (initData === null) return;
     tgLogin.mutate(initData, {
       onError: () => setTgFailed(true),
     });
   }, [initData, me.isPending, me.data, tgLogin]);
 
-  // If already authed, bounce to wherever the user came from (or /).
   useEffect(() => {
     if (me.data?.authenticated) {
       const dest = (location.state as LocationState | null)?.from?.pathname ?? '/';
@@ -86,7 +79,6 @@ export function LoginPage() {
     });
   };
 
-  // Avoid a flash of the login form while /me is still resolving.
   if (me.isPending) {
     return (
       <div className="grid place-items-center min-h-dvh text-text-muted">
@@ -99,8 +91,6 @@ export function LoginPage() {
     return <Navigate to="/" replace />;
   }
 
-  // Show the spinner while initData is resolving or the auto sign-in is in
-  // flight; drop to the password form on failure or when not a Telegram launch.
   const awaitingTelegram = initData === undefined || (initData !== null && !tgFailed);
   if (awaitingTelegram) {
     return (
