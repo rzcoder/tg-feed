@@ -1,11 +1,4 @@
-/**
- * Repository for the single-row `telegram_account` table.
- *
- * The row is logically a singleton: every write goes to id=1 via
- * `onConflictDoUpdate`, every read returns the row or null. Callers never
- * see the encryption key here — they pass already-encrypted blobs in and
- * decryption happens at the call site (see `tg/client.ts`).
- */
+// Singleton `telegram_account` row (id=1). Callers pass already-encrypted blobs; no crypto here.
 import { eq } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { telegramAccount, type TelegramAccount } from './schema.js';
@@ -55,7 +48,6 @@ export function upsertAccount(db: Db, payload: UpsertTelegramAccountInput): Tele
     .run();
   const row = getActiveAccount(db);
   if (!row) {
-    // Should be impossible — the upsert above just wrote id=1.
     throw new Error('telegram_account row vanished after upsert');
   }
   return row;

@@ -1,11 +1,4 @@
-/**
- * Scheduler state for the stats digest, stored as JSON in the `app_settings`
- * row keyed `'stats_digest_state'`. Kept separate from the user-editable
- * `'global'` settings row so the scheduler's bookkeeping never collides with
- * the Settings PUT merge.
- *
- * Reads are defensive: a missing or malformed row reads as the empty baseline.
- */
+// Stats-digest scheduler state, kept in its own app_settings row so it never collides with the user-editable 'global' Settings merge; missing/malformed reads as the empty baseline.
 import { eq } from 'drizzle-orm';
 import type { Db } from './client.js';
 import { appSettings } from './schema.js';
@@ -13,16 +6,10 @@ import { appSettings } from './schema.js';
 export const STATS_DIGEST_STATE_KEY = 'stats_digest_state';
 
 export interface StatsDigestState {
-  /** Epoch ms of the last send (or baseline). null before the first tick. */
+  // Epoch ms of the last send/baseline.
   lastSentAt: number | null;
-  /** Occurrence key of the last send/baseline. null before the first tick. */
   lastKey: string | null;
-  /**
-   * Fingerprint of the schedule config at the last tick. When it changes
-   * (enable/disable, time, day, frequency, time zone), the scheduler
-   * re-baselines instead of sending — so editing the schedule never fires an
-   * immediate or backlog digest. null before the first tick.
-   */
+  // Schedule-config fingerprint; on change the scheduler re-baselines instead of firing a backlog digest.
   configHash: string | null;
 }
 

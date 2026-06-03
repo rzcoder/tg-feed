@@ -1,11 +1,4 @@
-/**
- * Aggregate counters over `forward_log`, used by the stats digest.
- *
- * The four buckets map 1:1 to the `status` enum: 'sent' = forwarded,
- * 'filtered' = dropped by a filter, 'failed' = permanent error,
- * 'flood_wait' = transient throttle (shown separately so it isn't
- * double-counted against the later 'sent' row a retry produces).
- */
+// forward_log counters for the stats digest. flood_wait is a transient throttle, counted separately so it isn't double-counted against the 'sent' row a retry later produces.
 import { sql } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { forwardLog } from '../db/schema.js';
@@ -17,11 +10,7 @@ export interface DigestStats {
   floodWait: number;
 }
 
-/**
- * Counts rows by status in the half-open window `[sinceMs, untilMs)`.
- * `created_at` is stored as integer epoch-ms, so we compare against raw
- * numbers rather than `Date` objects.
- */
+// Counts by status over the half-open window [sinceMs, untilMs); created_at is epoch-ms.
 export function getDigestStats(db: Db, sinceMs: number, untilMs: number): DigestStats {
   const rows = db
     .select({ status: forwardLog.status, n: sql<number>`count(*)` })

@@ -1,4 +1,4 @@
--- Chapter 10 — Destinations + Subscriptions migration.
+-- Destinations + Subscriptions migration.
 --
 -- 1. Create `destinations` (named CRUD list).
 -- 2. Backfill destinations from each distinct `subscriptions.destination_chat_id`

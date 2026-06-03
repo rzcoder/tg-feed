@@ -1,17 +1,5 @@
-/**
- * Global app_settings readers.
- *
- * Both pipeline knobs (forward throttle delay + album debounce window) live
- * in the single `app_settings` row keyed `'global'` whose `value` JSON is a
- * `{ delayMs?, albumDebounceMs? }` shape. The Settings UI mutates the same
- * row and the pipeline reads it on every send / album flush, so changes
- * apply live without restart.
- *
- * Defensive defaults: a missing row, missing field, or non-positive number
- * all fall back to the documented defaults. We never want a malformed DB
- * row to disable throttling (would trip Telegram's anti-spam) or set a
- * negative debounce (would break the album setTimeout).
- */
+// Pipeline knobs in the single 'global' app_settings row; read on every send/flush so changes apply live.
+// Missing/non-positive values fall back to defaults so a bad row can't disable throttling (Telegram anti-spam) or break the album setTimeout.
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client.js';
 import { appSettings } from '../db/schema.js';

@@ -1,14 +1,4 @@
-/**
- * Theme: System / Light / Dark.
- *
- * The user's *preference* is one of three; the *resolved* theme is one of
- * two ('light' | 'dark') and is what gets written to `<html data-theme>`.
- * When preference is 'system', resolved tracks `prefers-color-scheme` live.
- *
- * Initial resolution happens in an inline script in `index.html` before
- * React mounts (avoids flash-of-wrong-theme). This hook keeps the runtime
- * value in sync with React state and re-applies on changes.
- */
+// Theme preference (system/light/dark) → resolved theme on <html data-theme>; index.html resolves it pre-mount to avoid a flash, this hook keeps it in sync after.
 import { useCallback, useEffect, useState } from 'react';
 import { getTelegramColorScheme, isInsideTelegram } from './telegram';
 
@@ -26,17 +16,13 @@ function readPreference(): ThemePreference {
       return stored as ThemePreference;
     }
   } catch {
-    // localStorage unavailable (e.g., private mode in some browsers).
+    // localStorage unavailable (e.g. private mode)
   }
   return 'system';
 }
 
 function systemTheme(): ResolvedTheme {
-  // Inside Telegram, follow Telegram's color scheme; elsewhere the OS
-  // preference. The Telegram SDK script loads in a plain browser too and
-  // injects `WebApp.colorScheme` (defaulting to 'light'), so only trust it
-  // when we're actually launched from Telegram — otherwise it would override
-  // the OS preference (and diverge from the index.html boot script).
+  // Only trust Telegram's colorScheme when actually launched from Telegram; the SDK injects a 'light' default in plain browsers that would override the OS preference.
   if (isInsideTelegram()) {
     const tg = getTelegramColorScheme();
     if (tg) return tg;
@@ -63,12 +49,11 @@ export function useTheme(): UseThemeResult {
   const [preference, setPreferenceState] = useState<ThemePreference>(readPreference);
   const [resolved, setResolved] = useState<ResolvedTheme>(() => resolve(readPreference()));
 
-  // Apply resolved theme any time it changes.
   useEffect(() => {
     apply(resolved);
   }, [resolved]);
 
-  // Watch the system media query, but only react while preference is 'system'.
+  // Track the system media query only while preference is 'system'.
   useEffect(() => {
     if (preference !== 'system') return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -83,7 +68,7 @@ export function useTheme(): UseThemeResult {
     try {
       localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
-      // ignore
+      // localStorage unavailable
     }
   }, []);
 

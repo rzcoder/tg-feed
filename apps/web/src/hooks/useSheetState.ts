@@ -1,10 +1,4 @@
-/**
- * Generic add/edit sheet state.
- *
- * Wraps the four-piece (open/mode/initial) shape every CRUD page redeclares
- * with `useState`. Keeps the open/mode/initial trio in a single object so
- * the sheet never lands in an inconsistent state.
- */
+// Generic add/edit sheet state: open/mode/initial as one object so it can't go inconsistent.
 import { useCallback, useState } from 'react';
 
 export type SheetMode = 'add' | 'edit';

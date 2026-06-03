@@ -15,11 +15,7 @@ export interface DestinationPickerSheetProps {
   submitting?: boolean;
 }
 
-/**
- * Lightweight "change where this subscription forwards" picker, opened from the
- * Forwards-to card in the expanded subscription row. Just the destination list
- * — for the full edit (filters, etc.) the row still has its Edit button.
- */
+// Destination-only picker; the full edit (filters, etc.) lives behind the row's Edit button.
 export function DestinationPickerSheet({
   open,
   currentDestinationId,

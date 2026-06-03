@@ -1,17 +1,4 @@
-/**
- * Repository for the DB-backed bot configuration, stored as JSON in the
- * `app_settings` row keyed `'bot'`. Shape:
- *
- *   { token?: EncryptedEnvelope; admins?: BotAdmin[]; publicUrl?: string }
- *
- * (A legacy `adminIds: string[]` shape from before display-name support is
- * still read and upgraded on the fly.)
- *
- * The token arrives already encrypted; this repo only stores and merges the
- * envelope. Reads are defensive: a missing row or any malformed field yields
- * an absent value, so a hand-edited or partially-written row can't crash the
- * resolver — it just falls back to env.
- */
+// Bot config as JSON in app_settings['bot']. Reads are defensive: a malformed field falls back to env, never throws.
 import { eq } from 'drizzle-orm';
 import type { BotAdmin } from '@tg-feed/shared';
 import type { Db } from './client.js';
@@ -26,10 +13,7 @@ export interface StoredBotConfig {
   publicUrl?: string;
 }
 
-/**
- * Partial update. Per field: `undefined` = leave unchanged, `null` = clear
- * (the resolver then falls back to env), a value = set it.
- */
+// Per field: undefined = unchanged, null = clear (resolver falls back to env), value = set.
 export interface BotConfigPatch {
   token?: EncryptedEnvelope | null;
   admins?: BotAdmin[] | null;
@@ -62,7 +46,7 @@ function asAdmins(value: Record<string, unknown>): BotAdmin[] | undefined {
     }
     return out;
   }
-  // Legacy: an older `adminIds: string[]` shape (pre display-name support).
+  // Legacy adminIds: string[] (pre display-name).
   if (Array.isArray(value.adminIds)) {
     return value.adminIds
       .filter((x): x is string => typeof x === 'string' && /^\d+$/.test(x))

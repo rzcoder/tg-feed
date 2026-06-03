@@ -2,9 +2,6 @@ import type { ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
-/**
- * Logo glyph — the design's hand-rolled SVG path. Sized by parent.
- */
 export interface LogoProps {
   size?: number;
   className?: string;
@@ -65,7 +62,6 @@ export function LogoBadge({ size = 16, className }: LogoBadgeProps) {
   );
 }
 
-/** Same badge frame as the brand logo, but renders an arbitrary lucide icon. */
 export interface IconBadgeProps {
   icon: LucideIcon;
   size?: number;

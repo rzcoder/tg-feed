@@ -1,7 +1,3 @@
-/**
- * "Xs ago" / "Xm ago" / "Xh ago" / "Xd ago" relative formatter.
- * Matches the design's `formatRelative`.
- */
 export function formatRelative(ageSec: number): string {
   if (ageSec < 60) return `${Math.max(1, Math.round(ageSec))}s ago`;
   if (ageSec < 3600) return `${Math.round(ageSec / 60)}m ago`;

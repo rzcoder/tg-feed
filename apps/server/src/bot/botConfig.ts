@@ -1,6 +1,3 @@
-/**
- * DB-over-env resolver for the Telegram bot configuration.
- */
 import type { BotAdmin, BotConfigInfo, BotConfigSource } from '@tg-feed/shared';
 import type { TelegramAuth } from '../api/auth.js';
 import type { Config } from '../config.js';
@@ -26,7 +23,6 @@ function dedupe(ids: string[]): string[] {
   return Array.from(new Set(ids.map((s) => s.trim()).filter((s) => s.length > 0)));
 }
 
-/** Resolve the bot token DB→env. Logs (once per call) when it skips a stored row. */
 function resolveBotToken(deps: ResolveBotDeps): {
   token: string | null;
   source: BotConfigSource | null;
@@ -60,10 +56,7 @@ function resolveBotToken(deps: ResolveBotDeps): {
   return { token: null, source: null };
 }
 
-/**
- * Resolve the admin allowlist DB→env. DB entries carry display names (from
- * the `@username` lookup); env entries are raw ids with null names.
- */
+// DB entries carry display names; env entries are raw ids with null names.
 function resolveAdmins(deps: ReadDeps): { admins: BotAdmin[]; source: BotConfigSource | null } {
   const { cfg, db } = deps;
   const stored = readBotConfigRaw(db);
@@ -107,11 +100,7 @@ function resolvePublicUrlWithSource(deps: ReadDeps): {
   return { publicUrl: undefined, source: null };
 }
 
-/**
- * Resolved bot auth (token + admin allowlist), or null when the bot is not
- * configured. Enabled only when a token resolves AND at least one admin id
- * resolves.
- */
+// null unless both a token AND at least one admin id resolve.
 export function resolveTelegramAuth(deps: ResolveBotDeps): TelegramAuth | null {
   const { token } = resolveBotToken(deps);
   if (!token) return null;
@@ -120,16 +109,11 @@ export function resolveTelegramAuth(deps: ResolveBotDeps): TelegramAuth | null {
   return { botToken: token, adminIds };
 }
 
-/** Resolved public URL DB→env (used for the bot's Mini App button). */
 export function resolvePublicUrl(deps: ReadDeps): string | undefined {
   return resolvePublicUrlWithSource(deps).publicUrl;
 }
 
-/**
- * Masked, read-only view for `GET /api/config/bot`. Never logs and never
- * returns the token. `keyFingerprintMismatch` is true when a token is stored
- * but unusable with the current key (key unset or fingerprint differs).
- */
+// Masked view for GET /api/config/bot; never returns the token. keyFingerprintMismatch = token stored but unusable with the current key.
 export function buildBotConfigInfo(deps: {
   cfg: Config;
   db: Db;

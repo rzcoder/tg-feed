@@ -1,16 +1,4 @@
-/**
- * Multi-step Telegram sign-in wizard rendered inside a Sheet.
- *
- * Steps:
- *   mode → phone → code → ?2fa → done
- *               ↘ raw         ↗
- *
- * The `sessionId` returned from /login/start is held in component state and
- * passed to subsequent /verify and /password calls so the server can keep
- * the temp client alive across HTTP boundaries. Closing the sheet (or
- * clicking Cancel) fires /login/cancel as a best-effort tear-down so the
- * server doesn't have to wait for the TTL GC.
- */
+// sessionId threads through /verify and /password so the server keeps the temp client alive across HTTP calls; Cancel fires /login/cancel for best-effort teardown.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
@@ -81,7 +69,7 @@ export function TelegramLoginSheet({ open, onClose }: TelegramLoginSheetProps) {
   const isPending =
     start.isPending || verifyCode.isPending || verifyPassword.isPending || loginRaw.isPending;
 
-  // Reset internal state when reopening so a stale step doesn't flash.
+  // Reset on reopen so a stale step doesn't flash.
   useEffect(() => {
     if (open) {
       setState(INITIAL);
@@ -324,8 +312,6 @@ interface PrimaryActionProps {
   onClick: () => void;
 }
 
-// Per-step primary-button config in one place: label (idle/pending), which
-// FlowState field gates the button, and the minimum length to enable it.
 // Passwords aren't trimmed (spaces can be significant); the rest are.
 const STEP_ACTIONS: Record<
   Exclude<Step, 'mode' | 'done'>,

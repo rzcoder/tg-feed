@@ -4,12 +4,6 @@ import type { DestinationDto } from '@tg-feed/shared';
 import { cn } from '@/lib/cn';
 import { EntityIcon } from '@/components/domain/EntityIcon';
 
-/**
- * Selectable destination radio, shared by the subscription edit sheet and the
- * quick destination-picker sheet. The secondary line carries the chat id, the
- * forum topic (when set — this is what distinguishes two destinations that
- * point at the same forum but different topics), and the note.
- */
 export interface DestinationOptionProps {
   destination: DestinationDto;
   selected: boolean;

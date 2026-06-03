@@ -38,7 +38,6 @@ export function FiltersPage() {
     [catalog.data],
   );
 
-  // Default to first sub if none in URL.
   useEffect(() => {
     if (view !== 'sub') return;
     if (subId !== null) return;
@@ -48,9 +47,7 @@ export function FiltersPage() {
 
   const sheet = useFilterSheetState();
 
-  // The sub PerSubView actually shows: subId from the URL, or the first sub
-  // until the effect backfills it. Used for the sheet and the FAB so adding a
-  // filter works on the first painted frame, not just after the effect runs.
+  // URL sub, or first sub until the effect backfills it — so the FAB/sheet work on the first frame.
   const effectiveSubId = subId ?? subs.data?.[0]?.id ?? null;
   const showFab = view === 'library' || effectiveSubId !== null;
   const addCurrent = () => {

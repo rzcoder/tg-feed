@@ -1,18 +1,9 @@
-/**
- * One-line summaries of a filter rule's params, for compact rendering in
- * filter lists. Matches the design's `describeFilter` output verbatim.
- *
- * `FILTER_RULE_META` is the single per-rule registry: label, description,
- * and icon together so adding a new rule means touching one record. Legacy
- * named maps (`FILTER_RULE_LABELS` etc.) are derived from it.
- */
 import { Ban, FileImage, Regex, Ruler, TextCursorInput, User, type LucideIcon } from 'lucide-react';
 import type { FilterMode, FilterRuleType } from '@tg-feed/shared';
 
 export interface FilterLike {
   ruleType: FilterRuleType;
   params: Record<string, unknown>;
-  /** Optional — when 'exclude', the description is prefixed with "Exclude: ". */
   mode?: FilterMode;
 }
 

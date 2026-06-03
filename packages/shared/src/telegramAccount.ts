@@ -1,37 +1,19 @@
-/**
- * Wire-format schemas for the in-app Telegram sign-in flow exposed by
- * `apps/server/src/api/routes/telegramAccount.ts` and consumed by the
- * Settings page.
- */
 import { z } from 'zod';
 
-/** Source of the currently-active session. */
 export const telegramAccountSourceSchema = z.enum(['db', 'env']);
 export type TelegramAccountSource = z.infer<typeof telegramAccountSourceSchema>;
 
 export const telegramAccountInfoSchema = z.object({
-  /** True when the resolver successfully picked up a session (DB or env). */
   present: z.boolean(),
   source: telegramAccountSourceSchema.nullable(),
   displayName: z.string().nullable(),
   username: z.string().nullable(),
   phoneNumber: z.string().nullable(),
   telegramUserId: z.string().nullable(),
-  /**
-   * Account profile photo as a `data:image/jpeg;base64,...` URL, fetched
-   * lazily from the live userbot ("me") and cached. null when unavailable —
-   * no photo, not connected, or no live client. Defaulted so payloads
-   * without the field still parse.
-   */
+  // data:image/jpeg;base64 URL; null when unavailable (defaulted so older payloads parse)
   avatarDataUrl: z.string().nullable().default(null),
-  /** Whether `TG_SESSION_ENCRYPTION_KEY` is configured. */
   encryptionKeyConfigured: z.boolean(),
-  /**
-   * True when a row exists in `telegram_account` but its `keyFingerprint`
-   * doesn't match the current key. The resolver falls through to env (or
-   * degraded mode); the UI surfaces a "key mismatch" hint and offers to
-   * sign out + re-add.
-   */
+  // row exists but keyFingerprint != current key; resolver falls through to env/degraded
   keyFingerprintMismatch: z.boolean(),
 });
 export type TelegramAccountInfo = z.infer<typeof telegramAccountInfoSchema>;
@@ -64,9 +46,6 @@ export const telegramLoginVerifyRequestSchema = z.object({
 });
 export type TelegramLoginVerifyRequest = z.infer<typeof telegramLoginVerifyRequestSchema>;
 
-// Discriminated on `done` so the client narrows correctly: either the
-// flow completed (and we return the new account info), or 2FA is needed
-// next.
 export const telegramLoginCompletedSchema = z.object({
   done: z.literal(true),
   account: telegramAccountInfoSchema,
@@ -97,9 +76,7 @@ export type TelegramLoginPasswordResponse = z.infer<typeof telegramLoginPassword
 // --- Login: raw-paste flow ----------------------------------------------
 
 export const telegramLoginRawRequestSchema = z.object({
-  // The gramjs StringSession alphabet is base64-url-ish (`A-Za-z0-9+/=_-`).
-  // Garbage outside this set burns a connection attempt against Telegram for
-  // no reason; reject up-front so the route returns 400 instead of 502.
+  // Reject non-StringSession-alphabet input up-front so the route 400s instead of burning a TG connection (502).
   sessionString: z
     .string()
     .min(8)

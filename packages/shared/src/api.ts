@@ -1,19 +1,5 @@
-/**
- * HTTP API DTOs and request schemas.
- *
- * Single source of truth for the wire format between server and web.
- * Server validates requests with these zod schemas; web infers TS types
- * from them.
- *
- * Wire format conventions:
- *   - dates serialize as ISO 8601 strings; the server `.toISOString()`s
- *     before responding and the web does `new Date(iso)` if it needs a Date
- *   - list endpoints return `{ items: [...] }` envelopes for forwards-
- *     compatible pagination later
- *   - PATCH bodies are explicit (never `.partial()` of a create schema —
- *     `.default()` calls on field schemas would make Input ≠ Output and
- *     `.partial()` discards that distinction silently)
- */
+// Wire-format source of truth: server validates with these schemas, web infers types.
+// PATCH bodies are explicit (not `.partial()` of create — `.default()` fields make Input ≠ Output).
 import { z } from 'zod';
 import {
   FILTER_RULE_TYPES,
@@ -28,16 +14,12 @@ import {
 } from './filters.js';
 import { FORWARD_LOG_STATUSES } from './forwardLog.js';
 
-// `filterRuleParamsSchemas` re-export keeps a single import surface for
-// consumers that need both the catalog wire types and the per-rule params
-// schemas (form generation in the web UI).
 export { filterRuleParamsSchemas };
 
 // --- Auth -------------------------------------------------------------
 
 export const loginRequestSchema = z.object({
-  // Cap the password length so a multi-MB string can't burn CPU through the
-  // SHA-256 compare. Login is rate-limited but free CPU is still free CPU.
+  // Cap length so a multi-MB string can't burn CPU through the SHA-256 compare.
   password: z.string().min(1).max(256),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
@@ -47,12 +29,8 @@ export const loginResponseSchema = z.object({
 });
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
 
-// Telegram Web App sign-in. The web client running inside Telegram posts the
-// raw `window.Telegram.WebApp.initData` query string; the server verifies its
-// HMAC against the bot token and checks the embedded user against the admin
-// allowlist. Reuses `loginResponseSchema` for the success body. The 8 KiB cap
-// is generous — real initData payloads are a few hundred bytes — and bounds
-// the HMAC work on this unauthenticated route.
+// Raw `WebApp.initData`; server verifies its HMAC vs bot token + admin allowlist.
+// 8 KiB cap bounds HMAC work on this unauthenticated route (real payloads are ~hundreds of bytes).
 export const telegramAuthRequestSchema = z.object({
   initData: z.string().min(1).max(8192),
 });
@@ -65,23 +43,19 @@ export type MeResponse = z.infer<typeof meResponseSchema>;
 
 // --- Access status (shared by destinations + subscription source) -----
 
-// Whether the userbot can currently see/post to a chat. Written by the
-// access monitor on the periodic sweep and on subscription create. The UI
-// renders 'no_access' as a red "no access" badge.
+// Whether the userbot can currently see/post to a chat; written by the access monitor's sweep.
 export const accessStatusSchema = z.enum(['ok', 'no_access']);
 export type AccessStatus = z.infer<typeof accessStatusSchema>;
 
 // --- Destinations -----------------------------------------------------
 
-// Numeric Telegram chat id; supergroups/channels start with -100. We allow
-// any integer-shaped string (negative or positive) of at least 6 digits.
+// Numeric Telegram chat id; supergroups/channels start with -100.
 export const telegramChatIdSchema = z
   .string()
   .min(1)
   .regex(/^-?\d{6,}$/, 'expected a numeric Telegram chat id');
 
-// Forum topic's `top_msg_id` in storage form — a positive integer string,
-// kept as text for parity with the other Telegram ids.
+// Forum topic `top_msg_id`; text for parity with the other Telegram ids.
 export const forumTopicIdSchema = z
   .string()
   .min(1)
@@ -92,28 +66,14 @@ export const destinationDtoSchema = z.object({
   name: z.string(),
   chatId: z.string(),
   note: z.string().nullable(),
-  /**
-   * Forum topic this destination forwards into, or null for "no explicit
-   * topic" — the General topic on a forum supergroup, or any non-forum
-   * chat. `topicId` is the topic's `top_msg_id`; `topicTitle` is cached at
-   * create/edit time so the UI renders without a live topics lookup.
-   */
+  // topicId = topic's top_msg_id; null = General/no-topic. topicTitle cached at write time.
   topicId: z.string().nullable(),
   topicTitle: z.string().nullable(),
-  /**
-   * Channel/chat profile photo as a `data:image/jpeg;base64,...` URL.
-   * Null when not yet fetched (e.g. fresh migrations, Telegram-less boots,
-   * channels with no photo). The web UI falls back to a lucide icon.
-   */
+  // `data:image/jpeg;base64,...`; null until fetched (UI falls back to a lucide icon).
   iconDataUrl: z.string().nullable(),
   usageCount: z.number().int().nonnegative(),
-  /**
-   * Whether the userbot can currently access this destination. 'ok' until
-   * the periodic sweep proves otherwise. Drives the "no access" badge in
-   * the web UI.
-   */
+  // 'ok' until the periodic sweep proves otherwise.
   accessStatus: accessStatusSchema,
-  /** ISO timestamp of the last access check; null until the first sweep. */
   accessCheckedAt: z.string().nullable(),
   createdAt: z.string(),
 });
@@ -124,26 +84,20 @@ export const destinationListResponseSchema = z.object({
 });
 export type DestinationListResponse = z.infer<typeof destinationListResponseSchema>;
 
-// Telegram private invite hash extracted from `t.me/+HASH`. Same character
-// set as a username plus `-`; length capped well above any real-world
-// invite (typical hashes are ~16 chars, but the format is opaque).
+// Private invite hash from `t.me/+HASH` (opaque format; cap well above real-world ~16 chars).
 export const telegramInviteHashSchema = z
   .string()
   .min(1)
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, 'expected a Telegram invite hash');
 
-// Either `chatId` (already-known numeric id; existing flow) or `inviteHash`
-// (private invite — server will call `messages.ImportChatInvite` to join
-// and derive the chatId). Exactly one is required; the refine guards both
-// "neither provided" and "both provided".
+// `inviteHash` path makes the server `ImportChatInvite` to join and derive the chatId.
 export const createDestinationRequestSchema = z
   .object({
     name: z.string().min(1).max(80),
     chatId: telegramChatIdSchema.optional(),
     inviteHash: telegramInviteHashSchema.optional(),
     note: z.string().max(200).optional(),
-    /** Forum topic to forward into; omit or null for the General topic / a non-forum chat. */
     topicId: forumTopicIdSchema.nullable().optional(),
     topicTitle: z.string().max(200).nullable().optional(),
   })
@@ -152,9 +106,7 @@ export const createDestinationRequestSchema = z
   });
 export type CreateDestinationRequest = z.infer<typeof createDestinationRequestSchema>;
 
-// `POST /api/destinations/resolve` — preview only, no DB write. Mirrors
-// the subscription resolve endpoint. The UI debounces input changes and
-// then submits the resolved fields to `POST /api/destinations` to commit.
+// `POST /api/destinations/resolve` — preview only, no DB write.
 export const resolveDestinationRequestSchema = z.object({
   input: z.string().min(1).max(200),
 });
@@ -164,16 +116,11 @@ export const resolveDestinationResponseSchema = z.object({
   /** null only for not-yet-joined private invites — UI should fall back to inviteHash. */
   chatId: z.string().nullable(),
   title: z.string(),
-  /** `@username` when known. */
   handle: z.string().nullable(),
   /** non-null for `t.me/+HASH` inputs; carries to the create endpoint. */
   inviteHash: z.string().nullable(),
   alreadyMember: z.boolean(),
-  /**
-   * Whether the resolved chat is a forum supergroup (has topics). Drives the
-   * topic picker in the Add-destination UI. False for not-yet-joined private
-   * invites — the chat is unknown until the userbot joins.
-   */
+  // False for not-yet-joined private invites — the chat is unknown until the userbot joins.
   isForum: z.boolean(),
 });
 export type ResolveDestinationResponse = z.infer<typeof resolveDestinationResponseSchema>;
@@ -183,7 +130,6 @@ export const updateDestinationRequestSchema = z
     name: z.string().min(1).max(80).optional(),
     chatId: telegramChatIdSchema.optional(),
     note: z.string().max(200).nullable().optional(),
-    /** Re-target the forum topic; null clears it back to General / no topic. */
     topicId: forumTopicIdSchema.nullable().optional(),
     topicTitle: z.string().max(200).nullable().optional(),
   })
@@ -192,22 +138,18 @@ export const updateDestinationRequestSchema = z
   });
 export type UpdateDestinationRequest = z.infer<typeof updateDestinationRequestSchema>;
 
-// `POST /api/destinations/topics` — list a forum supergroup's topics so the
-// UI can offer a picker. Read-only; takes a resolved numeric chat id.
 export const listForumTopicsRequestSchema = z.object({
   chatId: telegramChatIdSchema,
 });
 export type ListForumTopicsRequest = z.infer<typeof listForumTopicsRequestSchema>;
 
 export const forumTopicSchema = z.object({
-  /** The topic's `top_msg_id` in storage form. */
-  id: z.string(),
+  id: z.string(), // top_msg_id
   title: z.string(),
 });
 export type ForumTopic = z.infer<typeof forumTopicSchema>;
 
 export const listForumTopicsResponseSchema = z.object({
-  /** False when the chat isn't a forum — the UI then hides the picker. */
   isForum: z.boolean(),
   topics: z.array(forumTopicSchema),
 });
@@ -219,46 +161,22 @@ export const subscriptionDtoSchema = z.object({
   id: z.number().int(),
   sourceChatId: z.string(),
   sourceTitle: z.string(),
-  /** `@channel` handle, populated by the resolve endpoint at create time. */
   handle: z.string().nullable(),
-  /**
-   * Source channel profile photo as a `data:image/jpeg;base64,...` URL,
-   * or null when not yet fetched. Same lifecycle as `destinationDtoSchema.iconDataUrl`.
-   */
   iconDataUrl: z.string().nullable(),
-  /**
-   * FK to the destination chat. Nullable: a subscription can exist without
-   * a destination (created via Settings → Import when the destination is
-   * missing, or detached by the user). The forwarder skips such rows; the
-   * UI shows a "no destination" badge.
-   */
+  // null = detached: subscription with no destination; forwarder skips it.
   destinationId: z.number().int().nullable(),
-  /** Joined from `destinations` for UI rendering convenience; null when detached. */
   destinationName: z.string().nullable(),
   destinationChatId: z.string().nullable(),
   enabled: z.boolean(),
-  /** Count of own per-sub filters + attached library filters. */
+  // own per-sub filters + attached library filters
   filterCount: z.number().int().nonnegative(),
-  /** Count of forward_log rows with status='sent' for this subscription. */
+  // forward_log rows with status='sent'
   forwardedCount: z.number().int().nonnegative(),
-  /** Library filter ids attached to this subscription (sorted ascending). */
   libraryFilterIds: z.array(z.number().int().positive()),
-  /**
-   * ISO timestamp of the last `CHAT_FORWARDS_RESTRICTED` rejection from
-   * the source channel; null otherwise. Drives the "noforwards" badge in
-   * the web UI. Cleared by the server on the next successful forward.
-   */
+  // last CHAT_FORWARDS_RESTRICTED rejection; cleared on the next successful forward.
   forwardingRestrictedAt: z.string().nullable(),
-  /**
-   * Whether the userbot can currently read messages from the source
-   * channel. Set on subscription create (after `channels.JoinChannel`) and
-   * refreshed by the access monitor's periodic sweep. Drives the "no
-   * access" badge.
-   */
   sourceAccessStatus: accessStatusSchema,
-  /** ISO timestamp of the last access check on the source. */
   sourceAccessCheckedAt: z.string().nullable(),
-  /** Joined from `destinations.access_status`; null when detached. */
   destinationAccessStatus: accessStatusSchema.nullable(),
   createdAt: z.string(),
 });
@@ -269,12 +187,7 @@ export const subscriptionListResponseSchema = z.object({
 });
 export type SubscriptionListResponse = z.infer<typeof subscriptionListResponseSchema>;
 
-// Shape of an inline-filter input shared by `createSubscriptionRequestSchema`
-// (bulk inline-filters at sub-create time) and `createSubscriptionFilterRequestSchema`
-// (granular inline-filter create at `POST /subscriptions/:id/filters`). The
-// discriminated union forces `params` to match `ruleType` in one parse.
-// `mode` is optional in the wire input; the server defaults to 'include'
-// (matches the legacy AND-pass semantics for clients predating the column).
+// Discriminated union forces `params` to match `ruleType`. `mode` optional; server defaults 'include'.
 export const inlineFilterInputSchema = z.discriminatedUnion('ruleType', [
   z.object({
     ruleType: z.literal('text-contains'),
@@ -315,13 +228,7 @@ export const inlineFilterInputSchema = z.discriminatedUnion('ruleType', [
 ]);
 export type InlineFilterInput = z.infer<typeof inlineFilterInputSchema>;
 
-// Hard caps shared by create + patch + export-import. Pick generous values
-// that still bound the fan-out of a single request into the DB:
-//   - 64 chars for a chat id (Telegram ids are <20 chars; allow slack)
-//   - 64 chars for `@handle`
-//   - 255 chars for the human-supplied title (matches a typical DB varchar cap)
-//   - 200 attachments / inline filters per subscription (UI would be unusable
-//     past that; an import file with thousands of attachments is misuse)
+// Generous caps that still bound the DB fan-out of a single create/patch/import request.
 const SOURCE_CHAT_ID_MAX = 64;
 const HANDLE_MAX = 64;
 const SOURCE_TITLE_MAX = 255;
@@ -329,33 +236,15 @@ const PER_SUB_ARRAY_MAX = 200;
 
 export const createSubscriptionRequestSchema = z
   .object({
-    /**
-     * Either `sourceChatId` (resolved up-front via the resolve endpoint or
-     * supplied directly as a numeric id) or `inviteHash` (private invite —
-     * server calls `messages.ImportChatInvite` to join and derive the
-     * resulting chatId). Exactly one is required.
-     */
+    // `inviteHash` path makes the server `ImportChatInvite` to join and derive the chatId.
     sourceChatId: z.string().min(1).max(SOURCE_CHAT_ID_MAX).optional(),
     inviteHash: telegramInviteHashSchema.optional(),
     sourceTitle: z.string().min(1).max(SOURCE_TITLE_MAX),
     handle: z.string().min(1).max(HANDLE_MAX).optional(),
-    /**
-     * Optional. When omitted (or null), the subscription is created in a
-     * detached state — no forwarding until the user attaches a destination.
-     * Used by the import flow when the source's destination is missing.
-     */
+    // null/omitted = created detached: no forwarding until a destination is attached.
     destinationId: z.number().int().positive().nullable().optional(),
     enabled: z.boolean().optional(),
-    /**
-     * Library filter ids to attach at create time. Bulk-replace semantics:
-     * an empty array attaches none; absent field = same as empty.
-     */
     libraryFilterIds: z.array(z.number().int().positive()).max(PER_SUB_ARRAY_MAX).optional(),
-    /**
-     * Private inline filters to materialize on the new subscription. Bulk
-     * semantics: absent or `[]` means none. The discriminated union enforces
-     * per-rule param validity.
-     */
     inlineFilters: z.array(inlineFilterInputSchema).max(PER_SUB_ARRAY_MAX).optional(),
   })
   .refine((b) => (b.sourceChatId ? 1 : 0) + (b.inviteHash ? 1 : 0) === 1, {
@@ -363,29 +252,16 @@ export const createSubscriptionRequestSchema = z
   });
 export type CreateSubscriptionRequest = z.infer<typeof createSubscriptionRequestSchema>;
 
-// `sourceChatId` and `handle` are intentionally immutable — to change the
-// channel, delete and recreate. Other fields are mutable. `.refine` rejects
-// an empty PATCH body so callers don't accidentally no-op.
+// `sourceChatId`/`handle` intentionally immutable — delete and recreate to change the channel.
 export const updateSubscriptionRequestSchema = z
   .object({
     sourceTitle: z.string().min(1).max(SOURCE_TITLE_MAX).optional(),
-    /**
-     * Number to attach/replace; explicit `null` to detach. `undefined`
-     * (omitted) leaves the existing value alone.
-     */
+    // number = attach/replace; null = detach; omitted = leave alone.
     destinationId: z.number().int().positive().nullable().optional(),
     enabled: z.boolean().optional(),
-    /**
-     * Bulk-replace the attached library filter set. Absent = leave alone;
-     * empty array = detach all. Granular attach/detach also available at
-     * `/api/subscriptions/:id/library-filters[/:libId]`.
-     */
+    // Bulk-replace; absent = leave alone, [] = detach all. Granular CRUD on the sub-routes.
     libraryFilterIds: z.array(z.number().int().positive()).max(PER_SUB_ARRAY_MAX).optional(),
-    /**
-     * Bulk-replace the private inline filter set. Absent = leave alone;
-     * empty array = drop all. Granular CRUD also available at
-     * `/api/subscriptions/:id/filters[/:filterId]`.
-     */
+    // Bulk-replace; absent = leave alone, [] = drop all. Granular CRUD on the sub-routes.
     inlineFilters: z.array(inlineFilterInputSchema).max(PER_SUB_ARRAY_MAX).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
@@ -393,8 +269,7 @@ export const updateSubscriptionRequestSchema = z
   });
 export type UpdateSubscriptionRequest = z.infer<typeof updateSubscriptionRequestSchema>;
 
-// `POST /api/subscriptions/resolve` — preview only, no DB write. The UI
-// then submits the resolved fields to `POST /api/subscriptions`.
+// `POST /api/subscriptions/resolve` — preview only, no DB write.
 export const resolveSubscriptionRequestSchema = z.object({
   input: z.string().min(1).max(200),
 });
@@ -428,18 +303,10 @@ export const subscriptionFilterListResponseSchema = z.object({
 });
 export type SubscriptionFilterListResponse = z.infer<typeof subscriptionFilterListResponseSchema>;
 
-// `POST /subscriptions/:id/filters` body — same discriminated shape as
-// `inlineFilterInputSchema`, exported under the route-specific name so
-// existing imports keep working.
 export const createSubscriptionFilterRequestSchema = inlineFilterInputSchema;
 export type CreateSubscriptionFilterRequest = z.infer<typeof createSubscriptionFilterRequestSchema>;
 
-// PATCH body — `params` is loose at this layer (`z.record`), and the route
-// handler validates it against the matching `filterRuleParamsSchemas` for
-// the existing row's `ruleType`. Keeping `ruleType` immutable post-create
-// matches the create discriminator (changing rule type = different rule
-// semantics; delete + re-add). `mode` is mutable — flipping include/exclude
-// is exactly the kind of tweak callers do post-create.
+// `params` loose here (z.record); the route validates it against the row's ruleType. ruleType immutable.
 export const updateSubscriptionFilterRequestSchema = z
   .object({
     params: z.record(z.string(), z.unknown()).optional(),
@@ -459,7 +326,7 @@ export const libraryFilterDtoSchema = z.object({
   ruleType: z.enum(FILTER_RULE_TYPES),
   params: z.record(z.string(), z.unknown()),
   mode: filterModeSchema,
-  /** Number of subscriptions this library filter is attached to. */
+  // subscriptions this filter is attached to
   usageCount: z.number().int().nonnegative(),
   createdAt: z.string(),
 });
@@ -470,10 +337,7 @@ export const libraryFilterListResponseSchema = z.object({
 });
 export type LibraryFilterListResponse = z.infer<typeof libraryFilterListResponseSchema>;
 
-// Hand-listed discriminated union (mirrors `createSubscriptionFilterRequestSchema`)
-// — z.discriminatedUnion needs a tuple of literal-typed variants. The
-// extra `name` field is the only structural difference. `mode` is optional;
-// the route defaults to 'include' when absent.
+// Same shape as the subscription-filter union plus `name`. `mode` optional; route defaults 'include'.
 export const createLibraryFilterRequestSchema = z.discriminatedUnion('ruleType', [
   z.object({
     name: z.string().min(1).max(80),
@@ -514,9 +378,7 @@ export const createLibraryFilterRequestSchema = z.discriminatedUnion('ruleType',
 ]);
 export type CreateLibraryFilterRequest = z.infer<typeof createLibraryFilterRequestSchema>;
 
-// `ruleType` is immutable post-creation — same precedent as
-// `subscription_filters`: changing the rule type is delete + re-add. The
-// route handler validates `params` against the existing row's `ruleType`.
+// `ruleType` immutable post-creation; the route validates `params` against the row's ruleType.
 export const updateLibraryFilterRequestSchema = z
   .object({
     name: z.string().min(1).max(80).optional(),
@@ -528,9 +390,7 @@ export const updateLibraryFilterRequestSchema = z
   });
 export type UpdateLibraryFilterRequest = z.infer<typeof updateLibraryFilterRequestSchema>;
 
-// Attach an existing library filter to a subscription. Body just carries
-// the library filter id; the URL captures the subscription. M:N row is
-// idempotent — re-attaching is a no-op (PK violation suppressed).
+// Idempotent: re-attaching is a no-op (PK violation suppressed).
 export const attachLibraryFilterRequestSchema = z.object({
   libraryFilterId: z.number().int().positive(),
 });
@@ -559,7 +419,6 @@ export const statsDigestTimeSchema = z
   .string()
   .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM (24-hour)');
 
-/** Whether a string is a time zone the runtime's Intl knows about. */
 export function isValidTimeZone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: tz });
@@ -573,22 +432,14 @@ export const statsDigestTimezoneSchema = z.string().min(1).refine(isValidTimeZon
   message: 'invalid IANA time zone',
 });
 
-/**
- * The five stats-digest knobs. `.catch(default)` per field means a missing OR
- * malformed value reads back as the documented default — so this one schema
- * doubles as the server's defensive reader for the (possibly hand-edited) DB
- * row and as the shape that fills older settings payloads. When enabled, the
- * bot DMs admins a forwarded/filtered/error summary once a day or week at
- * `statsDigestTime` on the chosen day, interpreted in `statsDigestTimezone`.
- */
+// Per-field `.catch(default)` makes this double as the defensive reader for a hand-edited DB row.
 export const statsDigestSettingsSchema = z.object({
   statsDigestEnabled: z.boolean().catch(false),
   statsDigestFrequency: statsDigestFrequencySchema.catch('daily'),
-  /** 0 = Sunday … 6 = Saturday. Used only when frequency is 'weekly'. */
+  // 0 = Sunday … 6 = Saturday; used only when frequency is 'weekly'.
   statsDigestDayOfWeek: z.number().int().min(0).max(6).catch(1),
   statsDigestTime: statsDigestTimeSchema.catch('09:00'),
-  /** IANA zone the time is read in. Set automatically by the web (the
-   * operator's browser zone); 'UTC' is only the pre-first-save fallback. */
+  // Set from the operator's browser zone on save; 'UTC' is only the pre-first-save fallback.
   statsDigestTimezone: statsDigestTimezoneSchema.catch('UTC'),
 });
 export type StatsDigestSettings = z.infer<typeof statsDigestSettingsSchema>;
@@ -596,19 +447,13 @@ export type StatsDigestSettings = z.infer<typeof statsDigestSettingsSchema>;
 export const settingsDtoSchema = z
   .object({
     delayMs: z.number().int().positive(),
-    /**
-     * Window (ms) the album debouncer waits for additional members of a
-     * Telegram media group before forwarding. Increase on slow links where
-     * album members arrive >2 s apart and end up fragmented; lower if you
-     * want forwards to happen sooner.
-     */
+    // ms the album debouncer waits for more media-group members; raise on slow links to avoid fragmenting.
     albumDebounceMs: z.number().int().positive(),
   })
   .merge(statsDigestSettingsSchema);
 export type SettingsDto = z.infer<typeof settingsDtoSchema>;
 
-// Every field optional so the client can update one knob without overwriting
-// the others — the server merges into the existing row.
+// Every field optional; the server merges into the existing row.
 export const updateSettingsRequestSchema = z
   .object({
     delayMs: z.number().int().positive().optional(),
@@ -637,12 +482,7 @@ export const forwardLogEntryDtoSchema = z.object({
   status: z.enum(FORWARD_LOG_STATUSES),
   error: z.string().nullable(),
   createdAt: z.string(),
-  /**
-   * Whether the row has a stored JSON snapshot of the raw Telegram message.
-   * Fetch the actual payload via `GET /forward-log/:id/raw` on demand —
-   * the raw JSON is intentionally kept off the list endpoint to keep page
-   * responses small.
-   */
+  // Raw payload fetched on demand via `GET /forward-log/:id/raw`; kept off the list to keep it small.
   hasRawMessage: z.boolean(),
 });
 export type ForwardLogEntryDto = z.infer<typeof forwardLogEntryDtoSchema>;
@@ -653,13 +493,7 @@ export const forwardLogResponseSchema = z.object({
 });
 export type ForwardLogResponse = z.infer<typeof forwardLogResponseSchema>;
 
-/**
- * Response for `GET /forward-log/:id/raw`. `rawMessage` is the JSON snapshot
- * stored at forward time — a plain object for single-message forwards, an
- * array of objects (sorted ascending by source message id) for album
- * batches. `null` for rows that pre-date the feature or for events that
- * deliberately skipped capture (e.g. `MessageEmpty`).
- */
+// rawMessage: single forward = object; album = array sorted ascending by source msg id; null if uncaptured.
 export const forwardLogRawResponseSchema = z.object({
   rawMessage: z.unknown().nullable(),
 });
@@ -682,17 +516,9 @@ export type ForwardLogQuery = z.infer<typeof forwardLogQuerySchema>;
 // --- System status ----------------------------------------------------
 
 export const telegramStatusSchema = z.object({
-  /**
-   * Lifecycle phase. `connecting` covers the boot window before the gramjs
-   * client has finished `client.connect()` (and the listener / monitors are
-   * attached). The web UI uses this to show a neutral "starting up" state
-   * instead of the disconnected alert during normal dev reloads.
-   * `connected: boolean` is kept as a redundant convenience equal to
-   * `state === 'connected'` so existing call sites don't need to be updated.
-   */
+  // `connecting` = boot window before `client.connect()` finishes (UI shows "starting up", not disconnected).
   state: z.enum(['connecting', 'connected', 'disconnected']),
-  connected: z.boolean(),
-  /** Human-readable reason; present when state is 'connecting' or 'disconnected'. */
+  connected: z.boolean(), // redundant convenience for `state === 'connected'`
   reason: z.string().optional(),
 });
 export type TelegramStatus = z.infer<typeof telegramStatusSchema>;

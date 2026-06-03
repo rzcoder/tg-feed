@@ -1,17 +1,4 @@
-/**
- * Single Fastify error handler.
- *
- * All errors thrown from route handlers, pre-handlers, and Fastify itself
- * pass through here. The mapping:
- *
- *   - `ZodError` (route handler called `schema.parse(body)` and it threw)
- *     → 400 with `{ code: 'validation_error', issues }`
- *   - `AppError` subclasses (`UnauthorizedError`, `NotFoundError`, ...)
- *     → `err.statusCode` with `{ code, message, ...(issues if ValidationError) }`
- *   - anything else → 500 generic; original message NOT echoed (no leaking
- *     of internal details). Logged with `request.log.error({ err })` for
- *     diagnosability.
- */
+// Single Fastify error handler: ZodError → 400, AppError → its statusCode, anything else → generic 500 with the original message never echoed.
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
 import type { ErrorResponse } from '@tg-feed/shared';
@@ -48,10 +35,7 @@ export function makeErrorHandler(logger: Logger): ApiErrorHandler {
       return;
     }
 
-    // Fastify built-in errors (rate-limit, body too large, malformed JSON,
-    // etc.) carry an HTTP statusCode + a stable code. Pass 4xx through with
-    // their own message — they're already client-safe. 5xx still gets the
-    // generic 500 path below to avoid leaking internals.
+    // Fastify built-in 4xx (rate-limit, body too large, bad JSON) are client-safe; pass through. 5xx falls to the generic path.
     if (typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
       const body: ErrorResponse = {
         error: { code: err.code ?? 'client_error', message: err.message },

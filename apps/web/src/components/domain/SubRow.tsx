@@ -102,10 +102,7 @@ interface NoForwardsBadgeProps {
 }
 
 function NoForwardsBadge({ at }: NoForwardsBadgeProps) {
-  // Telegram returns CHAT_FORWARDS_RESTRICTED when the source channel has
-  // "Restrict Saving Content" enabled. The forwarder stamps this timestamp;
-  // it stays set until a forward succeeds again. Surfacing it inline tells
-  // the operator their messages aren't reaching the destination.
+  // Set on CHAT_FORWARDS_RESTRICTED; cleared when a forward next succeeds.
   return (
     <span
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-warning-soft text-warning border border-warning/30"
@@ -130,10 +127,7 @@ function NoDestinationBadge() {
 }
 
 function NoAccessBadge() {
-  // Set when the userbot couldn't auto-join on subscription create or when
-  // the daily access sweep found `getEntity` failing for this source. Both
-  // mean we won't see new messages from this channel until the operator
-  // re-joins it from a Telegram client.
+  // Userbot not a member: no new messages until it re-joins.
   return (
     <span
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] font-medium bg-danger-soft text-danger border border-danger/30"

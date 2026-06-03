@@ -1,20 +1,4 @@
-/**
- * Auto-join helper used when a new subscription is created.
- *
- * The userbot only receives `NewMessage` events from chats it's a member
- * of. Adding a row to `subscriptions` doesn't change that on Telegram's
- * side, so without an explicit `channels.JoinChannel` invocation new
- * subscriptions to public channels would silently produce no traffic.
- *
- * Outcomes are coalesced into two states ('ok' | 'no_access') so the
- * caller can store a single column. We swallow gramjs errors here — the
- * caller wants to create the subscription regardless; the badge is the UI
- * signal that the operator needs to fix access manually.
- *
- * `JoinChannel` only applies to channels/supergroups (`-100xxx`). For user
- * or bot DMs and basic groups we fall back to a `getEntity` smoke test:
- * if the userbot can resolve the entity, it has access.
- */
+// Auto-join on subscription create: the userbot only gets NewMessage from chats it's a member of, so public channels need an explicit JoinChannel or they produce no traffic. Errors coalesce to 'ok' | 'no_access'; non-channels fall back to a getEntity access probe.
 import { Api } from 'telegram';
 import type { TelegramClient } from 'telegram';
 import type { Logger } from '../lib/logger.js';
@@ -22,17 +6,14 @@ import type { Logger } from '../lib/logger.js';
 export type AccessProbeResult = 'ok' | 'no_access';
 export type JoinChannelFn = (sourceChatId: string) => Promise<AccessProbeResult>;
 
-// Subset of gramjs `TelegramClient` we depend on, so tests can pass a stub
-// without standing up the full client.
+// Subset of gramjs TelegramClient we depend on, so tests can stub it.
 export interface JoinChannelClient {
   getInputEntity: TelegramClient['getInputEntity'];
   getEntity: TelegramClient['getEntity'];
   invoke: TelegramClient['invoke'];
 }
 
-// Errors that mean "userbot can't access this chat" rather than a transient
-// failure. Anything not in this list is logged at warn so unknown error
-// shapes get diagnosed instead of silently classified.
+// "Can't access this chat" errors; anything else is logged at warn, not silently classified.
 const NO_ACCESS_PATTERNS: readonly RegExp[] = [
   /CHANNEL_PRIVATE/i,
   /CHANNEL_INVALID/i,
@@ -52,9 +33,7 @@ function errorMessage(err: unknown): string {
 
 export function createJoinChannel(client: JoinChannelClient, logger: Logger): JoinChannelFn {
   return async (sourceChatId) => {
-    // -100xxx is the supergroup/channel marker. Bot/user DMs and basic
-    // groups can't be joined via channels.JoinChannel; for those we just
-    // verify access exists.
+    // -100xxx = channel/supergroup; DMs and basic groups can't JoinChannel, just probe access.
     const isChannelLike = sourceChatId.startsWith('-100');
     if (!isChannelLike) {
       try {
@@ -77,9 +56,7 @@ export function createJoinChannel(client: JoinChannelClient, logger: Logger): Jo
       return 'no_access';
     }
     if (!(inputPeer instanceof Api.InputPeerChannel)) {
-      // -100xxx that resolved to something other than a channel — caller
-      // passed a misclassified id. No JoinChannel is meaningful; report
-      // no_access so the operator sees the mismatch in the UI.
+      // -100xxx that resolved to a non-channel: misclassified id, surface the mismatch.
       return 'no_access';
     }
 

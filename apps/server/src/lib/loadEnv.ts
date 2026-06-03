@@ -1,16 +1,5 @@
-/**
- * Locate and load the workspace `.env` file.
- *
- * `dotenv/config` looks at `process.cwd() + '/.env'` only. In a pnpm
- * monorepo `pnpm -F @tg-feed/server dev` runs with cwd = `apps/server`,
- * which doesn't contain `.env` — so vars from the workspace-root `.env`
- * never load. Walking up from this module's directory finds the closest
- * `.env` regardless of cwd, so dev / migrate / tg:login all see the same
- * config.
- *
- * Import this module instead of `dotenv/config` from any entrypoint that
- * needs env vars before reading `process.env`.
- */
+// Walk up to the workspace-root .env (dotenv/config only checks cwd, which is apps/server under pnpm).
+// Import this instead of dotenv/config from any entrypoint.
 import { config as loadDotenv } from 'dotenv';
 import { existsSync } from 'node:fs';
 import path from 'node:path';

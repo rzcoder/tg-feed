@@ -1,29 +1,4 @@
-/**
- * Periodic safety net that catches messages the gramjs listener missed.
- *
- * The listener (`apps/server/src/tg/listener.ts`) consumes the live update
- * stream via gramjs's `NewMessage` handler. In practice that stream silently
- * stops delivering `UpdateNewChannelMessage` for some subscribed channels:
- * gramjs 2.26.x doesn't implement `client.catchUp()` and doesn't refresh
- * per-channel pts, so once a channel's update state drifts the session
- * keeps the connection alive but never dispatches events for it again.
- * Observed in production: a public broadcast channel with 23k+ messages
- * had zero `forward_log` rows ever, while a low-volume personal channel
- * forwarded fine — both verified-member, both in dialogs, both `Message`.
- *
- * This poller calls `messages.getHistory` per subscription on a short cadence
- * with `minId = lastSeen`, then enqueues anything new through the existing
- * forwarding pipeline. The listener still runs; when it works, it gets there
- * first and writes a `forward_log` row before the next poll. The poller's
- * dedup check (`forward_log` row exists?) keeps the duplicate-forward race
- * window down to the brief interval between listener-enqueue and
- * forwarder-log-write — acceptable in practice.
- *
- * State is in-memory (`Map<subscriptionId, lastSeenMessageId>`) and is
- * rebuilt on boot from `MAX(source_message_id)` in `forward_log`. For
- * subscriptions with no forward history we initialise from the current
- * channel top so we don't dump the entire backlog on first run.
- */
+// Safety net for the gramjs bug where the live listener silently stops delivering channel updates: polls getHistory(minId=lastSeen) per sub, dedups against forward_log.
 import { eq, and } from 'drizzle-orm';
 import { Api } from 'telegram';
 import type { TelegramClient } from 'telegram';
@@ -36,7 +11,6 @@ import { extractRateLimit } from './floodwait.js';
 import type { RawForwardingHandle, RawForwardJob } from './types.js';
 
 export const DEFAULT_POLL_INTERVAL_MS = 2 * 60 * 1000;
-/** Cap per-poll batch size. New subs won't dump their entire history. */
 export const POLL_BATCH_LIMIT = 100;
 
 export interface HistoryPollerClient {
@@ -54,7 +28,6 @@ export interface HistoryPollerDeps {
 export interface HistoryPoller {
   start(): void;
   stop(): void;
-  /** Run one sweep across all enabled subscriptions. Exposed for tests. */
   poll(): Promise<void>;
 }
 
@@ -78,10 +51,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
   const { client, db, logger, forwarding } = deps;
   const intervalMs = deps.intervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const lastSeen = new Map<number, number>();
-  // Tracks subscriptions whose seed was already established (either from
-  // forward_log or from a successful channel-top probe). Subs not in this set
-  // are seeded lazily on their first sweep — keeps boot fast and avoids
-  // hammering Telegram before the first real poll.
+  // Seeded lazily on first sweep, not at boot, to avoid hammering Telegram up front.
   const seeded = new Set<number>();
   let stopped = false;
   let inFlight: Promise<void> | undefined;
@@ -101,10 +71,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
   }
 
   function maxLoggedId(subId: number): number | undefined {
-    // `source_message_id` is `text` in SQLite, so a SQL `MAX` would order
-    // lexicographically (`'9' > '10'`). Fetching rows and reducing in JS is
-    // correct numerically and cheap thanks to `idx_forward_log_subscription`
-    // bounding the scan to one subscription's history.
+    // source_message_id is text, so SQL MAX sorts lexicographically ('9' > '10'); reduce numerically in JS.
     const rows = db
       .select({ sourceMessageId: forwardLog.sourceMessageId })
       .from(forwardLog)
@@ -128,7 +95,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
       logger.debug({ subId: sub.id, lastSeen: fromLog }, 'history poller: seeded from forward_log');
       return;
     }
-    // No history — read current top so we don't backfill the archive.
+    // No history — seed from current top so we don't backfill the archive.
     try {
       const result = (await client.invoke(
         new Api.messages.GetHistory({
@@ -137,9 +104,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
         }),
       )) as { messages?: RawMessage[] };
       const topId = result.messages?.[0]?.id;
-      // Empty channel (no messages yet): seed at 0 and mark seeded so we don't
-      // re-probe the top every tick. The first real message is picked up by the
-      // next poll's `minId = 0` sweep.
+      // Empty channel: seed at 0 and mark seeded so we don't re-probe the top every tick.
       const seedId = typeof topId === 'number' ? topId : 0;
       lastSeen.set(sub.id, seedId);
       seeded.add(sub.id);
@@ -206,8 +171,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
         m != null && typeof m.id === 'number' && m.className === 'Message',
     );
     if (messages.length === 0) return;
-    // Telegram returns descending by id; forward chronologically so the
-    // destination order matches the source.
+    // Telegram returns descending; forward ascending so destination order matches source.
     messages.sort((a, b) => a.id - b.id);
 
     let enqueued = 0;
@@ -215,7 +179,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
     let highest = since;
     for (const msg of messages) {
       if (msg.id <= since) {
-        // `minId` is exclusive on the server side, but be defensive.
+        // minId is server-side exclusive, but be defensive.
         continue;
       }
       const sourceMessageId = String(msg.id);

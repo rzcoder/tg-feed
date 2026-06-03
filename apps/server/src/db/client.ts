@@ -1,9 +1,4 @@
-/**
- * Singleton DB client.
- *
- * App code uses `getDb()`. Tests use `createDb(':memory:')` directly via the
- * helper in `./testing.ts` and never touch the singleton.
- */
+// App code uses getDb(); tests call createDb(':memory:') directly and never touch the singleton.
 import path from 'node:path';
 import { existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,8 +18,7 @@ let cachedProjectRoot: string | undefined;
 function projectRoot(): string {
   if (cachedProjectRoot) return cachedProjectRoot;
   let dir = path.dirname(fileURLToPath(import.meta.url));
-  // Walk up looking for the workspace marker; pnpm-workspace.yaml is a
-  // stable anchor across both `src/` (tsx) and `dist/` (node) layouts.
+  // pnpm-workspace.yaml is a stable anchor across both src/ (tsx) and dist/ (node) layouts.
   while (dir !== path.dirname(dir)) {
     if (existsSync(path.join(dir, 'pnpm-workspace.yaml'))) {
       cachedProjectRoot = dir;

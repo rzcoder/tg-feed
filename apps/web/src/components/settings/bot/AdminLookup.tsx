@@ -1,9 +1,3 @@
-/**
- * Admin allowlist lookup: a debounced search that resolves a `@username` /
- * t.me link / numeric id to a Telegram user and offers it for adding to the
- * bot's admin set. Self-contained — owns its own query state and resolve
- * mutation; the resolved entry is handed back to the parent via `onAdd`.
- */
 import { useState } from 'react';
 import { Plus, Search } from 'lucide-react';
 import type { BotAdmin } from '@tg-feed/shared';

@@ -1,19 +1,4 @@
-/**
- * In-memory store for in-progress Telegram sign-ins from the Settings page.
- *
- * gramjs's `client.start()` uses callbacks (phoneNumber/phoneCode/password
- * resolved synchronously inside one promise) which fights HTTP step
- * boundaries — we need to break the flow across multiple requests so the
- * UI can prompt the user, get the code, then return for the next step.
- * The lower-level `Api.auth.SendCode` / `Api.auth.SignIn` / `CheckPassword`
- * triplet maps onto three HTTP calls cleanly.
- *
- * Each pending login holds a temp `TelegramClient` (with an empty
- * `StringSession`) that connects on `start()` and lives until either
- * `verifyCode` / `verifyPassword` / `validateRaw` finalize, `cancel` is
- * called, or the TTL GC sweeps it. The session string is only saved
- * after the final auth.* RPC succeeds.
- */
+// In-memory store for in-progress Telegram sign-ins, split across HTTP steps because gramjs's callback-based start() can't pause for UI prompts.
 import { randomBytes } from 'node:crypto';
 import { Api, TelegramClient } from 'telegram';
 import { computeCheck } from 'telegram/Password.js';
@@ -40,13 +25,7 @@ export interface LoginCompleted {
 }
 
 export interface LoginSessionStore {
-  /**
-   * Begin a phone-code sign-in. `ownerToken` ties this session to the
-   * calling web session so other authed tabs (or anyone who guesses a
-   * sessionId) can't drive someone else's in-progress login. Defaults to
-   * an empty string for raw-paste / legacy callers — those skip binding
-   * because they don't need to cross HTTP boundaries.
-   */
+  // ownerToken binds the session to the calling web session so other tabs can't drive it; empty string (raw-paste/legacy) skips binding.
   start(phoneNumber: string, ownerToken?: string): Promise<{ sessionId: string }>;
   verifyCode(
     sessionId: string,
@@ -71,12 +50,7 @@ interface PendingLogin {
   phoneNumber: string;
   phoneCodeHash: string;
   expiresAt: number;
-  /**
-   * Web-session token (the cookie value) of the caller who created this
-   * login session. Empty string means "no binding" (legacy / raw-paste).
-   * `verifyCode`/`verifyPassword`/`cancel` reject if the caller's token
-   * doesn't match — keeps a second authed tab from hijacking the flow.
-   */
+  // empty string disables owner binding
   ownerToken: string;
 }
 
@@ -99,15 +73,12 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
       }
     }
   }, GC_INTERVAL_MS);
-  // Don't keep the process alive solely for this timer.
   if (typeof gc.unref === 'function') gc.unref();
 
   function generateSessionId(): string {
     return randomBytes(SESSION_ID_BYTES).toString('hex');
   }
 
-  // Owner-binding check: skip when either side has no token (raw-paste /
-  // legacy path), enforce strictly when both sides have one.
   function assertOwner(pending: PendingLogin, ownerToken: string | undefined): void {
     if (pending.ownerToken && ownerToken && pending.ownerToken !== ownerToken) {
       throw new AppError(
@@ -198,13 +169,10 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
         return { done: true, account };
       } catch (err) {
         if (isPasswordNeeded(err)) {
-          // Keep the temp client alive for the follow-up `verifyPassword` call.
-          // Refresh the TTL window so the user has time to enter the 2FA password.
+          // Refresh TTL and keep the client alive for the follow-up verifyPassword.
           pending.expiresAt = Date.now() + ttlMs;
           return { needsPassword: true };
         }
-        // Any other error terminates this attempt — drop the temp client so it
-        // doesn't leak. The caller can `start` again.
         dropSession(sessionId);
         await disconnectSilently(pending.client, logger);
         throw mapGramError(err);
@@ -222,8 +190,7 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
         await disconnectSilently(pending.client, logger);
         return { done: true, account };
       } catch (err) {
-        // Wrong password → keep the session alive so the user can retry; any
-        // other error tears it down.
+        // Wrong password keeps the session alive for retry; anything else tears it down.
         if (isPasswordWrong(err)) {
           pending.expiresAt = Date.now() + ttlMs;
           throw new AppError(401, 'wrong_2fa_password', 'incorrect 2FA password');
@@ -246,11 +213,7 @@ export function createLoginSessionStore(deps: CreateLoginSessionStoreDeps): Logi
       if (!sessionString || sessionString.length < 8) {
         throw new ValidationError('session string is empty or too short');
       }
-      // gramjs's `StringSession` parser throws `Error("Not a valid string")`
-      // when the input doesn't start with the version byte, and its
-      // `BinaryReader` can throw on truncated payloads. Both cases need to
-      // surface as a 400 with a clear code instead of escaping the route as
-      // a generic 500.
+      // StringSession throws on a missing version byte or truncated payload; surface as 400, not a generic 500.
       let session: StringSession;
       try {
         session = new StringSession(sessionString);
@@ -308,9 +271,7 @@ function newTempClient(apiId: number, apiHash: string): TelegramClient {
 
 async function finalize(pending: PendingLogin): Promise<LoginAccountInfo> {
   const me = (await pending.client.getMe()) as Api.User;
-  // gramjs types `session.save()` as `void` even though `StringSession`
-  // returns the encoded string at runtime. Cast through `unknown` to avoid
-  // the strict-overlap warning.
+  // gramjs types session.save() as void though StringSession returns the encoded string at runtime.
   const sessionString = pending.client.session.save() as unknown as string;
   if (typeof sessionString !== 'string' || sessionString.length === 0) {
     throw new AppError(502, 'session_save_failed', 'failed to mint Telegram session');
@@ -355,7 +316,7 @@ function isPasswordWrong(err: unknown): boolean {
 
 function mapGramError(err: unknown): AppError {
   if (err instanceof AppError) return err;
-  // FloodWait — gramjs surfaces the wait time as `seconds`.
+  // gramjs FloodWait surfaces the wait time as `seconds`.
   const seconds = (err as { seconds?: unknown }).seconds;
   if (typeof seconds === 'number' && Number.isFinite(seconds)) {
     return new AppError(

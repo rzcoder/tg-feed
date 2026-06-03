@@ -1,15 +1,5 @@
-/**
- * Universal "paste-anything" chat resolver.
- *
- * Backs both `POST /api/subscriptions/resolve` and `POST /api/destinations/resolve`.
- * Accepts any of: `@username`, `t.me/username`, `t.me/+HASH` private invite,
- * `+HASH` raw invite, or a numeric chat id (`-100…` or bare positive).
- *
- * For private invites where the userbot is not yet a member, `chatId`
- * comes back `null` — only `inviteHash` is set, and the create endpoint
- * is expected to call `messages.ImportChatInvite` to actually join and
- * derive the resulting chatId.
- */
+// Paste-anything chat resolver: @username, t.me/username, t.me/+HASH or +HASH invite, or numeric id.
+// Not-yet-joined private invites return chatId=null with inviteHash set; create joins via ImportChatInvite.
 import type { TelegramClient } from 'telegram';
 import { NotFoundError, UpstreamError } from '../lib/errors.js';
 import { entityToResolved, parseInput } from './entityResolver.js';
@@ -21,7 +11,6 @@ export interface ChatResolveResult {
   handle: string | null;
   inviteHash: string | null;
   alreadyMember: boolean;
-  /** True when the resolved chat is a forum supergroup (has topics). */
   isForum: boolean;
 }
 
@@ -64,9 +53,7 @@ export function createChatResolver(client: ChatResolverClient): ChatResolver {
         handle: null,
         inviteHash: parsed.hash,
         alreadyMember: preview.alreadyMember,
-        // The chat isn't joined yet, so its forum status is unknown — the
-        // user sets the topic later via the edit sheet once joined.
-        isForum: false,
+        isForum: false, // unknown until joined; user sets topic later
       };
     }
 
@@ -88,9 +75,7 @@ export function createChatResolver(client: ChatResolverClient): ChatResolver {
       };
     }
 
-    // chatId branch — verify access and pull the title via getEntity. The
-    // input is already in the storage form (`-100xxx` or bare positive),
-    // so we don't need entityToResolved's prefix logic here.
+    // chatId branch: input already in storage form, so skip entityToResolved's prefix logic.
     let entity: unknown;
     try {
       entity = await client.getEntity(parsed.value);

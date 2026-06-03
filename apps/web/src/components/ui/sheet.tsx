@@ -9,10 +9,6 @@ export interface SheetProps {
   onOpenChange: (open: boolean) => void;
   title: ReactNode;
   description?: ReactNode;
-  /**
-   * Layout: bottom sheet on mobile, centered modal on desktop. Switched by
-   * Tailwind breakpoint at `lg:` — same component, two looks.
-   */
   children: ReactNode;
   footer?: ReactNode;
 }

@@ -1,27 +1,4 @@
-/**
- * Stats-digest scheduler.
- *
- * Once a day or once a week, at a chosen local time, the bot DMs its admins a
- * forwarded/filtered/error summary. Telegram has no wall-clock scheduling
- * primitive and the rest of the app uses fixed-interval pollers, so this is a
- * minute-tick poller that decides on each tick whether the scheduled moment
- * has passed and a digest is still owed.
- *
- * Dedup is by an *occurrence key* — a stable label for "the most recent
- * scheduled time at-or-before now", derived purely from the time zone's
- * wall-clock parts (no epoch/offset/DST math). We send at most once per
- * occurrence and persist the key, which also yields free catch-up: if the
- * server was down across a scheduled time, the next tick after boot still
- * sees an unsent occurrence and sends it.
- *
- * Any change to the schedule (enable/disable, time, day, frequency, zone)
- * re-baselines via a config fingerprint: the current occurrence is marked
- * handled without sending, so editing the schedule never triggers an
- * immediate or backlog blast — the first real send is the next occurrence.
- *
- * The window is [lastSentAt, now): every message is counted in exactly one
- * digest, with no gaps or overlaps.
- */
+// Minute-tick poller (Telegram has no wall-clock scheduler). Dedup + catch-up via an occurrence key derived from wall-clock parts (no DST math); send once per occurrence. Schedule changes re-baseline via config fingerprint so edits never blast. Window is [lastSentAt, now).
 import type { Db } from '../db/client.js';
 import type { Logger } from '../lib/logger.js';
 import { createPoller } from '../lib/poller.js';
@@ -45,19 +22,16 @@ const WEEKDAY_INDEX: Record<string, number> = {
 
 export interface StatsDigestSchedulerDeps {
   db: Db;
-  /** Resolves the current bot; a getter because the ref is swapped on reload. */
+  // Getter because the bot ref is swapped on reload.
   getBot: () => TgFeedBot | undefined;
   logger: Logger;
-  /** Injectable clock (epoch ms) for tests. Defaults to `Date.now`. */
   now?: () => number;
-  /** Tick cadence; defaults to 60s. */
   intervalMs?: number;
 }
 
 export interface StatsDigestScheduler {
   start(): void;
   stop(): void;
-  /** Evaluate the schedule once. Exposed for tests; the poller calls it. */
   runOnce(): Promise<void>;
 }
 
@@ -70,7 +44,6 @@ interface WallClock {
   minute: number;
 }
 
-/** Wall-clock parts of `epochMs` as seen in `timeZone`. */
 function wallClockInZone(epochMs: number, timeZone: string): WallClock {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -93,12 +66,7 @@ function wallClockInZone(epochMs: number, timeZone: string): WallClock {
   };
 }
 
-/**
- * Stable key for the most recent scheduled occurrence at-or-before `nowMs`,
- * e.g. `"daily:2026-06-01"` / `"weekly:2026-05-29"`. The date is computed on
- * the zone's wall-clock calendar; we render it via UTC arithmetic purely as an
- * opaque label (no offset needed).
- */
+// Stable label for the most recent scheduled occurrence at-or-before nowMs, e.g. "daily:2026-06-01"; UTC arithmetic is just an opaque renderer.
 export function occurrenceKey(nowMs: number, cfg: StatsDigestConfig): string {
   const wc = wallClockInZone(nowMs, cfg.timezone);
   const [hh, mm] = cfg.time.split(':');
@@ -134,7 +102,6 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Concise HTML body for the bot to DM. */
 export function formatDigest(
   stats: DigestStats,
   sinceMs: number,
@@ -174,8 +141,7 @@ export function createStatsDigestScheduler(deps: StatsDigestSchedulerDeps): Stat
     const state = readStatsDigestState(db);
     const nowMs = now();
 
-    // Schedule changed (or first ever tick) → re-baseline, never send. Record
-    // the current occurrence as handled so the first real send is the next one.
+    // Schedule changed (or first tick) → re-baseline without sending; first real send is the next occurrence.
     if (state.configHash !== hash) {
       writeStatsDigestState(db, {
         lastSentAt: nowMs,
@@ -187,13 +153,12 @@ export function createStatsDigestScheduler(deps: StatsDigestSchedulerDeps): Stat
 
     if (!cfg.enabled) return;
 
-    // Bot down — skip without advancing, so the unsent occurrence is caught up
-    // on a later tick once the bot is back.
+    // Bot down — skip without advancing so the occurrence is caught up later.
     const bot = getBot();
     if (!bot) return;
 
     const key = occurrenceKey(nowMs, cfg);
-    if (key === state.lastKey) return; // already sent for this occurrence
+    if (key === state.lastKey) return;
 
     const since = state.lastSentAt ?? nowMs;
     const stats = getDigestStats(db, since, nowMs);
@@ -211,10 +176,7 @@ export function createStatsDigestScheduler(deps: StatsDigestSchedulerDeps): Stat
       );
     }
 
-    // Advance the occurrence key either way so we attempt at most once per
-    // occurrence (no per-tick retry storm against admins who 403). But only
-    // move the window start when something was actually delivered, so a
-    // fully-undelivered period's counts roll into the next successful digest.
+    // Advance the key either way (at most one attempt per occurrence); move the window start only on delivery so undelivered counts roll forward.
     writeStatsDigestState(db, {
       lastSentAt: delivered > 0 ? nowMs : (state.lastSentAt ?? nowMs),
       lastKey: key,

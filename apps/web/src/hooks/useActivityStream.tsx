@@ -1,26 +1,6 @@
-/**
- * SSE stream singleton.
- *
- * `StreamProvider` opens one EventSource on `/api/stream` for the whole app
- * (mounted in AppShell). All consumers — sidebar/top-bar connection pill,
- * activity page event feed — read from the same source.
- *
- * Forward events are delivered through a subscription (`useForwardEvents`)
- * rather than a "last event" state value: a state slot collapses two events
- * that arrive in the same tick into one (React batches the setter), and any
- * consumer effect keyed on it re-runs — and re-delivers the same event — on
- * unrelated re-renders. A synchronous listener set delivers every event
- * exactly once. Connection state stays a separate context so the layout
- * chrome doesn't re-render on every forward event.
- *
- * EventSource auto-reconnects with browser-controlled backoff. We surface
- * readyState transitions as `'reconnect'` while connecting and `'live'`
- * once OPEN. `subscription.changed`/`destination.changed` events invalidate
- * the relevant queries directly; forward events also schedule a debounced
- * refresh of the forward-log so the persisted history reconciles with the
- * live overlay (otherwise a remount would drop events that only ever lived
- * in component state).
- */
+// One app-wide EventSource on `/api/stream`. Forward events go through a synchronous listener set,
+// not a state slot, so same-tick events aren't coalesced and re-renders don't re-deliver old ones.
+// Connection state is a separate context so layout chrome doesn't re-render per forward event.
 import {
   createContext,
   useCallback,
@@ -46,7 +26,6 @@ const FORWARD_EVENT_TYPES = new Set([
   'forward.filtered',
 ]);
 
-// Coalesce bursts of forward events into a single forward-log refetch.
 const FORWARD_LOG_REFRESH_MS = 3000;
 
 const ConnectionStateContext = createContext<ConnectionState | null>(null);
@@ -79,15 +58,12 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
 
     es.onopen = () => setState('live');
     es.onerror = () => {
-      // EventSource sets readyState to 0 (CONNECTING) during reconnect or
-      // 2 (CLOSED) on permanent failure. Treat 0 as reconnect, 2 as down.
+      // readyState CLOSED (2) = permanent failure; CONNECTING (0) = reconnecting.
       setState(es.readyState === EventSource.CLOSED ? 'down' : 'reconnect');
     };
 
     const scheduleForwardLogRefresh = (): void => {
-      // Throttle, not debounce: a resettable debounce would never fire on a
-      // sustained stream (each event re-arms it). Arm once and let it run, so
-      // the log refreshes at most once per window but is guaranteed to.
+      // Throttle, not debounce: a resettable debounce would never fire on a sustained stream.
       if (refreshTimer) return;
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
@@ -100,9 +76,7 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
       try {
         parsed = JSON.parse(raw.data) as StreamEvent;
       } catch (err) {
-        // Malformed payload signals protocol drift between server and client.
-        // Surface it in dev; stay quiet in prod so a server hiccup can't flood
-        // the user's console.
+        // Warn in dev only; a server hiccup shouldn't flood the prod console.
         if (import.meta.env.DEV) {
           console.warn('StreamProvider: failed to parse SSE event', err, raw.data);
         }
@@ -113,10 +87,7 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
         return;
       }
       if (parsed.type === 'destination.changed') {
-        // The access monitor flips a destination's `accessStatus` when
-        // userbot membership is gained or lost. Both the destinations
-        // list and the subscription rows (which join `accessStatus` for
-        // the destination indicator) must refetch.
+        // Subs join the destination's `accessStatus`, so both lists must refetch.
         qc.invalidateQueries({ queryKey: DESTINATIONS_KEY });
         qc.invalidateQueries({ queryKey: SUBSCRIPTIONS_KEY });
         return;
@@ -127,8 +98,7 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
       }
     };
 
-    // Server sends named events (`event: <type>`); EventSource needs an
-    // explicit listener per event name. Subscribe to all known types.
+    // Named events (`event: <type>`) need one explicit EventSource listener each.
     const types = [
       'forward.completed',
       'forward.failed',
@@ -140,9 +110,7 @@ export function StreamProvider({ children, url = '/api/stream' }: StreamProvider
     types.forEach((t) => es.addEventListener(t, dispatch));
 
     return () => {
-      // StrictMode mounts effects twice in dev — the first cleanup nulls out
-      // sourceRef before the second one runs, so guard against the redundant
-      // call to keep this idempotent.
+      // Guard the StrictMode double-invoke: first cleanup nulls sourceRef before the second runs.
       if (!sourceRef.current) return;
       if (refreshTimer) clearTimeout(refreshTimer);
       types.forEach((t) => es.removeEventListener(t, dispatch));
@@ -166,12 +134,7 @@ export function useConnectionState(): ConnectionState {
   return ctx;
 }
 
-/**
- * Subscribe to live forward events. The listener fires once per event,
- * synchronously as it arrives — so no event is dropped between renders and
- * unrelated re-renders never re-deliver an old one. Pass a stable callback
- * (e.g. `useCallback`) that reads any changing values through refs.
- */
+// Fires once synchronously per forward event. The handler ref keeps a fresh closure without resubscribing.
 export function useForwardEvents(onEvent: ForwardEventListener): void {
   const subscribe = useContext(ForwardEventsContext);
   if (!subscribe) {

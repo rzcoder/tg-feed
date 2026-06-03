@@ -7,34 +7,21 @@ import { useNowTick } from '@/lib/useNowTick';
 import { StatusBadge } from './StatusBadge';
 
 export interface ActivityEvent {
-  /** Stable id for keying — DB row id (`db:<id>`) or live event composite (`live:<sub>:<msg>:<type>`). */
+  // `db:<id>` or live composite `live:<sub>:<msg>:<type>`.
   id: string;
   kind: ForwardLogStatus;
   subscriptionId: number | null;
   subscriptionTitle: string | null;
   sourceHandle: string | null;
   destinationLabel: string | null;
-  /** Receive time (ms epoch) — used to compute relative `ago`. */
-  occurredAt: number;
+  occurredAt: number; // ms epoch
   reasons?: string[];
-  /** FloodWait seconds, when status='flood_wait'. */
   seconds?: number;
-  /** Error string when status='failed'. */
   error?: string | null;
-  /** Album: number of messages forwarded (>1 = album). */
-  destMessageCount?: number;
-  /** Set true on a freshly-arrived live event for the flash animation. */
+  destMessageCount?: number; // >1 = album
   isNew?: boolean;
-  /**
-   * `forward_log` row id for fetching the raw JSON payload. Set on hydrated
-   * rows and on live events whose SSE frame carried `forwardLogIds`.
-   */
   forwardLogId?: number;
-  /**
-   * Whether the row has a stored raw payload — drives visibility of the
-   * "{}" button. Live events default to `true` since capture happens
-   * before the SSE emit.
-   */
+  // Live events default true: capture precedes the SSE emit.
   hasRawMessage?: boolean;
 }
 
@@ -128,9 +115,7 @@ function RelativeTime({ occurredAt }: RelativeTimeProps) {
 }
 
 interface ParsedReason {
-  /** Library filter name when present (the part between `library:` and the next `:`). */
   library: string | null;
-  /** The remainder — typically `<ruleType>: <reason>`. */
   text: string;
 }
 

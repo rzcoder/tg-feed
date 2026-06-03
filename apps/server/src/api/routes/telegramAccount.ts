@@ -1,25 +1,4 @@
-/**
- * Telegram account routes — settings-page sign-in / sign-out.
- *
- * GET    /api/tg/account              → current state, source, key status
- * POST   /api/tg/login/start          → send code to a phone, returns sessionId
- * POST   /api/tg/login/verify         → verify code; may signal needsPassword
- * POST   /api/tg/login/password       → 2FA password
- * POST   /api/tg/login/raw            → paste a raw session string (validated)
- * POST   /api/tg/login/cancel         → drop an in-progress login
- * DELETE /api/tg/account              → remove the DB row, env fallback resumes
- *
- * "Save" branches refuse with 412 unless `TG_SESSION_ENCRYPTION_KEY` is
- * configured. The encrypted blob is written to `telegram_account` (single
- * row, id=1) and `reloadTelegramSession()` is called so the gramjs runtime
- * picks up the new credentials without a restart.
- *
- * Each in-progress login session is bound to the caller's web-session cookie
- * token via `readSessionToken(request)`; verify/password/cancel reject if a
- * second authed tab tries to drive someone else's flow. The phone-code and
- * password endpoints are rate-limited per IP — brute-forcing a 5-digit
- * Telegram code via this surface would shadow-ban the operator's phone.
- */
+// Settings-page Telegram sign-in/out. Save needs TG_SESSION_ENCRYPTION_KEY (else 412); login sessions are bound to the caller's cookie token so a second tab can't drive someone else's flow.
 import type { FastifyInstance } from 'fastify';
 import {
   type TelegramAccountInfo,
@@ -43,28 +22,18 @@ import { readSessionToken } from '../auth.js';
 
 export interface RegisterTelegramAccountRoutesDeps {
   db: Db;
-  /** Returns the configured 32-byte key, or null when unset. */
   getEncryptionKey?: () => Buffer | null;
-  /** In-memory store for in-progress sign-ins. */
   loginSessionStore?: LoginSessionStore;
-  /** Triggers the live-swap so a freshly-saved session takes effect immediately. */
   reloadTelegramSession?: () => Promise<void>;
-  /** Lifecycle of the gramjs subsystem (used to compute `present`). */
   getTelegramStatus: () => TelegramStatus;
-  /**
-   * Profile-photo fetcher over the live userbot. Used to fetch the account's
-   * own avatar ("me"); absent when no client is up (tests / disconnected).
-   */
+  // Over the live userbot; absent when no client is up (tests / disconnected).
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
 }
 
-// Avatar cache TTL — long enough to avoid re-downloading on every settings
-// poll, short enough that a changed/swapped photo or a transient miss is
-// picked up without a sign-out or restart.
 const AVATAR_TTL_MS = 10 * 60_000;
 const AVATAR_FETCH_TIMEOUT_MS = 2500;
 
-/** Resolves to null after the timeout so a stalled download can't hang the route. */
+// Resolves to null after the timeout so a stalled download can't hang the route.
 function avatarFetchTimeout(): Promise<null> {
   return new Promise<null>((resolve) => {
     const t = setTimeout(() => resolve(null), AVATAR_FETCH_TIMEOUT_MS);
@@ -85,9 +54,7 @@ export function registerTelegramAccountRoutes(
     getFetchProfilePhoto,
   } = deps;
 
-  // The userbot's own avatar, downloaded lazily and cached with a short TTL so
-  // a transient miss or a changed/swapped photo is eventually picked up
-  // without re-downloading on every poll. Cleared outright on sign-in / out.
+  // Userbot's own avatar, lazy + short-TTL cached; cleared on sign-in/out.
   let avatarCache: { key: string; dataUrl: string | null; fetchedAt: number } | null = null;
 
   async function resolveAvatar(base: TelegramAccountInfo): Promise<string | null> {
@@ -102,7 +69,6 @@ export function registerTelegramAccountRoutes(
     if (!fetcher) return avatarCache?.key === key ? avatarCache.dataUrl : null;
     let dataUrl: string | null = null;
     try {
-      // Don't let a hung gramjs download block this frequently-polled route.
       dataUrl = await Promise.race([fetcher('me'), avatarFetchTimeout()]);
     } catch {
       dataUrl = null;
@@ -125,9 +91,7 @@ export function registerTelegramAccountRoutes(
   app.post(
     '/tg/login/start',
     {
-      // Telegram throttles SendCode aggressively per phone number; cap our own
-      // call rate to avoid getting the operator's phone number shadow-banned
-      // when the UI fires repeated start requests.
+      // Cap SendCode rate: repeated starts can shadow-ban the operator's phone.
       config: { rateLimit: { max: 5, timeWindow: '5 minutes' } },
     },
     async (request) => {
@@ -142,9 +106,7 @@ export function registerTelegramAccountRoutes(
   app.post(
     '/tg/login/verify',
     {
-      // Brute-forcing the SMS code via this surface would shadow-ban the
-      // phone — Telegram counts attempts per phone+app, not per IP. Stay
-      // well under the limit; legitimate users only need a handful of tries.
+      // SMS-code brute-force shadow-bans the phone (counted per phone+app, not per IP).
       config: { rateLimit: { max: 8, timeWindow: '5 minutes' } },
     },
     async (request): Promise<TelegramLoginVerifyResponse> => {
@@ -170,8 +132,7 @@ export function registerTelegramAccountRoutes(
   app.post(
     '/tg/login/password',
     {
-      // Same reasoning as `/verify` — 2FA password brute-force is upstream-
-      // rate-limited but the operator pays the bill.
+      // Cap 2FA-password rate; the operator pays for upstream brute-force throttling.
       config: { rateLimit: { max: 8, timeWindow: '5 minutes' } },
     },
     async (request): Promise<TelegramLoginCompleted> => {
@@ -218,9 +179,7 @@ export function registerTelegramAccountRoutes(
     deleteAccount(db);
     avatarCache = null;
     if (reloadTelegramSession) {
-      // Live-swap to env (or degraded) — failures are logged inside
-      // `reloadTelegramSession` and don't block the user. The DB row is
-      // already gone; next boot will pick up the env fallback.
+      // Live-swap to env; failures don't block (row's gone, next boot picks up env).
       await reloadTelegramSession().catch(() => {});
     }
     return { ok: true };
@@ -238,10 +197,7 @@ function buildAccountInfo(deps: {
   const row = getActiveAccount(deps.db);
   const status = deps.getTelegramStatus();
   const connected = status.state === 'connected';
-  // A row whose fingerprint doesn't match the current key (or no key set)
-  // is "stale" — the resolver fell through to env. Report the mismatch
-  // separately so the UI can prompt the operator without claiming the row
-  // is the live account.
+  // Fingerprint mismatch (or no key) = stale row, resolver fell through to env; reported separately so the UI can prompt.
   const rowUsable = row !== null && key !== null && getKeyFingerprint(key) === row.keyFingerprint;
   const source: 'db' | 'env' | null = !connected ? null : rowUsable ? 'db' : 'env';
 
@@ -300,9 +256,7 @@ async function commitLogin(deps: {
     try {
       await deps.reloadTelegramSession();
     } catch {
-      // Live-swap failed; the DB row is still saved. The next process restart
-      // picks it up. The caller rebuilds the account info regardless so the UI
-      // can confirm the save.
+      // Live-swap failed; row is saved, next restart picks it up.
     }
   }
 }

@@ -1,12 +1,4 @@
-/**
- * Filter rule type defs and zod schemas.
- *
- * The discriminator (`ruleType`) lives in the `subscription_filters.rule_type`
- * DB column, not inside the `params` JSON. Per-rule param schemas describe
- * only the params payload — no `type` field — and the schemas are keyed by
- * rule type via `filterRuleParamsSchemas` so callers can look up the right
- * validator from a row's `ruleType` column.
- */
+// The `ruleType` discriminator lives in the DB column, not in `params`; per-rule schemas cover only params.
 import { z } from 'zod';
 
 export const FILTER_RULE_TYPES = [
@@ -20,10 +12,7 @@ export const FILTER_RULE_TYPES = [
 
 export type FilterRuleType = (typeof FILTER_RULE_TYPES)[number];
 
-// Per-filter mode (orthogonal to rule type). 'include' is the default and
-// matches the historical AND-pass semantics: a message forwards only if
-// every include filter matches. 'exclude' inverts the rule for that one
-// row — the filter rejects the message when its rule does match.
+// 'include' = AND-pass (forward only if every include matches); 'exclude' rejects when the rule matches.
 export const FILTER_MODES = ['include', 'exclude'] as const;
 export const filterModeSchema = z.enum(FILTER_MODES);
 export type FilterMode = z.infer<typeof filterModeSchema>;
@@ -40,8 +29,7 @@ export const textExcludesParamsSchema = z.object({
 });
 export type TextExcludesParams = z.infer<typeof textExcludesParamsSchema>;
 
-// RE2 supports g/i/m/s/u/y but NOT v (no Unicode-set escapes). Reject any
-// other character so a typo doesn't fail open at evaluation time.
+// RE2 allows g/i/m/s/u/y but NOT v; reject others so a typo doesn't fail open at eval time.
 const RE2_FLAGS_PATTERN = /^[gimsuy]*$/;
 
 export const textRegexParamsSchema = z.object({
@@ -63,9 +51,7 @@ export const minLengthParamsSchema = z.object({
 });
 export type MinLengthParams = z.infer<typeof minLengthParamsSchema>;
 
-// Cap usernames at the typical Telegram username length (~32) and the whole
-// array at a reasonable count; the evaluator walks every entry on every
-// matching message, so a 10⁴-element allowlist would slow down forwarding.
+// Cap the array: the evaluator walks every entry on every matching message.
 export const senderAllowlistParamsSchema = z.object({
   usernames: z.array(z.string().min(1).max(64)).min(1).max(100),
 });
@@ -80,9 +66,7 @@ export const filterRuleParamsSchemas = {
   'sender-allowlist': senderAllowlistParamsSchema,
 } as const satisfies Record<FilterRuleType, z.ZodTypeAny>;
 
-// Seed params used by the UI when a new rule of each type is created. Kept
-// next to the schemas so the two stay in sync: every default must parse
-// cleanly against its rule's `filterRuleParamsSchemas` entry.
+// UI seed params for a new rule of each type; every default must parse against its schema.
 export const filterRuleDefaultParams: Record<FilterRuleType, Record<string, unknown>> = {
   'text-contains': { value: '', caseInsensitive: true },
   'text-excludes': { value: '', caseInsensitive: true },

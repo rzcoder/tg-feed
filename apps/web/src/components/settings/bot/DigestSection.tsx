@@ -1,10 +1,3 @@
-/**
- * The "Stats digest" panel of the Bot settings card: an enable toggle plus an
- * inline-sentence schedule (frequency / day / time) and the captured browser
- * time zone. Presentational — drafts and setters are owned by the card. The
- * `botReady` flag drives the "add a token + admin first" warning; the time
- * zone is display-only (captured on save, no picker).
- */
 import { AlertTriangle } from 'lucide-react';
 import type { StatsDigestFrequency } from '@tg-feed/shared';
 import { Hint } from '@/components/ui/input';
@@ -36,7 +29,6 @@ export interface DigestSectionProps {
   time: string;
   onTimeChange: (next: string) => void;
   localTz: string;
-  /** A token + at least one admin are present, so the digest can be delivered. */
   botReady: boolean;
 }
 

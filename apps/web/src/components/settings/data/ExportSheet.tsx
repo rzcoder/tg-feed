@@ -1,8 +1,3 @@
-/**
- * Export sheet — section checkboxes that trigger a JSON file download
- * (Blob + anchor click) of the selected sections. Versioned for forward /
- * backward compatibility via the shared `exportFileSchema`.
- */
 import { useState } from 'react';
 import { Download } from 'lucide-react';
 import { EXPORT_SECTIONS, type ExportSection } from '@tg-feed/shared';

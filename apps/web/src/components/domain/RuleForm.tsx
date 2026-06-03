@@ -1,11 +1,3 @@
-/**
- * Per-rule param form. Matches the design's RuleForm — one input set per
- * rule type. Renders into the FilterSheet below the rule header card.
- *
- * The form is uncontrolled-ish: it reads + writes a single `params` object
- * whose shape is the rule's param schema. The parent owns the params
- * state. Validation happens at submit time via the shared zod schema.
- */
 import { X } from 'lucide-react';
 import { type KeyboardEvent } from 'react';
 import { filterRuleDefaultParams, type FilterMode, type FilterRuleType } from '@tg-feed/shared';
@@ -17,14 +9,9 @@ interface RuleFormProps {
   type: FilterRuleType;
   params: Record<string, unknown>;
   setParams: (next: Record<string, unknown>) => void;
-  /**
-   * `mode` toggle — shown when both `mode` and `setMode` are provided. When
-   * absent, callers (older flows that haven't been updated) get the legacy
-   * include-only behavior implicitly via the server default.
-   */
+  // Shown only with setMode; else server default (include-only) applies.
   mode?: FilterMode;
   setMode?: (next: FilterMode) => void;
-  /** Library filters add a Name field at the top of the form. */
   showName?: boolean;
   name?: string;
   setName?: (next: string) => void;
@@ -128,8 +115,7 @@ export function RuleForm({
             { v: true, l: 'Message has media' },
             { v: false, l: 'Message has NO media' },
           ].map((o) => {
-            // params.required: true=must have, false=must NOT have. Treat
-            // undefined as the default (true).
+            // undefined defaults to required (has media).
             const current = params.required !== false;
             const isThis = current === o.v;
             return (

@@ -18,10 +18,7 @@ export async function login(password: string): Promise<LoginResponse> {
   return loginResponseSchema.parse(res);
 }
 
-/**
- * Sign in with a Telegram Mini App `initData` payload. `silent401` suppresses
- * the global redirect so the LoginPage can fall back to the password form.
- */
+// silent401 suppresses the global redirect so LoginPage can fall back to the password form.
 export async function loginWithTelegram(initData: string): Promise<LoginResponse> {
   const body = telegramAuthRequestSchema.parse({ initData });
   const res = await apiFetch<unknown, typeof body>('/api/auth/telegram', {

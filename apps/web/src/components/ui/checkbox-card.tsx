@@ -8,16 +8,10 @@ export interface CheckboxCardProps {
   label: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
-  /** `danger` paints the selected state destructive (red), for wipe flows. */
   tone?: 'default' | 'danger';
-  /** Extra classes on the description line (e.g. monospace + truncate). */
   descriptionClassName?: string;
 }
 
-/**
- * Clickable card with a square check box + label and optional description.
- * The whole card is the toggle target.
- */
 export function CheckboxCard({
   checked,
   onToggle,

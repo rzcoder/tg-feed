@@ -7,11 +7,7 @@ export interface ThemeProviderProps {
   children: ReactNode;
 }
 
-/**
- * Hosts a single theme instance at the app root so the resolved theme is
- * applied (and system changes are tracked) for the whole session — not just
- * while a particular page that happens to read the theme is mounted.
- */
+// Hosts one theme instance at the app root so it tracks system changes for the whole session, not per-page.
 export function ThemeProvider({ children }: ThemeProviderProps) {
   const theme = useTheme();
   return <ThemeContext.Provider value={theme}>{children}</ThemeContext.Provider>;

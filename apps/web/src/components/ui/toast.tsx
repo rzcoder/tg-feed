@@ -1,12 +1,3 @@
-/**
- * Tiny toast — top-of-screen, single message at a time.
- *
- * The design's feedback was explicit: floating Add buttons + bottom toast
- * interfered with content access. Toast lives at the top, dismisses after
- * 2.4s. Provider mounts a portal at <body>; pages call `useToast().show(msg)`
- * for confirmations and `useToast().error(msg)` for failures — the two render
- * with distinct icon + color so a failure never looks like a success.
- */
 import { AlertTriangle, Check } from 'lucide-react';
 import {
   createContext,
@@ -28,9 +19,7 @@ interface ToastState {
 }
 
 interface ToastContextValue {
-  /** Success confirmation (green check). */
   show: (message: string) => void;
-  /** Failure (danger triangle + tint). */
   error: (message: string) => void;
 }
 

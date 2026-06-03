@@ -1,8 +1,4 @@
-/**
- * Default rule registry — instantiates a fresh registry and registers all
- * v1 rules. Adding a rule = drop a file in this directory and add one
- * `register(...)` line below.
- */
+// Add a rule: drop a file here and add one register(...) line below.
 import { createRegistry, type FilterRegistry } from '../registry.js';
 import { hasMediaRule } from './hasMedia.js';
 import { minLengthRule } from './minLength.js';

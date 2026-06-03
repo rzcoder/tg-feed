@@ -1,10 +1,4 @@
-/**
- * Reducer-style hook for the FiltersPage sheet (add/edit, sub/library).
- *
- * Owns the four orthogonal pieces (open?, mode, kind, initial value) as a
- * single object so callers don't manage four `useState` slots and risk
- * leaving the sheet in an inconsistent state.
- */
+// Single-object state for the FiltersPage sheet so callers can't desync open/mode/kind/initial.
 import { useCallback, useState } from 'react';
 import type { LibraryFilterDto, SubscriptionFilterDto } from '@tg-feed/shared';
 

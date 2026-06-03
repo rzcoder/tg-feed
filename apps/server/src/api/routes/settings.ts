@@ -1,18 +1,4 @@
-/**
- * Settings routes.
- *
- * Wire format is the flat `{ delayMs, albumDebounceMs }`; internally this
- * maps to the `app_settings` row keyed `'global'` whose `value` JSON is the
- * same shape. PUT accepts a partial body (either field optional) and merges
- * into the existing row, so the UI can edit one knob at a time without
- * round-tripping the other.
- *
- * `GET` never 404s. If the row is missing or malformed, fall back to the
- * documented defaults (8 s throttle, 2 s album window) — same defensive
- * read the forwarding pipeline does in `getGlobalDelayMs` /
- * `getAlbumDebounceMs`. Settings always exist with sane defaults from the
- * client's perspective.
- */
+// GET never 404s: a missing/malformed row falls back to the same defaults the forwarding pipeline uses.
 import type { FastifyInstance } from 'fastify';
 import { updateSettingsRequestSchema, type SettingsDto } from '@tg-feed/shared';
 import type { Db } from '../../db/client.js';
@@ -49,10 +35,7 @@ export function registerSettingsRoutes(app: FastifyInstance, deps: RegisterSetti
 
   app.put('/settings', async (request) => {
     const body = updateSettingsRequestSchema.parse(request.body);
-    // Merge: read current values (with defaults for missing/malformed rows),
-    // overlay any fields the client supplied, write the unified row back. The
-    // throttle and digest knobs share this one row, so the merge keeps a
-    // caller that only knows about one of them from clobbering the others.
+    // Throttle and digest knobs share one row; merge so a partial body doesn't clobber the others.
     const digest = getStatsDigestConfig(db);
     const merged = {
       delayMs: body.delayMs ?? getGlobalDelayMs(db),

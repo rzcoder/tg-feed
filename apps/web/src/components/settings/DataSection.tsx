@@ -1,16 +1,4 @@
-/**
- * Settings → Data section.
- *
- * Two cards:
- *   1. Import / Export — two buttons that open the `ExportSheet` / `ImportSheet`
- *      flows.
- *   2. Danger zone — a single button that opens the `WipeSheet` flow.
- *
- * Each flow lives in its own file under `./data/`; this entry just renders the
- * cards and mounts the sheets. The whole feature is offline-safe — no Telegram
- * dependencies. Imports never call joinChannel; the access monitor's sweep
- * refreshes status afterwards.
- */
+// Offline-safe: imports never call joinChannel; the access monitor's sweep refreshes status afterwards.
 import { useState } from 'react';
 import { AlertTriangle, Database, Download, Trash, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
