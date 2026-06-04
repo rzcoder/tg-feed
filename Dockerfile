@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 ARG NODE_VERSION=20
 
-# --- Build dist artifacts (TS → JS, Vite → static) ---
+# --- build ---
 FROM node:${NODE_VERSION}-bookworm-slim AS build
 WORKDIR /app
 RUN corepack enable \
@@ -9,8 +9,7 @@ RUN corepack enable \
  && apt-get install -y --no-install-recommends build-essential python3 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests first so the install layer caches when sources change
-# but deps don't.
+# Manifests first so the install layer caches independently of source changes.
 COPY pnpm-lock.yaml package.json pnpm-workspace.yaml ./
 COPY apps/server/package.json ./apps/server/
 COPY apps/web/package.json ./apps/web/
@@ -22,46 +21,45 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
 COPY . .
 RUN pnpm build
 
-# --- Prune to prod-only deps, keeping native modules compiled above ---
-FROM build AS prod-deps
-# Switching dev→prod makes pnpm 10 want to purge node_modules, and it prompts
-# for confirmation first. BuildKit RUN steps have no TTY and don't inherit CI,
-# so pnpm aborts (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY). Opt out of the
-# prompt so the prune runs non-interactively.
-RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
-    pnpm install --prod --frozen-lockfile --config.confirm-modules-purge=false
+# Bundle server + migrate into self-contained ESM; only the native addons and
+# pino stay external (see scripts/bundle-server.mjs).
+RUN node scripts/bundle-server.mjs
 
-# --- Runtime ---
-FROM node:${NODE_VERSION}-bookworm-slim AS runtime
-WORKDIR /app
+# Build a minimal runtime node_modules holding just those externals (versions
+# pinned to what was bundled against), strip native debug symbols, and drop the
+# C/C++ sources kept only for compilation.
+RUN mkdir -p /native && cd /native \
+ && node -e 'const v=p=>require(`/app/apps/server/node_modules/${p}/package.json`).version;require("fs").writeFileSync("package.json",JSON.stringify({name:"native",private:true,dependencies:{"better-sqlite3":v("better-sqlite3"),re2:v("re2"),pino:v("pino")}}))' \
+ && npm install --omit=dev --no-audit --no-fund --loglevel=error \
+ && find node_modules -name '*.node' -exec strip --strip-unneeded {} + \
+ && rm -rf node_modules/re2/vendor node_modules/better-sqlite3/deps node_modules/better-sqlite3/src \
+ && find node_modules -path '*/build/*' ! -name '*.node' -type f -delete \
+ && for p in node-gyp prebuild-install tar undici node-abi simple-get tunnel-agent nan minizlib mkdirp-classic; do rm -rf "node_modules/$p" "node_modules/.bin/$p"; done \
+ && find node_modules -type d -empty -delete
+
+# Empty data dir, owned by the distroless nonroot uid so a fresh volume inherits it.
+RUN mkdir -p /data-stage && touch /data-stage/.keep
+
+# --- runtime ---
+FROM gcr.io/distroless/nodejs${NODE_VERSION}-debian12 AS runtime
 ENV NODE_ENV=production
+# Project root: the app resolves a relative DATABASE_PATH (default ./data/…)
+# against cwd, so this lands the DB in /app/data (the mounted volume). Bundle
+# paths stay absolute so import.meta.url still resolves apps/web/dist + drizzle.
+WORKDIR /app
 
-# Preserve the workspace layout: the server resolves apps/web/dist
-# relative to its compiled file at apps/server/dist/api/server.js, so
-# apps/server and apps/web must stay siblings. Likewise pnpm symlinks
-# inside node_modules/ point into .pnpm/ at the workspace root.
-COPY --from=prod-deps /app/package.json /app/pnpm-workspace.yaml /app/pnpm-lock.yaml ./
-COPY --from=prod-deps /app/node_modules ./node_modules
-COPY --from=prod-deps /app/apps/server/package.json ./apps/server/
-COPY --from=prod-deps /app/apps/server/node_modules ./apps/server/node_modules
-COPY --from=build     /app/apps/server/dist ./apps/server/dist
-COPY --from=build     /app/apps/server/drizzle ./apps/server/drizzle
-COPY --from=build     /app/apps/web/dist ./apps/web/dist
-COPY --from=prod-deps /app/packages/shared/package.json ./packages/shared/
-COPY --from=prod-deps /app/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=build     /app/packages/shared/dist ./packages/shared/dist
-
-# Shared's source package.json points main at src/index.ts (for tsx +
-# IDE go-to-definition). Rewrite to compiled dist so node can resolve it
-# at runtime.
-RUN node -e 'const fs=require("node:fs"); const p=JSON.parse(fs.readFileSync("packages/shared/package.json","utf8")); p.main="./dist/index.js"; p.types="./dist/index.d.ts"; p.exports={".":{types:"./dist/index.d.ts",default:"./dist/index.js"}}; fs.writeFileSync("packages/shared/package.json", JSON.stringify(p,null,2));'
-
-RUN mkdir -p /app/data && chown -R node:node /app
+COPY --from=build /app/apps/server/dist/api/index.bundle.js   /app/apps/server/dist/api/index.bundle.js
+COPY --from=build /app/apps/server/dist/db/migrate.bundle.js  /app/apps/server/dist/db/migrate.bundle.js
+COPY --from=build /app/apps/server/drizzle                    /app/apps/server/drizzle
+COPY --from=build /native/node_modules                        /app/apps/server/node_modules
+COPY --from=build /app/apps/web/dist                          /app/apps/web/dist
+COPY --from=build --chown=1000:1000   /data-stage             /app/data
 
 EXPOSE 3000
-USER node
-WORKDIR /app/apps/server
+# uid 1000 (not distroless's default 65532) to match the previous image, so a
+# data volume it created stays writable after upgrading to this one.
+USER 1000
 
-# Apply migrations on every start (idempotent — drizzle skips applied),
-# then exec the server so PID 1 is node and SIGTERM reaches it.
-CMD ["sh", "-c", "node dist/db/migrate.js && exec node dist/index.js"]
+# Shell-less runtime: apply migrations, then start the server, in one node
+# process (a failed migration rejects → non-zero exit → restart).
+CMD ["-e", "import('./apps/server/dist/db/migrate.bundle.js').then(() => import('./apps/server/dist/api/index.bundle.js'))"]

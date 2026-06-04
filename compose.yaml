@@ -11,6 +11,10 @@ services:
       - '3000:3000'
     env_file:
       - .env
+    # Production build (slim image ships no pino-pretty); override a dev
+    # NODE_ENV from .env so the logger doesn't reach for a missing transport.
+    environment:
+      - NODE_ENV=production
     volumes:
       - tg-feed-data:/app/data
 
