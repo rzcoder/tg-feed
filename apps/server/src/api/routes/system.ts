@@ -9,6 +9,7 @@ import {
   type ExportFile,
   type ExportSection,
   type ExportedAppSettings,
+  type ExportedBotConfig,
   type ExportedLibraryFilter,
   type ExportedSubscription,
   type ExportedTelegramAccount,
@@ -38,6 +39,7 @@ import {
 } from '../../db/schema.js';
 import { AppError } from '../../lib/errors.js';
 import { getKeyFingerprint } from '../../lib/sessionCrypto.js';
+import { BOT_SETTINGS_KEY, readBotConfigRaw } from '../../db/botConfigRepo.js';
 import {
   GLOBAL_SETTINGS_KEY,
   getAlbumDebounceMs,
@@ -75,6 +77,8 @@ export interface RegisterSystemRoutesDeps {
   getEncryptionKey?: () => Buffer | null;
   // Live-swaps gramjs so an imported account activates without restart.
   reloadTelegramSession?: () => Promise<void>;
+  // Live-swaps the bot so an imported token/admins activate without restart.
+  reloadBot?: () => Promise<void>;
   getFetchProfilePhoto?: () => ProfilePhotoFetcher | undefined;
 }
 
@@ -86,6 +90,7 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
     getTelegramStatus,
     getEncryptionKey,
     reloadTelegramSession,
+    reloadBot,
     getFetchProfilePhoto,
   } = deps;
 
@@ -125,6 +130,9 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RegisterSystemR
       // Failures swallowed: the row is saved either way.
       if (result.telegramAccountWritten && reloadTelegramSession) {
         await reloadTelegramSession().catch(() => {});
+      }
+      if (result.botConfigWritten && reloadBot) {
+        await reloadBot().catch(() => {});
       }
       // Fire-and-forget so a big import doesn't block on sequential TG downloads.
       const fetchProfilePhoto = getFetchProfilePhoto?.();
@@ -313,6 +321,11 @@ function buildExport(db: Db, sections: Set<ExportSection>): ExportFile {
         telegramUserId: accountRow.telegramUserId,
       };
     }
+    // Bot token rides as its encrypted envelope (fingerprint-gated on import); admins/publicUrl are plain.
+    const bot = readBotConfigRaw(db);
+    if (bot.token || bot.admins !== undefined || bot.publicUrl !== undefined) {
+      settings.bot = bot;
+    }
     envelope.appSettings = settings;
   }
 
@@ -336,6 +349,7 @@ export interface IconBackfillTarget {
 interface ApplyImportResult {
   body: ImportResult;
   telegramAccountWritten: boolean;
+  botConfigWritten: boolean;
   iconTargets: IconBackfillTarget[];
 }
 
@@ -354,6 +368,7 @@ function applyImport(
     warnings: [],
   };
   let telegramAccountWritten = false;
+  let botConfigWritten = false;
   const touchedDestIds: number[] = [];
   const touchedSubIds: number[] = [];
 
@@ -510,8 +525,12 @@ function applyImport(
     }
 
     if (sections.has('appSettings') && data.appSettings) {
-      // telegramAccount rides under appSettings on the wire but persists to its own table.
-      const { telegramAccount: importedAccount, ...appSettingsValue } = data.appSettings;
+      // telegramAccount + bot ride under appSettings on the wire but persist to their own rows.
+      const {
+        telegramAccount: importedAccount,
+        bot: importedBot,
+        ...appSettingsValue
+      } = data.appSettings;
       const existing = tx
         .select()
         .from(appSettings)
@@ -547,6 +566,10 @@ function applyImport(
           opts.getEncryptionKey,
         );
         if (wrote) telegramAccountWritten = true;
+      }
+      if (importedBot) {
+        const wrote = importBotConfig(tx, importedBot, strategy, result, opts.getEncryptionKey);
+        if (wrote) botConfigWritten = true;
       }
     }
   });
@@ -586,7 +609,7 @@ function applyImport(
     }
   }
 
-  return { body: result, telegramAccountWritten, iconTargets };
+  return { body: result, telegramAccountWritten, botConfigWritten, iconTargets };
 }
 
 // Best-effort, deduped per chatId; each stamp emits a *.changed event so the UI refreshes.
@@ -678,6 +701,54 @@ function importTelegramAccount(
         updatedAt: now,
       },
     })
+    .run();
+  return true;
+}
+
+// false = nothing written: skip strategy on an existing row, or an empty patch.
+// The token is fingerprint-gated like the telegram account; admins/publicUrl carry no secret and always apply.
+function importBotConfig(
+  tx: DbOrTx,
+  bot: ExportedBotConfig,
+  strategy: ImportConflictStrategy,
+  result: ImportResult,
+  getEncryptionKey?: () => Buffer | null,
+): boolean {
+  const existingRow = tx
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.key, BOT_SETTINGS_KEY))
+    .get();
+  if (existingRow && strategy === 'skip') return false;
+
+  // Merge onto the stored row so a partial export never drops fields the host already holds.
+  const next: Record<string, unknown> = {
+    ...((existingRow?.value as Record<string, unknown> | undefined) ?? {}),
+  };
+  if (bot.admins !== undefined) next.admins = bot.admins;
+  if (bot.publicUrl !== undefined) next.publicUrl = bot.publicUrl;
+  if (bot.token) {
+    const key = getEncryptionKey?.() ?? null;
+    if (!key) {
+      result.warnings.push({
+        kind: 'bot_token_no_key',
+        message: 'bot token skipped: TG_SESSION_ENCRYPTION_KEY is not configured on this host',
+      });
+    } else if (getKeyFingerprint(key) !== bot.token.keyFingerprint) {
+      result.warnings.push({
+        kind: 'bot_token_key_mismatch',
+        message:
+          'bot token skipped: encrypted with a different TG_SESSION_ENCRYPTION_KEY (fingerprint mismatch)',
+      });
+    } else {
+      next.token = { ciphertext: bot.token.ciphertext, keyFingerprint: bot.token.keyFingerprint };
+    }
+  }
+
+  if (Object.keys(next).length === 0) return false;
+  tx.insert(appSettings)
+    .values({ key: BOT_SETTINGS_KEY, value: next })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: next } })
     .run();
   return true;
 }

@@ -12,7 +12,7 @@ export const SECTION_HINT: Record<ExportSection, string> = {
   destinations: 'Forwarding targets.',
   libraryFilters: 'Reusable named filters.',
   appSettings:
-    'Forward delay, album debounce, and (if signed in) the encrypted Telegram account. The account only re-imports on a host with the same TG_SESSION_ENCRYPTION_KEY.',
+    'Forward delay, album debounce, bot config (admins, public URL, encrypted token), and (if signed in) the encrypted Telegram account. The token and account only re-import on a host with the same TG_SESSION_ENCRYPTION_KEY.',
 };
 
 export const FILE_SOFT_WARN_BYTES = 1024 * 1024;

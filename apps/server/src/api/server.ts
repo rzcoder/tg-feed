@@ -252,6 +252,7 @@ export async function createApiServer(deps: CreateApiServerDeps): Promise<Fastif
         ...(deps.reloadTelegramSession !== undefined
           ? { reloadTelegramSession: deps.reloadTelegramSession }
           : {}),
+        ...(deps.reloadBot !== undefined ? { reloadBot: deps.reloadBot } : {}),
         ...(getFetchProfilePhoto !== undefined ? { getFetchProfilePhoto } : {}),
       });
       registerTelegramAccountRoutes(authedScope, {

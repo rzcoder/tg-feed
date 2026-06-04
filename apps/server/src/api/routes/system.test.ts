@@ -18,6 +18,7 @@ import {
   telegramAccount,
 } from '../../db/schema.js';
 import { GLOBAL_SETTINGS_KEY } from '../../forwarding/throttle.js';
+import { BOT_SETTINGS_KEY, readBotConfigRaw } from '../../db/botConfigRepo.js';
 import { createLogger } from '../../lib/logger.js';
 import { encryptSessionString, getKeyFingerprint } from '../../lib/sessionCrypto.js';
 import { buildTestApp, seedDestination, type TestApp } from '../testing.js';
@@ -778,6 +779,189 @@ describe('system export/import/wipe routes', () => {
     } finally {
       await app.close();
     }
+  });
+
+  // --- Bot config round-trip (app_settings['bot']) -------------------------
+
+  it('POST /api/system/export includes bot config from the DB', async () => {
+    const key = randomBytes(32);
+    testApp.db
+      .insert(appSettings)
+      .values({
+        key: BOT_SETTINGS_KEY,
+        value: {
+          token: { ciphertext: 'CIPHER', keyFingerprint: getKeyFingerprint(key) },
+          admins: [{ id: '777', displayName: 'Jane', username: 'jane' }],
+          publicUrl: 'https://tg-feed.example.com',
+        },
+      })
+      .run();
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/export',
+      headers: { cookie },
+      payload: { sections: ['appSettings'] },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as ExportFile;
+    expect(body.appSettings?.bot).toEqual({
+      token: { ciphertext: 'CIPHER', keyFingerprint: getKeyFingerprint(key) },
+      admins: [{ id: '777', displayName: 'Jane', username: 'jane' }],
+      publicUrl: 'https://tg-feed.example.com',
+    });
+  });
+
+  it('POST /api/system/export omits bot config when none is stored', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/export',
+      headers: { cookie },
+      payload: { sections: ['appSettings'] },
+    });
+    expect((res.json() as ExportFile).appSettings?.bot).toBeUndefined();
+  });
+
+  it('POST /api/system/import restores bot config and reloads the bot when fingerprint matches', async () => {
+    const key = randomBytes(32);
+    let reloaded = 0;
+    const data: ExportFile = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: '2026-05-10T00:00:00.000Z',
+      appVersion: '0.1.0',
+      appSettings: {
+        delayMs: 8000,
+        albumDebounceMs: 2000,
+        bot: {
+          token: { ciphertext: 'CIPHER', keyFingerprint: getKeyFingerprint(key) },
+          admins: [{ id: '777', displayName: 'Jane', username: 'jane' }],
+          publicUrl: 'https://tg-feed.example.com',
+        },
+      },
+    };
+    const app = await buildTestApp({
+      getEncryptionKey: () => key,
+      reloadBot: async () => {
+        reloaded += 1;
+      },
+    });
+    const localCookie = await app.loginAndGetCookie();
+    try {
+      const res = await app.app.inject({
+        method: 'POST',
+        url: '/api/system/import',
+        headers: { cookie: localCookie },
+        payload: { sections: ['appSettings'], conflictStrategy: 'replace', data },
+      });
+      expect(res.statusCode).toBe(200);
+      const result = res.json() as ImportResult;
+      expect(result.warnings.filter((w) => w.kind.startsWith('bot_token'))).toHaveLength(0);
+      const stored = readBotConfigRaw(app.db);
+      expect(stored.token).toEqual({
+        ciphertext: 'CIPHER',
+        keyFingerprint: getKeyFingerprint(key),
+      });
+      expect(stored.admins).toEqual([{ id: '777', displayName: 'Jane', username: 'jane' }]);
+      expect(stored.publicUrl).toBe('https://tg-feed.example.com');
+      expect(reloaded).toBe(1);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('POST /api/system/import skips the bot token on fingerprint mismatch but keeps admins/publicUrl', async () => {
+    const exportedKey = randomBytes(32);
+    const localKey = randomBytes(32);
+    const data: ExportFile = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: '2026-05-10T00:00:00.000Z',
+      appVersion: '0.1.0',
+      appSettings: {
+        delayMs: 8000,
+        albumDebounceMs: 2000,
+        bot: {
+          token: { ciphertext: 'CIPHER', keyFingerprint: getKeyFingerprint(exportedKey) },
+          admins: [{ id: '777', displayName: 'Jane', username: 'jane' }],
+          publicUrl: 'https://tg-feed.example.com',
+        },
+      },
+    };
+    const app = await buildTestApp({ getEncryptionKey: () => localKey });
+    const localCookie = await app.loginAndGetCookie();
+    try {
+      const res = await app.app.inject({
+        method: 'POST',
+        url: '/api/system/import',
+        headers: { cookie: localCookie },
+        payload: { sections: ['appSettings'], conflictStrategy: 'replace', data },
+      });
+      expect(res.statusCode).toBe(200);
+      const result = res.json() as ImportResult;
+      expect(result.warnings.some((w) => w.kind === 'bot_token_key_mismatch')).toBe(true);
+      const stored = readBotConfigRaw(app.db);
+      expect(stored.token).toBeUndefined();
+      expect(stored.admins).toEqual([{ id: '777', displayName: 'Jane', username: 'jane' }]);
+      expect(stored.publicUrl).toBe('https://tg-feed.example.com');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('POST /api/system/import warns on bot token when no key is configured but keeps admins', async () => {
+    const key = randomBytes(32);
+    const data: ExportFile = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: '2026-05-10T00:00:00.000Z',
+      appVersion: '0.1.0',
+      appSettings: {
+        delayMs: 8000,
+        albumDebounceMs: 2000,
+        bot: {
+          token: { ciphertext: 'CIPHER', keyFingerprint: getKeyFingerprint(key) },
+          admins: [{ id: '777', displayName: 'Jane', username: 'jane' }],
+        },
+      },
+    };
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/import',
+      headers: { cookie },
+      payload: { sections: ['appSettings'], conflictStrategy: 'replace', data },
+    });
+    expect(res.statusCode).toBe(200);
+    const result = res.json() as ImportResult;
+    expect(result.warnings.some((w) => w.kind === 'bot_token_no_key')).toBe(true);
+    const stored = readBotConfigRaw(testApp.db);
+    expect(stored.token).toBeUndefined();
+    expect(stored.admins).toEqual([{ id: '777', displayName: 'Jane', username: 'jane' }]);
+  });
+
+  it('POST /api/system/import skip preserves existing bot config', async () => {
+    testApp.db
+      .insert(appSettings)
+      .values({
+        key: BOT_SETTINGS_KEY,
+        value: { admins: [{ id: '111', displayName: 'Old', username: 'old' }] },
+      })
+      .run();
+    const data: ExportFile = {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: '2026-05-10T00:00:00.000Z',
+      appVersion: '0.1.0',
+      appSettings: {
+        delayMs: 8000,
+        albumDebounceMs: 2000,
+        bot: { admins: [{ id: '777', displayName: 'Jane', username: 'jane' }] },
+      },
+    };
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/system/import',
+      headers: { cookie },
+      payload: { sections: ['appSettings'], conflictStrategy: 'skip', data },
+    });
+    expect(res.statusCode).toBe(200);
+    const stored = readBotConfigRaw(testApp.db);
+    expect(stored.admins).toEqual([{ id: '111', displayName: 'Old', username: 'old' }]);
   });
 
   it('POST /api/system/wipe is idempotent', async () => {

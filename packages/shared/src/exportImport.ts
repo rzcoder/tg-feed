@@ -6,6 +6,7 @@ import {
   statsDigestTimeSchema,
   statsDigestTimezoneSchema,
 } from './api.js';
+import { botAdminSchema } from './botConfig.js';
 import {
   filterModeSchema,
   hasMediaParamsSchema,
@@ -150,10 +151,21 @@ export const exportedTelegramAccountSchema = z.object({
 });
 export type ExportedTelegramAccount = z.infer<typeof exportedTelegramAccountSchema>;
 
+// Bot config (app_settings['bot']) travels under appSettings, like telegramAccount. The token is
+// its stored encrypted envelope; the importer restores it only when the host's key fingerprint
+// matches, while admins/publicUrl carry no secret and always import.
+export const exportedBotConfigSchema = z.object({
+  token: z.object({ ciphertext: z.string().min(1), keyFingerprint: z.string().min(1) }).optional(),
+  admins: z.array(botAdminSchema).max(50).optional(),
+  publicUrl: z.string().url().optional(),
+});
+export type ExportedBotConfig = z.infer<typeof exportedBotConfigSchema>;
+
 export const exportedAppSettingsSchema = z.object({
   delayMs: z.number().int().positive(),
   albumDebounceMs: z.number().int().positive(),
   telegramAccount: exportedTelegramAccountSchema.optional(),
+  bot: exportedBotConfigSchema.optional(),
   // stats-digest schedule; importer merges only present fields onto the global row
   statsDigestEnabled: z.boolean().optional(),
   statsDigestFrequency: statsDigestFrequencySchema.optional(),
@@ -218,6 +230,8 @@ export const importWarningSchema = z.object({
     'subscription_skipped',
     'telegram_account_no_key',
     'telegram_account_key_mismatch',
+    'bot_token_no_key',
+    'bot_token_key_mismatch',
   ]),
   message: z.string(),
 });
