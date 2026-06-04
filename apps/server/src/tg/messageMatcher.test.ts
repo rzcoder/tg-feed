@@ -28,6 +28,8 @@ const event: MatchableEvent = {
   messageId: '42',
   text: '',
   hasMedia: false,
+  entityTexts: [],
+  links: [],
 };
 
 describe('matchSubscriptions', () => {
@@ -142,5 +144,40 @@ describe('extractMatchableEvent', () => {
       }) as never,
     );
     expect(matched?.senderUsername).toBeUndefined();
+  });
+
+  it('extracts entity texts and links from message entities', () => {
+    const matched = extractMatchableEvent(
+      fakeEvent({
+        className: 'Message',
+        id: 12,
+        chatId: '-1001234567890',
+        // "see docs" is a hidden hyperlink; "https://t.me/x" is an auto-detected URL in the body.
+        message: 'see docs https://t.me/x',
+        entities: [
+          { className: 'MessageEntityTextUrl', offset: 4, length: 4, url: 'https://example.com' },
+          { className: 'MessageEntityUrl', offset: 9, length: 14 },
+          { className: 'MessageEntityBold', offset: 0, length: 3 },
+        ],
+      }) as never,
+    );
+    expect(matched?.entityTexts).toEqual(['https://example.com']);
+    expect(matched?.links).toEqual([
+      { url: 'https://example.com', source: 'entity' },
+      { url: 'https://t.me/x', source: 'text' },
+    ]);
+  });
+
+  it('defaults entityTexts and links to empty arrays when there are no entities', () => {
+    const matched = extractMatchableEvent(
+      fakeEvent({
+        className: 'Message',
+        id: 13,
+        chatId: '-1001234567890',
+        message: 'plain',
+      }) as never,
+    );
+    expect(matched?.entityTexts).toEqual([]);
+    expect(matched?.links).toEqual([]);
   });
 });

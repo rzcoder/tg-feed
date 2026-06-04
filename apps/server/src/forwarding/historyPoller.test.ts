@@ -57,6 +57,7 @@ interface MockMessage {
   message?: string;
   media?: unknown;
   groupedId?: { toString: () => string } | null;
+  fromId?: { className: string; userId: { toString: () => string } };
 }
 
 function makeClient(
@@ -145,6 +146,49 @@ describe('createHistoryPoller', () => {
     await poller.poll();
 
     expect(s.enqueued.map((j) => j.sourceMessageId)).toEqual(['51', '52', '53']);
+  });
+
+  it('resolves senderUsername (lowercased) from the response users[]', async () => {
+    s.dbHandle.db
+      .insert(forwardLog)
+      .values({ subscriptionId: s.subId, sourceMessageId: '50', status: 'sent' })
+      .run();
+
+    const client = makeClient(() => ({
+      messages: [msg(51, { fromId: { className: 'PeerUser', userId: { toString: () => '777' } } })],
+      users: [{ className: 'User', id: { toString: () => '777' }, username: 'AliceCoder' }],
+    }));
+    const poller = createHistoryPoller({
+      client,
+      db: s.dbHandle.db,
+      logger,
+      forwarding: s.forwarding,
+    });
+
+    await poller.poll();
+
+    expect(s.enqueued).toHaveLength(1);
+    expect(s.enqueued[0]!.senderUsername).toBe('alicecoder');
+  });
+
+  it('leaves senderUsername undefined for channel posts without a PeerUser sender', async () => {
+    s.dbHandle.db
+      .insert(forwardLog)
+      .values({ subscriptionId: s.subId, sourceMessageId: '50', status: 'sent' })
+      .run();
+
+    const client = makeClient(() => ({ messages: [msg(51)] }));
+    const poller = createHistoryPoller({
+      client,
+      db: s.dbHandle.db,
+      logger,
+      forwarding: s.forwarding,
+    });
+
+    await poller.poll();
+
+    expect(s.enqueued).toHaveLength(1);
+    expect(s.enqueued[0]!.senderUsername).toBeUndefined();
   });
 
   it('dedupes against existing forward_log rows (skips already-processed ids)', async () => {

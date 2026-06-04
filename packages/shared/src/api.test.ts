@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createLibraryFilterRequestSchema,
   createSubscriptionFilterRequestSchema,
   createSubscriptionRequestSchema,
   forwardLogQuerySchema,
+  inlineFilterInputSchema,
   isValidTimeZone,
   loginRequestSchema,
   settingsDtoSchema,
@@ -10,6 +12,24 @@ import {
   updateSubscriptionFilterRequestSchema,
   updateSubscriptionRequestSchema,
 } from './api.js';
+import { FILTER_RULE_TYPES } from './filters.js';
+
+// Guards against forgetting a branch when a rule type is added: the hand-listed discriminated unions
+// must stay in lockstep with FILTER_RULE_TYPES.
+const coveredRuleTypes = (union: { options: readonly unknown[] }): string[] =>
+  union.options.map((o) => (o as { shape: { ruleType: { value: string } } }).shape.ruleType.value);
+
+describe('filter input unions', () => {
+  it('inlineFilterInputSchema has a branch for every rule type', () => {
+    expect(coveredRuleTypes(inlineFilterInputSchema).sort()).toEqual([...FILTER_RULE_TYPES].sort());
+  });
+
+  it('createLibraryFilterRequestSchema has a branch for every rule type', () => {
+    expect(coveredRuleTypes(createLibraryFilterRequestSchema).sort()).toEqual(
+      [...FILTER_RULE_TYPES].sort(),
+    );
+  });
+});
 
 describe('loginRequestSchema', () => {
   it('accepts a non-empty password', () => {

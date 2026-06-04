@@ -1,4 +1,5 @@
 // RawForwardJob = one per NewMessage; the album debouncer collapses raw jobs sharing a groupedId into one ForwardJob (singles become 1-element arrays).
+import type { MessageLink } from '../filters/types.js';
 
 export interface RawForwardJob {
   subscriptionId: number;
@@ -12,6 +13,9 @@ export interface RawForwardJob {
   text: string;
   hasMedia: boolean;
   senderUsername?: string;
+  // Entity-derived, extracted at ingestion (not from rawMessage, which can be truncated): see filters/types MessageContext.
+  entityTexts?: string[];
+  links?: MessageLink[];
   // JSON-safe snapshot (via toJsonSafe); null when capture was skipped or over the size cap.
   rawMessage?: unknown;
 }

@@ -6,6 +6,7 @@ import {
   filterModeSchema,
   filterRuleParamsSchemas,
   hasMediaParamsSchema,
+  linkPrefixParamsSchema,
   minLengthParamsSchema,
   senderAllowlistParamsSchema,
   textContainsParamsSchema,
@@ -225,6 +226,12 @@ export const inlineFilterInputSchema = z.discriminatedUnion('ruleType', [
     enabled: z.boolean().optional(),
     mode: filterModeSchema.optional(),
   }),
+  z.object({
+    ruleType: z.literal('link-prefix'),
+    params: linkPrefixParamsSchema,
+    enabled: z.boolean().optional(),
+    mode: filterModeSchema.optional(),
+  }),
 ]);
 export type InlineFilterInput = z.infer<typeof inlineFilterInputSchema>;
 
@@ -373,6 +380,12 @@ export const createLibraryFilterRequestSchema = z.discriminatedUnion('ruleType',
     name: z.string().min(1).max(80),
     ruleType: z.literal('sender-allowlist'),
     params: senderAllowlistParamsSchema,
+    mode: filterModeSchema.optional(),
+  }),
+  z.object({
+    name: z.string().min(1).max(80),
+    ruleType: z.literal('link-prefix'),
+    params: linkPrefixParamsSchema,
     mode: filterModeSchema.optional(),
   }),
 ]);

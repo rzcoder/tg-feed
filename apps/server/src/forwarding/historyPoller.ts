@@ -7,6 +7,7 @@ import { destinations, forwardLog, subscriptions } from '../db/schema.js';
 import { toJsonSafe } from '../lib/jsonSafe.js';
 import type { Logger } from '../lib/logger.js';
 import { createPoller } from '../lib/poller.js';
+import { extractMessageEntities, type MessageEntityLike } from '../tg/entities.js';
 import { extractRateLimit } from './floodwait.js';
 import type { RawForwardingHandle, RawForwardJob } from './types.js';
 
@@ -38,13 +39,50 @@ interface SubRow {
   destinationTopicId: string | null;
 }
 
+interface RawPeer {
+  className?: string;
+  userId?: { toString: () => string };
+}
+
+interface RawUser {
+  className?: string;
+  id?: { toString: () => string };
+  username?: string;
+}
+
 interface RawMessage {
   id?: number;
   className?: string;
   message?: string;
   media?: unknown;
   groupedId?: { toString: () => string } | null;
-  fromId?: unknown;
+  fromId?: RawPeer | null;
+  entities?: MessageEntityLike[];
+}
+
+// GetHistory returns sender identity only via the response's users[]; build id→username (lowercased, like the live path).
+function buildSenderMap(users: readonly RawUser[] | undefined): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const u of users ?? []) {
+    if (
+      u.className === 'User' &&
+      u.id != null &&
+      typeof u.username === 'string' &&
+      u.username.length > 0
+    ) {
+      map.set(String(u.id), u.username.toLowerCase());
+    }
+  }
+  return map;
+}
+
+function resolveSenderUsername(
+  msg: RawMessage,
+  senderMap: Map<string, string>,
+): string | undefined {
+  const from = msg.fromId;
+  if (!from || from.className !== 'PeerUser' || from.userId == null) return undefined;
+  return senderMap.get(String(from.userId));
 }
 
 export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
@@ -144,7 +182,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
     const since = lastSeen.get(sub.id);
     if (since === undefined) return;
 
-    let result: { messages?: RawMessage[] };
+    let result: { messages?: RawMessage[]; users?: RawUser[] };
     try {
       result = (await client.invoke(
         new Api.messages.GetHistory({
@@ -152,7 +190,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
           minId: since,
           limit: POLL_BATCH_LIMIT,
         }),
-      )) as { messages?: RawMessage[] };
+      )) as { messages?: RawMessage[]; users?: RawUser[] };
     } catch (err) {
       const rl = extractRateLimit(err);
       if (rl) {
@@ -173,6 +211,7 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
     if (messages.length === 0) return;
     // Telegram returns descending; forward ascending so destination order matches source.
     messages.sort((a, b) => a.id - b.id);
+    const senderMap = buildSenderMap(result.users);
 
     let enqueued = 0;
     let skippedDupes = 0;
@@ -188,18 +227,24 @@ export function createHistoryPoller(deps: HistoryPollerDeps): HistoryPoller {
         if (msg.id > highest) highest = msg.id;
         continue;
       }
+      const text = typeof msg.message === 'string' ? msg.message : '';
+      const { entityTexts, links } = extractMessageEntities(text, msg.entities);
+      const senderUsername = resolveSenderUsername(msg, senderMap);
       const job: RawForwardJob = {
         subscriptionId: sub.id,
         sourceChatId: sub.sourceChatId,
         destinationChatId: sub.destinationChatId,
         destinationTopicId: sub.destinationTopicId,
         sourceMessageId,
-        text: typeof msg.message === 'string' ? msg.message : '',
+        text,
         hasMedia: msg.media != null,
+        entityTexts,
+        links,
         rawMessage: toJsonSafe(msg),
         ...(msg.groupedId
           ? { groupedId: (msg.groupedId as { toString(): string }).toString() }
           : {}),
+        ...(senderUsername !== undefined ? { senderUsername } : {}),
       };
       forwarding.enqueue(job);
       enqueued++;

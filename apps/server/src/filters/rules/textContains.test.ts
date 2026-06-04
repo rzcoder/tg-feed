@@ -14,6 +14,7 @@ describe('textContainsRule', () => {
       textContainsRule.evaluate(ctx({ text: 'Rust is great' }), {
         value: 'rust',
         caseInsensitive: true,
+        includeEntities: false,
       }),
     ).toEqual({ pass: true });
   });
@@ -22,6 +23,7 @@ describe('textContainsRule', () => {
     const result = textContainsRule.evaluate(ctx({ text: 'Rust' }), {
       value: 'rust',
       caseInsensitive: false,
+      includeEntities: false,
     });
     expect(result.pass).toBe(false);
     expect(result.reason).toContain('rust');
@@ -32,6 +34,7 @@ describe('textContainsRule', () => {
       textContainsRule.evaluate(ctx({ text: 'Rust' }), {
         value: 'Rust',
         caseInsensitive: false,
+        includeEntities: false,
       }),
     ).toEqual({ pass: true });
   });
@@ -40,6 +43,34 @@ describe('textContainsRule', () => {
     const result = textContainsRule.evaluate(ctx({ text: '' }), {
       value: 'foo',
       caseInsensitive: true,
+      includeEntities: false,
+    });
+    expect(result.pass).toBe(false);
+  });
+
+  it('does NOT match entity text when includeEntities is off (default behavior)', () => {
+    const result = textContainsRule.evaluate(
+      ctx({ text: 'click here', entityTexts: ['https://example.com'] }),
+      { value: 'example.com', caseInsensitive: true, includeEntities: false },
+    );
+    expect(result.pass).toBe(false);
+  });
+
+  it('matches hidden entity text when includeEntities is on', () => {
+    expect(
+      textContainsRule.evaluate(ctx({ text: 'click here', entityTexts: ['https://example.com'] }), {
+        value: 'example.com',
+        caseInsensitive: true,
+        includeEntities: true,
+      }),
+    ).toEqual({ pass: true });
+  });
+
+  it('includeEntities with no entity texts behaves like body-only (no throw)', () => {
+    const result = textContainsRule.evaluate(ctx({ text: 'plain body' }), {
+      value: 'missing',
+      caseInsensitive: true,
+      includeEntities: true,
     });
     expect(result.pass).toBe(false);
   });

@@ -36,10 +36,7 @@ export function createAlbumDebouncer(deps: AlbumDebouncerDeps): AlbumDebouncer {
     const captionMember = pickCaptionBearingMember(group.jobs);
     // Aligned 1:1 with sourceMessageIds; stored on every album row so any row can stand alone.
     const albumRawMessage = collectAlbumRawMessages(group.jobs, sourceMessageIds);
-    const context: MessageContext = {
-      ...toContext(captionMember),
-      rawMessage: albumRawMessage,
-    };
+    const context = albumContext(group.jobs, captionMember, albumRawMessage);
 
     const { pass } = filterEvaluator.evaluate(context, first.subscriptionId, sourceMessageIds);
     if (!pass) return;
@@ -110,12 +107,39 @@ function dedupeAndSort(ids: string[]): string[] {
   return [...new Set(ids)].sort((a, b) => Number(a) - Number(b));
 }
 
+// Album context: text/hasMedia/sender come from the caption-bearing member (where Telegram puts the album's
+// caption + its entities), while links, entity text, and media count are aggregated across every member so a
+// link/entity filter sees links from non-caption members too.
+function albumContext(
+  jobs: readonly RawForwardJob[],
+  captionMember: RawForwardJob,
+  rawMessage: unknown,
+): MessageContext {
+  const links = jobs.flatMap((j) => j.links ?? []);
+  const entityTexts = jobs.flatMap((j) => j.entityTexts ?? []);
+  const mediaCount = new Set(jobs.filter((j) => j.hasMedia).map((j) => j.sourceMessageId)).size;
+  return {
+    text: captionMember.text,
+    hasMedia: captionMember.hasMedia,
+    mediaCount,
+    links,
+    entityTexts,
+    rawMessage,
+    ...(captionMember.senderUsername !== undefined
+      ? { senderUsername: captionMember.senderUsername }
+      : {}),
+  };
+}
+
 function toContext(job: RawForwardJob): MessageContext {
   return {
     text: job.text,
     hasMedia: job.hasMedia,
+    mediaCount: job.hasMedia ? 1 : 0,
     rawMessage: job.rawMessage ?? null,
     ...(job.senderUsername !== undefined ? { senderUsername: job.senderUsername } : {}),
+    ...(job.entityTexts !== undefined ? { entityTexts: job.entityTexts } : {}),
+    ...(job.links !== undefined ? { links: job.links } : {}),
   };
 }
 

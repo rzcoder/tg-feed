@@ -33,7 +33,7 @@ describe('GET /api/filters/catalog', () => {
     await testApp.close();
   });
 
-  it('returns all 6 v1 rules with type and label', async () => {
+  it('returns every rule type with type and label', async () => {
     const res = await testApp.app.inject({
       method: 'GET',
       url: '/api/filters/catalog',
@@ -41,7 +41,7 @@ describe('GET /api/filters/catalog', () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { items: { type: string; label: string }[] };
-    expect(body.items).toHaveLength(6);
+    expect(body.items).toHaveLength(FILTER_RULE_TYPES.length);
     const types = body.items.map((i) => i.type).sort();
     expect(types).toEqual([...FILTER_RULE_TYPES].sort());
     for (const item of body.items) {
@@ -108,6 +108,22 @@ describe('subscription filter routes', () => {
     expect(body.ruleType).toBe('text-contains');
     expect(body.params).toMatchObject({ value: 'hello', caseInsensitive: true });
     expect(body.enabled).toBe(true);
+  });
+
+  it('POST filter accepts an inline link-prefix body', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: `/api/subscriptions/${sub.id}/filters`,
+      headers: { cookie },
+      payload: {
+        ruleType: 'link-prefix',
+        params: { value: 't.me/', scope: 'entity' },
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as FilterDtoLike;
+    expect(body.ruleType).toBe('link-prefix');
+    expect(body.params).toMatchObject({ value: 't.me/', scope: 'entity' });
   });
 
   it('POST filter rejects text-contains with missing value', async () => {

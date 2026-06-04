@@ -70,6 +70,8 @@ export function attachNewMessageListener(
         sourceMessageId: matchable.messageId,
         text: matchable.text,
         hasMedia: matchable.hasMedia,
+        entityTexts: matchable.entityTexts,
+        links: matchable.links,
         rawMessage,
         ...(matchable.groupedId !== undefined ? { groupedId: matchable.groupedId } : {}),
         ...(matchable.senderUsername !== undefined

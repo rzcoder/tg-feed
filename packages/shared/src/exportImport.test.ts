@@ -3,10 +3,31 @@ import {
   EXPORT_SCHEMA_VERSION,
   exportFileSchema,
   exportRequestSchema,
+  exportedInlineFilterSchema,
+  exportedLibraryFilterSchema,
   exportedSubscriptionSchema,
   importRequestSchema,
   wipeRequestSchema,
 } from './exportImport.js';
+import { FILTER_RULE_TYPES } from './filters.js';
+
+// Export/import drops or rejects any rule type missing from these hand-listed unions; keep them in lockstep.
+const coveredRuleTypes = (union: { options: readonly unknown[] }): string[] =>
+  union.options.map((o) => (o as { shape: { ruleType: { value: string } } }).shape.ruleType.value);
+
+describe('exported filter unions', () => {
+  it('exportedInlineFilterSchema has a branch for every rule type', () => {
+    expect(coveredRuleTypes(exportedInlineFilterSchema).sort()).toEqual(
+      [...FILTER_RULE_TYPES].sort(),
+    );
+  });
+
+  it('exportedLibraryFilterSchema has a branch for every rule type', () => {
+    expect(coveredRuleTypes(exportedLibraryFilterSchema).sort()).toEqual(
+      [...FILTER_RULE_TYPES].sort(),
+    );
+  });
+});
 
 describe('exportFileSchema', () => {
   const minimalEnvelope = {

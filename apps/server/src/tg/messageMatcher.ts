@@ -1,5 +1,7 @@
 import type { NewMessageEvent } from 'telegram/events/index.js';
 import type { Subscription } from '../db/schema.js';
+import type { MessageLink } from '../filters/types.js';
+import { extractMessageEntities, type MessageEntityLike } from './entities.js';
 
 // Subscription row plus the JOIN-resolved destination chat/topic.
 export type ResolvedSubscription = Subscription & {
@@ -14,6 +16,8 @@ export interface MatchableEvent {
   text: string; // empty string for media-only messages
   hasMedia: boolean;
   senderUsername?: string; // lowercased, no '@'; undefined for anonymous channel posts
+  entityTexts: string[]; // hidden hyperlink targets + code-block languages
+  links: MessageLink[];
 }
 
 export function extractMatchableEvent(event: NewMessageEvent): MatchableEvent | null {
@@ -25,11 +29,17 @@ export function extractMatchableEvent(event: NewMessageEvent): MatchableEvent | 
   const text = typeof message.message === 'string' ? message.message : '';
   const hasMedia = message.media != null;
   const senderUsername = extractSenderUsername(message);
+  const { entityTexts, links } = extractMessageEntities(
+    text,
+    message.entities as MessageEntityLike[] | undefined,
+  );
   return {
     chatId: chatId.toString(),
     messageId: message.id.toString(),
     text,
     hasMedia,
+    entityTexts,
+    links,
     ...(groupedId !== undefined ? { groupedId } : {}),
     ...(senderUsername !== undefined ? { senderUsername } : {}),
   };

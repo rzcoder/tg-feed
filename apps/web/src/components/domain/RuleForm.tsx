@@ -63,6 +63,12 @@ export function RuleForm({
             value={params.caseInsensitive !== false}
             onChange={(v) => setParams({ ...params, caseInsensitive: v })}
           />
+          <ToggleRow
+            label="Also match link URLs"
+            description="Search hidden hyperlink targets (and code-block tags), not just the visible text."
+            value={params.includeEntities === true}
+            onChange={(v) => setParams({ ...params, includeEntities: v })}
+          />
         </>
       )}
 
@@ -89,6 +95,12 @@ export function RuleForm({
               monospace
             />
           </div>
+          <ToggleRow
+            label="Also match link URLs"
+            description="Run the pattern against hidden hyperlink targets (and code-block tags) too."
+            value={params.includeEntities === true}
+            onChange={(v) => setParams({ ...params, includeEntities: v })}
+          />
         </>
       )}
 
@@ -109,42 +121,118 @@ export function RuleForm({
       )}
 
       {type === 'has-media' && (
-        <div className="flex flex-col gap-2">
-          <Label>Match when…</Label>
-          {[
-            { v: true, l: 'Message has media' },
-            { v: false, l: 'Message has NO media' },
-          ].map((o) => {
-            // undefined defaults to required (has media).
-            const current = params.required !== false;
-            const isThis = current === o.v;
-            return (
-              <button
-                key={String(o.v)}
-                type="button"
-                onClick={() => setParams({ ...params, required: o.v })}
-                className={cn(
-                  'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left text-[13.5px]',
-                  isThis
-                    ? 'bg-accent-soft border border-accent'
-                    : 'bg-surface border border-border hover:bg-surface-2',
-                )}
-              >
-                <span
-                  className={cn(
-                    'w-4 h-4 rounded-full border-[1.5px] flex-shrink-0',
-                    isThis ? 'border-accent bg-accent' : 'border-border-strong',
-                  )}
-                />
-                {o.l}
-              </button>
-            );
-          })}
-        </div>
+        <>
+          <RadioList
+            label="Match when…"
+            options={[
+              { value: 'yes', label: 'Message has media' },
+              { value: 'no', label: 'Message has NO media' },
+            ]}
+            value={params.required !== false ? 'yes' : 'no'}
+            onChange={(v) => {
+              // "No media" can't carry a count comparison; drop a stale one so the draft stays valid.
+              const next = { ...params };
+              next.required = v === 'yes';
+              if (v === 'no') {
+                delete next.countOp;
+                delete next.count;
+              }
+              setParams(next);
+            }}
+          />
+
+          {params.required !== false && (
+            <>
+              <ToggleRow
+                label="Filter by media count"
+                description="An album counts as its number of items; a single media message counts as 1."
+                value={params.countOp !== undefined}
+                onChange={(v) => {
+                  const next = { ...params };
+                  if (v) {
+                    next.countOp = (params.countOp as string) ?? 'gt';
+                    next.count = (params.count as number) ?? 2;
+                  } else {
+                    delete next.countOp;
+                    delete next.count;
+                  }
+                  setParams(next);
+                }}
+              />
+              {params.countOp !== undefined && (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <SegmentedControl
+                      options={[
+                        { value: 'gt', label: 'More than' },
+                        { value: 'lt', label: 'Fewer than' },
+                      ]}
+                      value={(params.countOp as string) ?? 'gt'}
+                      onChange={(v) => setParams({ ...params, countOp: v })}
+                    />
+                  </div>
+                  <div className="w-24">
+                    <Input
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={100}
+                      aria-label="Media count threshold"
+                      value={params.count === undefined ? '' : String(params.count)}
+                      onChange={(e) => {
+                        // Allow a transient empty field (draft just goes invalid) instead of snapping to 1.
+                        const raw = e.target.value.trim();
+                        const next = { ...params };
+                        if (raw === '') {
+                          delete next.count;
+                        } else {
+                          const n = parseInt(raw, 10);
+                          if (Number.isFinite(n)) next.count = n;
+                        }
+                        setParams(next);
+                      }}
+                      monospace
+                    />
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
 
       {type === 'sender-allowlist' && (
         <SenderAllowlistInput params={params} setParams={setParams} />
+      )}
+
+      {type === 'link-prefix' && (
+        <>
+          <div>
+            <Label htmlFor="filter-link">Link starts with</Label>
+            <Input
+              id="filter-link"
+              value={(params.value as string) ?? ''}
+              onChange={(e) => setParams({ ...params, value: e.target.value })}
+              placeholder="t.me/  or  https://t.me/"
+              monospace
+              autoFocus={!showName}
+            />
+            <Hint>
+              Include a protocol (https://) to require it; omit it to match any protocol. A leading
+              www. is ignored.
+            </Hint>
+          </div>
+          <RadioList
+            label="Look in…"
+            options={[
+              { value: 'both', label: 'Anywhere' },
+              { value: 'text', label: 'Visible message text' },
+              { value: 'entity', label: 'Hidden hyperlink targets' },
+            ]}
+            value={(params.scope as string) ?? 'both'}
+            onChange={(v) => setParams({ ...params, scope: v })}
+          />
+        </>
       )}
     </>
   );
@@ -156,33 +244,100 @@ interface ModeToggleProps {
 }
 
 function ModeToggle({ value, onChange }: ModeToggleProps) {
-  const options: { v: FilterMode; l: string; d: string }[] = [
-    { v: 'include', l: 'Include', d: 'Forward only when this rule matches.' },
-    { v: 'exclude', l: 'Exclude', d: 'Drop the message when this rule matches.' },
+  const options = [
+    { value: 'include', label: 'Include', hint: 'Forward only when this rule matches.' },
+    { value: 'exclude', label: 'Exclude', hint: 'Drop the message when this rule matches.' },
   ];
   return (
     <div className="flex flex-col gap-1.5">
       <Label className="mb-0">Mode</Label>
-      <div className="flex border border-border rounded-lg overflow-hidden bg-bg">
-        {options.map((o) => {
-          const active = value === o.v;
-          return (
-            <button
-              key={o.v}
-              type="button"
-              onClick={() => onChange(o.v)}
+      <SegmentedControl
+        options={options}
+        value={value}
+        onChange={(v) => onChange(v as FilterMode)}
+      />
+      <Hint>{options.find((o) => o.value === value)?.hint}</Hint>
+    </div>
+  );
+}
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+// Vertical single-select list with a radio dot (has-media presence, link-prefix scope).
+function RadioList({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label?: string;
+  options: SelectOption[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      {label !== undefined && <Label>{label}</Label>}
+      {options.map((o) => {
+        const isThis = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            className={cn(
+              'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left text-[13.5px]',
+              isThis
+                ? 'bg-accent-soft border border-accent'
+                : 'bg-surface border border-border hover:bg-surface-2',
+            )}
+          >
+            <span
               className={cn(
-                'flex-1 px-3 py-2 text-[12.5px] font-medium tracking-tight transition-colors',
-                active ? 'bg-accent text-accent-fg' : 'bg-bg text-text-muted hover:bg-surface-2',
+                'w-4 h-4 rounded-full border-[1.5px] flex-shrink-0',
+                isThis ? 'border-accent bg-accent' : 'border-border-strong',
               )}
-              aria-pressed={active}
-            >
-              {o.l}
-            </button>
-          );
-        })}
-      </div>
-      <Hint>{options.find((o) => o.v === value)?.d}</Hint>
+            />
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Horizontal pill strip (mode toggle, media-count operator).
+function SegmentedControl({
+  options,
+  value,
+  onChange,
+}: {
+  options: SelectOption[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div className="flex border border-border rounded-lg overflow-hidden bg-bg">
+      {options.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            className={cn(
+              'flex-1 px-3 py-2 text-[12.5px] font-medium tracking-tight transition-colors',
+              active ? 'bg-accent text-accent-fg' : 'bg-bg text-text-muted hover:bg-surface-2',
+            )}
+            aria-pressed={active}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

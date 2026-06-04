@@ -41,4 +41,34 @@ describe('describeFilter', () => {
       expect(describeFilter(input)).toBe(expected);
     }
   });
+
+  it('formats link-prefix with a friendly scope label when not "both"', () => {
+    expect(
+      describeFilter({ ruleType: 'link-prefix', params: { value: 't.me/', scope: 'entity' } }),
+    ).toBe('link starts with "t.me/" in link targets');
+  });
+
+  it('omits the scope suffix for link-prefix when scope is "both"', () => {
+    expect(
+      describeFilter({ ruleType: 'link-prefix', params: { value: 't.me/', scope: 'both' } }),
+    ).toBe('link starts with "t.me/"');
+  });
+
+  it('appends "+ links" when a text filter opts into entities', () => {
+    expect(
+      describeFilter({
+        ruleType: 'text-contains',
+        params: { value: 'rust', caseInsensitive: true, includeEntities: true },
+      }),
+    ).toBe('contains "rust" (case-insensitive) + links');
+  });
+
+  it('describes a has-media count comparison', () => {
+    expect(
+      describeFilter({
+        ruleType: 'has-media',
+        params: { required: true, countOp: 'gt', count: 3 },
+      }),
+    ).toBe('must have media (count > 3)');
+  });
 });

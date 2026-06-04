@@ -129,7 +129,7 @@ describe('db schema', () => {
         .values({ sourceChatId: 's', sourceTitle: 't', destinationId: destId })
         .returning()
         .all();
-      const params = { value: 'foo', caseInsensitive: true } as const;
+      const params = { value: 'foo', caseInsensitive: true, includeEntities: false } as const;
       const [filter] = db
         .insert(subscriptionFilters)
         .values({

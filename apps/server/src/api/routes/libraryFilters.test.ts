@@ -46,6 +46,23 @@ describe('library filter routes', () => {
     expect(body.params).toMatchObject({ value: '#реклама', caseInsensitive: true });
   });
 
+  it('POST /api/library-filters accepts a link-prefix filter (rule_type CHECK allows it)', async () => {
+    const res = await testApp.app.inject({
+      method: 'POST',
+      url: '/api/library-filters',
+      headers: { cookie },
+      payload: {
+        name: 'Only t.me',
+        ruleType: 'link-prefix',
+        params: { value: 'https://t.me/', scope: 'both' },
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as LibraryFilterDto;
+    expect(body).toMatchObject({ name: 'Only t.me', ruleType: 'link-prefix', usageCount: 0 });
+    expect(body.params).toMatchObject({ value: 'https://t.me/', scope: 'both' });
+  });
+
   it('POST /api/library-filters rejects empty name', async () => {
     const res = await testApp.app.inject({
       method: 'POST',
@@ -94,7 +111,7 @@ describe('library filter routes', () => {
       .values({
         name: 'No promo',
         ruleType: 'text-excludes',
-        params: { value: '#promo', caseInsensitive: true },
+        params: { value: '#promo', caseInsensitive: true, includeEntities: false },
       })
       .returning({ id: libraryFilters.id })
       .all();

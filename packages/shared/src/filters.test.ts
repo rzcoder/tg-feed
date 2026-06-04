@@ -3,6 +3,7 @@ import {
   FILTER_RULE_TYPES,
   filterRuleParamsSchemas,
   hasMediaParamsSchema,
+  linkPrefixParamsSchema,
   minLengthParamsSchema,
   senderAllowlistParamsSchema,
   textContainsParamsSchema,
@@ -11,7 +12,7 @@ import {
 } from './filters.js';
 
 describe('FILTER_RULE_TYPES', () => {
-  it('lists exactly the six v1 rules', () => {
+  it('lists every rule type, link-prefix last', () => {
     expect([...FILTER_RULE_TYPES]).toEqual([
       'text-contains',
       'text-excludes',
@@ -19,6 +20,7 @@ describe('FILTER_RULE_TYPES', () => {
       'has-media',
       'min-length',
       'sender-allowlist',
+      'link-prefix',
     ]);
   });
 
@@ -30,16 +32,19 @@ describe('FILTER_RULE_TYPES', () => {
 });
 
 describe('textContainsParamsSchema', () => {
-  it('accepts value with caseInsensitive default', () => {
+  it('accepts value with caseInsensitive + includeEntities defaults', () => {
     const parsed = textContainsParamsSchema.parse({ value: 'foo' });
-    expect(parsed).toEqual({ value: 'foo', caseInsensitive: true });
+    expect(parsed).toEqual({ value: 'foo', caseInsensitive: true, includeEntities: false });
   });
 
-  it('accepts explicit caseInsensitive=false', () => {
-    expect(textContainsParamsSchema.parse({ value: 'foo', caseInsensitive: false })).toEqual({
-      value: 'foo',
-      caseInsensitive: false,
-    });
+  it('accepts explicit caseInsensitive=false and includeEntities=true', () => {
+    expect(
+      textContainsParamsSchema.parse({
+        value: 'foo',
+        caseInsensitive: false,
+        includeEntities: true,
+      }),
+    ).toEqual({ value: 'foo', caseInsensitive: false, includeEntities: true });
   });
 
   it('rejects empty value', () => {
@@ -52,10 +57,11 @@ describe('textContainsParamsSchema', () => {
 });
 
 describe('textExcludesParamsSchema', () => {
-  it('accepts value with caseInsensitive default', () => {
+  it('accepts value with defaults', () => {
     expect(textExcludesParamsSchema.parse({ value: 'spam' })).toEqual({
       value: 'spam',
       caseInsensitive: true,
+      includeEntities: false,
     });
   });
 
@@ -65,10 +71,11 @@ describe('textExcludesParamsSchema', () => {
 });
 
 describe('textRegexParamsSchema', () => {
-  it('accepts pattern with default empty flags', () => {
+  it('accepts pattern with default empty flags and includeEntities=false', () => {
     expect(textRegexParamsSchema.parse({ pattern: '^foo' })).toEqual({
       pattern: '^foo',
       flags: '',
+      includeEntities: false,
     });
   });
 
@@ -76,6 +83,7 @@ describe('textRegexParamsSchema', () => {
     expect(textRegexParamsSchema.parse({ pattern: '^foo', flags: 'i' })).toEqual({
       pattern: '^foo',
       flags: 'i',
+      includeEntities: false,
     });
   });
 
@@ -95,6 +103,40 @@ describe('hasMediaParamsSchema', () => {
 
   it('rejects non-boolean required', () => {
     expect(hasMediaParamsSchema.safeParse({ required: 'yes' }).success).toBe(false);
+  });
+
+  it('accepts a media-count comparison', () => {
+    expect(hasMediaParamsSchema.parse({ required: true, countOp: 'gt', count: 3 })).toEqual({
+      required: true,
+      countOp: 'gt',
+      count: 3,
+    });
+  });
+
+  it('rejects countOp without count and count without countOp', () => {
+    expect(hasMediaParamsSchema.safeParse({ required: true, countOp: 'gt' }).success).toBe(false);
+    expect(hasMediaParamsSchema.safeParse({ required: true, count: 3 }).success).toBe(false);
+  });
+
+  it('rejects a count comparison alongside required=false', () => {
+    expect(
+      hasMediaParamsSchema.safeParse({ required: false, countOp: 'lt', count: 2 }).success,
+    ).toBe(false);
+  });
+
+  it('rejects out-of-range or non-integer counts', () => {
+    expect(
+      hasMediaParamsSchema.safeParse({ required: true, countOp: 'gt', count: 0 }).success,
+    ).toBe(false);
+    expect(
+      hasMediaParamsSchema.safeParse({ required: true, countOp: 'gt', count: 2.5 }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an unknown countOp', () => {
+    expect(
+      hasMediaParamsSchema.safeParse({ required: true, countOp: 'eq', count: 2 }).success,
+    ).toBe(false);
   });
 });
 
@@ -126,5 +168,33 @@ describe('senderAllowlistParamsSchema', () => {
 
   it('rejects an empty username string', () => {
     expect(senderAllowlistParamsSchema.safeParse({ usernames: [''] }).success).toBe(false);
+  });
+});
+
+describe('linkPrefixParamsSchema', () => {
+  it('defaults scope to "both"', () => {
+    expect(linkPrefixParamsSchema.parse({ value: 't.me' })).toEqual({
+      value: 't.me',
+      scope: 'both',
+    });
+  });
+
+  it('accepts each scope literal', () => {
+    for (const scope of ['text', 'entity', 'both'] as const) {
+      expect(linkPrefixParamsSchema.parse({ value: 't.me', scope })).toEqual({
+        value: 't.me',
+        scope,
+      });
+    }
+  });
+
+  it('rejects empty value', () => {
+    expect(linkPrefixParamsSchema.safeParse({ value: '' }).success).toBe(false);
+  });
+
+  it('rejects an unknown scope', () => {
+    expect(linkPrefixParamsSchema.safeParse({ value: 't.me', scope: 'everywhere' }).success).toBe(
+      false,
+    );
   });
 });

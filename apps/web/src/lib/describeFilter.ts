@@ -1,4 +1,13 @@
-import { Ban, FileImage, Regex, Ruler, TextCursorInput, User, type LucideIcon } from 'lucide-react';
+import {
+  Ban,
+  FileImage,
+  Link2,
+  Regex,
+  Ruler,
+  TextCursorInput,
+  User,
+  type LucideIcon,
+} from 'lucide-react';
 import type { FilterMode, FilterRuleType } from '@tg-feed/shared';
 
 export interface FilterLike {
@@ -7,6 +16,15 @@ export interface FilterLike {
   mode?: FilterMode;
 }
 
+const entitiesSuffix = (p: Record<string, unknown>): string =>
+  p.includeEntities === true ? ' + links' : '';
+
+const LINK_SCOPE_LABELS: Record<string, string> = {
+  text: ' in text',
+  entity: ' in link targets',
+  both: '',
+};
+
 export function describeFilter(f: FilterLike): string {
   const p = f.params;
   const prefix = f.mode === 'exclude' ? 'Exclude: ' : '';
@@ -14,20 +32,30 @@ export function describeFilter(f: FilterLike): string {
     case 'text-contains': {
       const value = (p.value as string) ?? '';
       const caseInsensitive = p.caseInsensitive !== false;
-      return `${prefix}contains "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}`;
+      return `${prefix}contains "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}${entitiesSuffix(p)}`;
     }
     case 'text-excludes': {
       const value = (p.value as string) ?? '';
       const caseInsensitive = p.caseInsensitive !== false;
-      return `${prefix}excludes "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}`;
+      return `${prefix}excludes "${value}"${caseInsensitive ? ' (case-insensitive)' : ''}${entitiesSuffix(p)}`;
     }
     case 'text-regex': {
       const pattern = (p.pattern as string) ?? '';
       const flags = (p.flags as string) ?? '';
-      return `${prefix}/${pattern}/${flags}`;
+      return `${prefix}/${pattern}/${flags}${entitiesSuffix(p)}`;
+    }
+    case 'link-prefix': {
+      const value = (p.value as string) ?? '';
+      const scope = (p.scope as string) ?? 'both';
+      return `${prefix}link starts with "${value}"${LINK_SCOPE_LABELS[scope] ?? ''}`;
     }
     case 'has-media': {
-      return `${prefix}${p.required === false ? 'must NOT have media' : 'must have media'}`;
+      const base = p.required === false ? 'must NOT have media' : 'must have media';
+      if (p.countOp && p.count !== undefined) {
+        const sym = p.countOp === 'gt' ? '>' : '<';
+        return `${prefix}${base} (count ${sym} ${p.count})`;
+      }
+      return `${prefix}${base}`;
     }
     case 'min-length': {
       return `${prefix}min length ${p.min ?? 0}`;
@@ -75,6 +103,11 @@ export const FILTER_RULE_META: Record<FilterRuleType, FilterRuleMeta> = {
     label: 'Sender allowlist',
     description: 'Forward only when sender is on a small list.',
     icon: User,
+  },
+  'link-prefix': {
+    label: 'Link prefix',
+    description: 'Match links by how they start; protocol optional.',
+    icon: Link2,
   },
 };
 

@@ -1,6 +1,7 @@
 // Add a rule: drop a file here and add one register(...) line below.
 import { createRegistry, type FilterRegistry } from '../registry.js';
 import { hasMediaRule } from './hasMedia.js';
+import { linkPrefixRule } from './linkPrefix.js';
 import { minLengthRule } from './minLength.js';
 import { senderAllowlistRule } from './senderAllowlist.js';
 import { textContainsRule } from './textContains.js';
@@ -12,6 +13,7 @@ export function createDefaultRegistry(): FilterRegistry {
   registry.register(textContainsRule);
   registry.register(textExcludesRule);
   registry.register(textRegexRule);
+  registry.register(linkPrefixRule);
   registry.register(hasMediaRule);
   registry.register(minLengthRule);
   registry.register(senderAllowlistRule);

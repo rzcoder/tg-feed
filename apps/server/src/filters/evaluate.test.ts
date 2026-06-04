@@ -362,7 +362,7 @@ describe('createFilterEvaluator (with DB)', () => {
       .values({
         subscriptionId: subId,
         ruleType: 'text-contains',
-        params: { value: 'rust', caseInsensitive: true },
+        params: { value: 'rust', caseInsensitive: true, includeEntities: false },
       })
       .run();
     const evaluator = createFilterEvaluator({
@@ -377,13 +377,50 @@ describe('createFilterEvaluator (with DB)', () => {
     expect(db.select().from(forwardLog).all()).toHaveLength(0);
   });
 
+  it('link-prefix rule flows through DB → evaluator and reads context.links', () => {
+    db.insert(subscriptionFilters)
+      .values({
+        subscriptionId: subId,
+        ruleType: 'link-prefix',
+        params: { value: 't.me/joinchat', scope: 'both' },
+      })
+      .run();
+    const evaluator = createFilterEvaluator({
+      db,
+      registry: createDefaultRegistry(),
+      logger,
+      bus: makeStubBus(),
+    });
+
+    // Hidden hyperlink target matches the prefix protocol-agnostically.
+    expect(
+      evaluator.evaluate(
+        ctx({ text: 'join', links: [{ url: 'https://t.me/joinchat/abc', source: 'entity' }] }),
+        subId,
+        ['10'],
+      ).pass,
+    ).toBe(true);
+
+    // No matching link → rejected and logged.
+    expect(
+      evaluator.evaluate(
+        ctx({ text: 'hi', links: [{ url: 'https://example.com', source: 'text' }] }),
+        subId,
+        ['11'],
+      ).pass,
+    ).toBe(false);
+    const rows = db.select().from(forwardLog).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.error).toMatch(/^link-prefix:/);
+  });
+
   it('one rule fails → writes one filtered log row per source id with joined reasons', () => {
     db.insert(subscriptionFilters)
       .values([
         {
           subscriptionId: subId,
           ruleType: 'text-contains',
-          params: { value: 'rust', caseInsensitive: true },
+          params: { value: 'rust', caseInsensitive: true, includeEntities: false },
         },
         {
           subscriptionId: subId,
@@ -419,7 +456,7 @@ describe('createFilterEvaluator (with DB)', () => {
       .values({
         subscriptionId: subId,
         ruleType: 'text-contains',
-        params: { value: 'rust', caseInsensitive: true },
+        params: { value: 'rust', caseInsensitive: true, includeEntities: false },
         enabled: false,
       })
       .run();
@@ -446,7 +483,7 @@ describe('createFilterEvaluator (with DB)', () => {
         {
           subscriptionId: subId,
           ruleType: 'text-contains',
-          params: { value: 'rust', caseInsensitive: true },
+          params: { value: 'rust', caseInsensitive: true, includeEntities: false },
         },
       ])
       .run();
@@ -499,7 +536,7 @@ describe('createFilterEvaluator (with DB)', () => {
         .values({
           subscriptionId: subId,
           ruleType: 'text-contains',
-          params: { value: 'rust', caseInsensitive: true },
+          params: { value: 'rust', caseInsensitive: true, includeEntities: false },
         })
         .run();
       const bus = makeStubBus();

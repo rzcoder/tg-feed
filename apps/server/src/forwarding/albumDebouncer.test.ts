@@ -242,12 +242,59 @@ describe('createAlbumDebouncer', () => {
         context: {
           text: 'hello',
           hasMedia: true,
+          mediaCount: 1,
           senderUsername: 'alice',
           rawMessage: null,
         },
         subscriptionId: 42,
         sourceMessageIds: ['7'],
       });
+    });
+
+    it('reports album media count as the number of distinct media members', async () => {
+      const downstream = makeDownstream();
+      const { evaluator, calls } = captureEvaluator(true);
+      const debouncer = makeDebouncer({ downstream, filterEvaluator: evaluator });
+
+      debouncer.enqueue(raw({ sourceMessageId: '10', groupedId: 'g1', hasMedia: true }));
+      debouncer.enqueue(
+        raw({ sourceMessageId: '11', groupedId: 'g1', hasMedia: true, text: 'caption' }),
+      );
+      debouncer.enqueue(raw({ sourceMessageId: '12', groupedId: 'g1', hasMedia: true }));
+
+      await vi.advanceTimersByTimeAsync(TEST_WINDOW_MS);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.context.mediaCount).toBe(3);
+      expect(calls[0]?.context.hasMedia).toBe(true);
+    });
+
+    it('aggregates links and entity text across all album members, not just the caption member', async () => {
+      const downstream = makeDownstream();
+      const { evaluator, calls } = captureEvaluator(true);
+      const debouncer = makeDebouncer({ downstream, filterEvaluator: evaluator });
+
+      // Caption rides on member 20; the link lives on a different member (21).
+      debouncer.enqueue(
+        raw({ sourceMessageId: '20', groupedId: 'g2', hasMedia: true, text: 'the caption' }),
+      );
+      debouncer.enqueue(
+        raw({
+          sourceMessageId: '21',
+          groupedId: 'g2',
+          hasMedia: true,
+          text: '',
+          links: [{ url: 'https://t.me/secret', source: 'entity' }],
+          entityTexts: ['https://t.me/secret'],
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(TEST_WINDOW_MS);
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.context.text).toBe('the caption');
+      expect(calls[0]?.context.links).toEqual([{ url: 'https://t.me/secret', source: 'entity' }]);
+      expect(calls[0]?.context.entityTexts).toEqual(['https://t.me/secret']);
     });
 
     it('passes ungrouped message through when filter accepts', () => {
