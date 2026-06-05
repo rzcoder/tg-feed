@@ -21,6 +21,9 @@ const MENU_BUTTON_TEXT = 'Open tg-feed';
 // Bounds each await in stop(): grammy's final getUpdates call has no timeout of its own.
 const STOP_TIMEOUT_MS = 5000;
 
+// Bounds the bring-up handshake (getMe / setMyCommands / setChatMenuButton).
+const START_TIMEOUT_MS = 15_000;
+
 export function isBotAdmin(adminIds: string[], userId: number | string | undefined): boolean {
   if (userId === undefined) return false;
   return adminIds.includes(String(userId));
@@ -67,24 +70,31 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
 
   return {
     async start() {
-      // Validates the token; a bad token rejects to the caller.
-      await bot.init();
+      // Validates the token; a bad token rejects to the caller. Bounded because
+      // grammy retries getMe forever on a network-level failure (see START_TIMEOUT_MS).
+      await withTimeout(bot.init(), START_TIMEOUT_MS);
 
       try {
-        await bot.api.setMyCommands([{ command: 'start', description: 'Open tg-feed' }]);
+        await withTimeout(
+          bot.api.setMyCommands([{ command: 'start', description: 'Open tg-feed' }]),
+          START_TIMEOUT_MS,
+        );
       } catch (err) {
         logger.warn({ err }, 'bot: failed to set commands');
       }
 
       if (webAppUrl) {
         try {
-          await bot.api.setChatMenuButton({
-            menu_button: {
-              type: 'web_app',
-              text: MENU_BUTTON_TEXT,
-              web_app: { url: webAppUrl },
-            },
-          });
+          await withTimeout(
+            bot.api.setChatMenuButton({
+              menu_button: {
+                type: 'web_app',
+                text: MENU_BUTTON_TEXT,
+                web_app: { url: webAppUrl },
+              },
+            }),
+            START_TIMEOUT_MS,
+          );
         } catch (err) {
           logger.warn({ err }, 'bot: failed to set chat menu button');
         }

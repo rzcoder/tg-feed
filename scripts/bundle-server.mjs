@@ -16,6 +16,7 @@ const common = {
   format: 'esm',
   target: 'node20',
   minify: true,
+  keepNames: true,
   legalComments: 'none',
   external,
   banner,
