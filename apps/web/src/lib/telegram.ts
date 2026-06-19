@@ -52,7 +52,7 @@ export function detectTelegramLaunch(): boolean {
 }
 
 // Resolves initData now if present, null if not a launch, else polls up to timeoutMs while the async SDK populates it.
-export function waitForTelegramInitData(timeoutMs = 3000, intervalMs = 50): Promise<string | null> {
+export function waitForTelegramInitData(timeoutMs = 8000, intervalMs = 50): Promise<string | null> {
   const immediate = getTelegramInitData();
   if (immediate) return Promise.resolve(immediate);
   if (!detectTelegramLaunch()) return Promise.resolve(null);
