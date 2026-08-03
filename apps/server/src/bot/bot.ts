@@ -1,4 +1,5 @@
-import { Bot, InlineKeyboard, type Context } from 'grammy';
+import { Agent } from 'node:https';
+import { Bot, GrammyError, InlineKeyboard, type Context } from 'grammy';
 import type { Logger } from '../lib/logger.js';
 
 export interface TgFeedBot {
@@ -24,6 +25,14 @@ const STOP_TIMEOUT_MS = 5000;
 // Bounds the bring-up handshake (getMe / setMyCommands / setChatMenuButton).
 const START_TIMEOUT_MS = 15_000;
 
+// Bounds one admin DM. A socket that stalls instead of erroring would otherwise
+// hold the digest tick open indefinitely.
+const NOTIFY_TIMEOUT_MS = 15_000;
+
+function createApiAgent(): Agent {
+  return new Agent({ keepAlive: true, family: 4 });
+}
+
 export function isBotAdmin(adminIds: string[], userId: number | string | undefined): boolean {
   if (userId === undefined) return false;
   return adminIds.includes(String(userId));
@@ -38,7 +47,7 @@ export function resolveWebAppUrl(publicUrl: string | undefined): string | undefi
 export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
   const { token, adminIds, logger } = deps;
   const webAppUrl = resolveWebAppUrl(deps.publicUrl);
-  const bot = new Bot(token);
+  const bot = new Bot(token, { client: { baseFetchConfig: { agent: createApiAgent() } } });
 
   // Never rejects — a polling crash is logged in the `.catch` below.
   let pollLoop: Promise<void> | undefined;
@@ -116,10 +125,23 @@ export function createTgFeedBot(deps: CreateBotDeps): TgFeedBot {
       let delivered = 0;
       for (const id of adminIds) {
         try {
-          await bot.api.sendMessage(Number(id), text, { parse_mode: 'HTML' });
+          await withTimeout(
+            bot.api.sendMessage(Number(id), text, { parse_mode: 'HTML' }),
+            NOTIFY_TIMEOUT_MS,
+          );
           delivered += 1;
         } catch (err) {
-          logger.warn({ err, adminId: id }, 'bot: failed to send admin notification');
+          if (err instanceof GrammyError) {
+            logger.warn(
+              { err, adminId: id, errorCode: err.error_code },
+              'bot: admin refused the notification',
+            );
+          } else {
+            logger.error(
+              { err, adminId: id },
+              'bot: Bot API unreachable — notification dropped, long-polling is down too',
+            );
+          }
         }
       }
       return delivered;
